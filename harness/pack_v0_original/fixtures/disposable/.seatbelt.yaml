@@ -1,0 +1,10 @@
+# Review fixture (b): whole repository is a disposable sandbox.
+# infra/prod still exists so D1b shows whether the prod name hint wins over the path rule.
+version: 1
+mode: enforce
+strict: true
+environments:
+  - name: sandbox
+    tier: disposable
+    match:
+      paths: ["**"]
