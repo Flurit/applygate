@@ -70,9 +70,12 @@ type Result struct {
 
 // Options control resolution.
 type Options struct {
-	Dir      string            // starting working directory (absolute)
-	Env      map[string]string // known environment (HOME, USER, ...)
-	Aliases  map[string]string // name -> replacement words
+	Dir     string            // starting working directory (absolute)
+	Env     map[string]string // known environment (HOME, USER, ...)
+	Aliases map[string]string // name -> replacement words
+	// Wrappers are extra programs, from the user's config, that run the
+	// command given in their arguments.
+	Wrappers map[string]WrapperSpec
 	ReadFile func(path string) ([]byte, error)
 	MaxDepth int
 }

@@ -77,3 +77,18 @@ func TestUnknownKeysRejected(t *testing.T) {
 		t.Fatal("typo in config was accepted")
 	}
 }
+
+func TestWrappersConfig(t *testing.T) {
+	c := load(t, "wrappers:\n  - {name: company-run, skip: 1, profile_arg: 1}\n  - {name: tfw}\n")
+	w := c.ShellWrappers()
+	if len(w) != 2 || w["company-run"].Skip != 1 || w["company-run"].ProfileArg != 1 || w["tfw"].Skip != 0 {
+		t.Fatalf("wrappers = %+v", w)
+	}
+	for _, bad := range []string{"wrappers: [{name: \"\"}]", "wrappers: [{name: a/b}]", "wrappers: [{name: x, skip: -1}]", "wrappers: [{name: x, skip: 1, profile_arg: 2}]"} {
+		dir := t.TempDir()
+		os.WriteFile(filepath.Join(dir, FileName), []byte(bad+"\n"), 0o644)
+		if _, err := Load("", dir); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

@@ -175,7 +175,7 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 	var actions []classify.Action
 	switch ev.Kind {
 	case KindShell:
-		res := shell.Analyze(ev.Command, shell.Options{Dir: ev.Cwd, Env: deps.Env, Aliases: cfg.Aliases, ReadFile: deps.ReadFile})
+		res := shell.Analyze(ev.Command, shell.Options{Dir: ev.Cwd, Env: deps.Env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ReadFile: deps.ReadFile})
 		actions = classify.Invocations(res, copt)
 	case KindWrite:
 		for _, p := range ev.Paths {

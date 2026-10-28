@@ -138,6 +138,11 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		a := base
 		a.Engine = e
 		terraformArgs(&a, args)
+		if a.Class == UnknownWrapper && shell.IsBackstopVia(inv.Via) {
+			// "brew install terraform tflint", "asdf install terraform
+			// 1.9.0": terraform was an argument, not a command to run.
+			return out
+		}
 		return append(out, a)
 	}
 	switch name {

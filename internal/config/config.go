@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Flurit/seatbelt/internal/classify"
+	"github.com/Flurit/seatbelt/internal/shell"
 )
 
 // Tier is an environment tier.
@@ -55,6 +56,10 @@ type Config struct {
 	PlanGate       PlanGate      `yaml:"plan_gate"`
 	Preflight      Preflight     `yaml:"preflight"`
 	ProtectedPaths []string      `yaml:"protected_paths"`
+	// Wrappers are extra programs that run the command in their arguments
+	// (a team's own credential or environment runner), so seatbelt
+	// analyzes that command. Built-in wrappers need no entry.
+	Wrappers []Wrapper `yaml:"wrappers"`
 	// ProtectedResources are resource address globs (for example
 	// "aws_db_instance.*" or "module.data.*") whose destroy or replace in a
 	// saved plan is a critical finding, whatever their type.
@@ -64,6 +69,16 @@ type Config struct {
 	Root string `yaml:"-"`
 	// Sources lists the files that were loaded.
 	Sources []string `yaml:"-"`
+}
+
+// Wrapper declares a program that runs another command: the command
+// follows "--" when present, otherwise it starts after Skip positional
+// arguments. ProfileArg (1-based, optional) is the positional that names an
+// AWS profile or role, used as a tier signal.
+type Wrapper struct {
+	Name       string `yaml:"name"`
+	Skip       int    `yaml:"skip"`
+	ProfileArg int    `yaml:"profile_arg"`
 }
 
 // Environment maps signals to a tier.
@@ -287,10 +302,31 @@ func merge(cfg *Config, path string, repo bool) error {
 	}
 	cfg.ProtectedPaths = append(cfg.ProtectedPaths, c.ProtectedPaths...)
 	cfg.ProtectedResources = append(cfg.ProtectedResources, c.ProtectedResources...)
+	cfg.Wrappers = append(cfg.Wrappers, c.Wrappers...)
 	return nil
 }
 
+// ShellWrappers returns the configured wrappers keyed by program name.
+func (c *Config) ShellWrappers() map[string]shell.WrapperSpec {
+	if len(c.Wrappers) == 0 {
+		return nil
+	}
+	m := make(map[string]shell.WrapperSpec, len(c.Wrappers))
+	for _, w := range c.Wrappers {
+		m[w.Name] = shell.WrapperSpec{Skip: w.Skip, ProfileArg: w.ProfileArg}
+	}
+	return m
+}
+
 func (c *Config) validate() error {
+	for _, w := range c.Wrappers {
+		if w.Name == "" || strings.ContainsAny(w.Name, "/ \t") {
+			return fmt.Errorf("wrappers: name must be a program name, not %q", w.Name)
+		}
+		if w.Skip < 0 || w.ProfileArg < 0 || w.ProfileArg > w.Skip {
+			return fmt.Errorf("wrappers: %s: skip and profile_arg must be >= 0 and profile_arg <= skip", w.Name)
+		}
+	}
 	switch c.Mode {
 	case "enforce", "observe":
 	default:
