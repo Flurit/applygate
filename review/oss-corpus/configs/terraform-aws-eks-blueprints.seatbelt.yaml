@@ -1,0 +1,9 @@
+# Trial config: patterns are examples deployed to a sandbox account.
+version: 1
+mode: enforce
+strict: false
+default_tier: standard   # everything outside examples/patterns
+environments:
+  - name: patterns
+    tier: disposable
+    match: {paths: ["patterns/**"]}

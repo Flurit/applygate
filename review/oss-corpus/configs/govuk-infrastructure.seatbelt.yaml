@@ -1,0 +1,17 @@
+# Trial config: Terraform Cloud workspaces <deployment>-<env>.
+version: 1
+mode: enforce
+strict: true
+environments:
+  - name: production
+    tier: protected
+    match: {workspaces: ["*-production"]}
+  - name: staging
+    tier: standard
+    match: {workspaces: ["*-staging"]}
+  - name: integration
+    tier: standard
+    match: {workspaces: ["*-integration", "*-test", "*-ci"]}
+  - name: shared-modules
+    tier: standard
+    match: {paths: ["terraform/shared-modules/**"]}

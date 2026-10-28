@@ -1,0 +1,146 @@
+{
+ "summary": {
+  "cloud-platform-infrastructure": {
+   "allow": 226,
+   "noise": 9,
+   "placeholder": 3,
+   "expected": 13,
+   "total": 251,
+   "runnable": 239,
+   "false_positives": 0,
+   "fp_rate": 0.0,
+   "fp_rate_incl_debatable": 0.0
+  },
+  "ALL": {
+   "allow": 1160,
+   "noise": 57,
+   "placeholder": 18,
+   "expected": 81,
+   "fp-analyzer": 7,
+   "fp-environment": 1,
+   "debatable-policy": 9,
+   "fp-policy": 1,
+   "total": 1334,
+   "runnable": 1259,
+   "false_positives": 9,
+   "fp_rate": 0.71,
+   "fp_rate_incl_debatable": 1.43
+  },
+  "govuk-infrastructure": {
+   "allow": 232,
+   "fp-analyzer": 5,
+   "noise": 21,
+   "expected": 9,
+   "placeholder": 13,
+   "fp-environment": 1,
+   "total": 281,
+   "runnable": 247,
+   "false_positives": 6,
+   "fp_rate": 2.43,
+   "fp_rate_incl_debatable": 2.43
+  },
+  "terraform-aws-eks-blueprints": {
+   "allow": 632,
+   "debatable-policy": 9,
+   "expected": 53,
+   "placeholder": 2,
+   "noise": 27,
+   "fp-policy": 1,
+   "fp-analyzer": 2,
+   "total": 726,
+   "runnable": 697,
+   "false_positives": 3,
+   "fp_rate": 0.43,
+   "fp_rate_incl_debatable": 1.72
+  },
+  "terraform-aws-vpc": {
+   "allow": 53,
+   "expected": 6,
+   "total": 59,
+   "runnable": 59,
+   "false_positives": 0,
+   "fp_rate": 0.0,
+   "fp_rate_incl_debatable": 0.0
+  },
+  "terragrunt-infrastructure-live-example": {
+   "allow": 17,
+   "total": 17,
+   "runnable": 17,
+   "false_positives": 0,
+   "fp_rate": 0.0,
+   "fp_rate_incl_debatable": 0.0
+  }
+ },
+ "reasons": [
+  [
+   "expected",
+   "ask/block matches the policy for the command and tier",
+   81
+  ],
+  [
+   "noise",
+   "not shell (HCL, JSON, YAML, code, tree diagrams) extracted from a code fence",
+   55
+  ],
+  [
+   "placeholder",
+   "documentation placeholder such as <clusterName> makes the line unparseable",
+   14
+  ],
+  [
+   "debatable-policy",
+   "kubectl delete of example manifests in a disposable tier asks (spec: cloud-destructive in disposable = ask)",
+   9
+  ],
+  [
+   "placeholder",
+   "documentation placeholder changes how the line parses",
+   4
+  ],
+  [
+   "noise",
+   "configuration text (HCL/logstash), not a command",
+   2
+  ],
+  [
+   "fp-analyzer",
+   "while $(kill -0 PID): substitution output used as the program name",
+   2
+  ],
+  [
+   "fp-analyzer",
+   "Makefile recipe calls a make function ($(call ...)) the analyzer does not expand",
+   1
+  ],
+  [
+   "fp-analyzer",
+   "aws eks update-kubeconfig only writes local kubeconfig (fixed: now read-only)",
+   1
+  ],
+  [
+   "fp-analyzer",
+   "kubectl relay/port-forward opens a local tunnel (fixed: now read-only)",
+   1
+  ],
+  [
+   "fp-environment",
+   "source of a virtualenv that does not exist in a fresh clone",
+   1
+  ],
+  [
+   "fp-analyzer",
+   "exec \"$@\" entrypoint: positional parameters not expanded (fixed: \"$@\" now resolves)",
+   1
+  ],
+  [
+   "fp-analyzer",
+   "git command held in a variable built from a runtime loop value (${git} reflog ...)",
+   1
+  ],
+  [
+   "fp-policy",
+   "terraform init -reconfigure used to switch per-environment backends; spec classes it as state surgery",
+   1
+  ]
+ ]
+}
