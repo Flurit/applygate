@@ -8,7 +8,7 @@ seatbelt is small on purpose: a shell-aware analyzer, a classifier, preflight ch
 - **No cloud credentials in tests or fixtures.** Plan fixtures are hand-built or generated from `terraform_data`-only configurations with a local backend.
 - **No model in the decision path, no telemetry, no network by default.** Opt-in network checks (`live_identity`, `live_state`) stay user-config-only.
 - **Rule lists are data.** Add resource types, protections and admin policies to `internal/plangate/rules/aws.json`, not to Go code.
-- **Document deviations.** Anything that differs from the spec goes in `docs/spec-alignment.md` and, if it changes a verdict, in `docs/policy.md`.
+- **Document deviations.** Anything that differs from the [roadmap](docs/roadmap.md) goes in `docs/project/spec-alignment.md` and, if it changes a verdict, in `docs/policy.md`.
 
 ## Adding a scenario
 

@@ -16,20 +16,20 @@
 
 | Class | Protected | Standard | Disposable | Source |
 |---|---|---|---|---|
-| read-only | allow | allow | allow | spec |
-| apply-saved-plan | plan gate | plan gate | allow | spec |
-| unreviewed-apply | block | ask | allow | spec |
-| destroy | block | ask | allow | spec |
-| state-surgery | block | ask | ask | spec |
-| cloud-destructive | block | ask | ask | spec |
-| guard-tampering | block | block | block | spec |
-| dynamic | ask | ask | allow | spec |
-| unknown-wrapper | ask | allow | allow | spec open decision ("ask in protected tiers") |
+| read-only | allow | allow | allow | roadmap |
+| apply-saved-plan | plan gate | plan gate | allow | roadmap |
+| unreviewed-apply | block | ask | allow | roadmap |
+| destroy | block | ask | allow | roadmap |
+| state-surgery | block | ask | ask | roadmap |
+| cloud-destructive | block | ask | ask | roadmap |
+| guard-tampering | block | block | block | roadmap |
+| dynamic | ask | ask | allow | roadmap |
+| unknown-wrapper | ask | allow | allow | roadmap open decision ("ask in protected tiers") |
 | mutating (import, refresh, test) | ask | allow | allow | added |
 | cloud-write (create/update calls) | ask | allow | allow | added |
-| credential-access | ask | ask | ask | added (spec S10) |
+| credential-access | ask | ask | ask | added (scenario S10) |
 
-`init -reconfigure` is state surgery only when it is bare or migrates state: with `-backend-config` (resolved files or `key=value` pairs) and without `-migrate-state`/`-force-copy` it is read-only, because it only re-points the working directory. Later commands in the same command line are then judged against the backend the config describes, and the config file's name is a name hint (`production.backend` → protected). This deviates from the spec, which lists `init -reconfigure` as state surgery; the open-source corpus trial found it used routinely to switch environments ([oss-corpus-trial.md](oss-corpus-trial.md)).
+`init -reconfigure` is state surgery only when it is bare or migrates state: with `-backend-config` (resolved files or `key=value` pairs) and without `-migrate-state`/`-force-copy` it is read-only, because it only re-points the working directory. Later commands in the same command line are then judged against the backend the config describes, and the config file's name is a name hint (`production.backend` → protected). This deviates from the original plan, which lists `init -reconfigure` as state surgery; the open-source corpus trial found it used routinely to switch environments ([oss-corpus-trial.md](oss-corpus-trial.md)).
 
 ## Finding severity × tier
 
@@ -45,7 +45,7 @@
 | destroy-count (destroys + replaces > `max_destroy`; protected default 0) | high | plan |
 | stateful-destroyed (types in `rules/aws.json`) | critical | plan |
 | protected-resource (addresses matching `protected_resources` in config, any type) | critical | plan |
-| code-execution (provisioners such as local-exec/remote-exec, or `external` data sources, in the plan's configuration: applying runs code with the user's credentials; spec S12) | high | plan |
+| code-execution (provisioners such as local-exec/remote-exec, or `external` data sources, in the plan's configuration: applying runs code with the user's credentials; scenario S12) | high | plan |
 | stateful-unprotected-create (a database created with no safety net: deletion protection off **and** final snapshot skipped) | high | plan |
 | stateful-create-note (a database created with only one safeguard off, e.g. protection off but a final snapshot kept) | info | plan |
 | protection-removed (deletion protection, final snapshot, retention 0, force_destroy, versioning, PITR, …) | critical | plan |
@@ -61,4 +61,4 @@
 | state-lineage (local state file is from another lineage, behind or ahead of the remote serial; only with `preflight.live_state`) | high | preflight (state pull, opt-in) |
 | lockfile-drift | high | preflight (git) |
 
-IAM `Resource: "*"` on its own is not flagged, because it is very common. This is a deliberate narrowing of the spec's "IAM wildcard actions or resources".
+IAM `Resource: "*"` on its own is not flagged, because it is very common. This is a deliberate narrowing of the original plan's "IAM wildcard actions or resources".

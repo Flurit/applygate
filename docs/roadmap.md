@@ -1,0 +1,44 @@
+# Roadmap
+
+seatbelt is a deterministic, local check that runs before a coding agent's infrastructure command executes and returns allow, ask or block. It is not a sandbox and not an AI reviewer. This page is the public summary of the project's planning document; "the spec" in older project notes refers to that document.
+
+## Principles
+
+- Deterministic rules decide. No model is in the decision path.
+- Parse commands the way the shell does, not as text.
+- Judge plans, not only commands: `terraform apply` says little, the plan says what will be destroyed.
+- Fail closed in protected environments, and say so.
+- Roll out in observe mode first and count what would have been blocked.
+- Stay local: no telemetry, no network calls by default, secrets redacted from logs.
+- State limits plainly. Never claim protection the design cannot give.
+
+**Not goals:** sandboxing, credential brokering or network isolation (pair seatbelt with plan-only credentials and an isolated runner); general MCP governance; drift detection, cost control or code review.
+
+## Stages
+
+Each stage ships on its own and must pass its gate before the next starts.
+
+| Stage | Goal | Scope | Gate to the next stage |
+|---|---|---|---|
+| **v0** harness | Find where existing guards fail on infrastructure | Scenario pack, replay runner, comparison of existing guards | Enough dangerous scenarios missed by existing guards to justify v1 |
+| **v1** core (current) | Block the most damaging infrastructure actions with low friction | Shell-aware analyzer, environment tiers, preflight (workspace, backend, stale state, lock file), plan gate (AWS first), observe mode, local log, Claude Code and Codex | Passes the scenario pack; false positives under 5% in an observe-mode trial on 5 real repositories; installs in under 5 minutes on macOS and Linux |
+| **v2** recovery and approval | Make destructive changes recoverable and approvals exact | Backup-isolation check, plan-hash approval with typed confirmation, more agents, CI mode as a GitHub Action | Blocks unrecoverable destroys in fixtures; approval refuses a changed plan |
+| **v3** receipts and attribution | Tie each cloud change to an agent session and an approved plan | Signed receipts, session capture, AWS session tagging, lookup from a CloudTrail event | A CloudTrail event resolves to its session, plan and approver |
+
+GCP, Azure, Kubernetes and Pulumi rules, platform integrations and hosted features come later, and only if v1 and v2 see real use.
+
+## Where v1 stands
+
+Done:
+- the analyzer, tiers, preflight and plan gate;
+- Claude Code and Codex adapters, tested live;
+- observe mode and the decision log;
+- signed releases with provenance (v0.1.0 to v0.1.3);
+- a static false-positive trial on 5 public repositories: 0.48% ([oss-corpus-trial.md](oss-corpus-trial.md)).
+
+Open:
+- an observe-mode trial with real teams;
+- an install check on macOS;
+- Homebrew and package-manager wrappers.
+
+[project/ACCEPTANCE.md](project/ACCEPTANCE.md) has the measured detail, and [project/spec-alignment.md](project/spec-alignment.md) maps each planned requirement to the code.

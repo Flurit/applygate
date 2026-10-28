@@ -1,0 +1,33 @@
+name: False positive
+description: seatbelt asked about or blocked something that should be allowed
+labels: [false-positive]
+body:
+  - type: input
+    id: version
+    attributes: {label: seatbelt version, description: Output of `seatbelt version`}
+    validations: {required: true}
+  - type: input
+    id: agent
+    attributes: {label: Agent and version, placeholder: Claude Code 2.x / Codex 0.x / seatbelt check}
+  - type: textarea
+    id: command
+    attributes:
+      label: Command or tool call
+      description: The exact command (or tool and file path). Remove secrets and account IDs.
+      render: shell
+    validations: {required: true}
+  - type: textarea
+    id: explain
+    attributes:
+      label: seatbelt explain output
+      description: Output of `seatbelt explain --cwd <dir> -- '<command>'`.
+      render: text
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant .seatbelt.yaml
+      render: yaml
+  - type: textarea
+    id: why
+    attributes: {label: Why it should be allowed}
+    validations: {required: true}

@@ -2,9 +2,7 @@
 
 A deterministic, local pre-execution check for coding agents (Claude Code, Codex, and others with pre-tool hooks) that touch Terraform or OpenTofu infrastructure. Before the agent runs a tool call, seatbelt returns **allow**, **ask** or **block**, with a reason and a next step the agent can act on.
 
-> Working name. Status: v1 core, pre-release. Live-tested with Claude Code 2.1.312 and Codex 0.159.2/0.165.0 (the T3 suite); see [ACCEPTANCE.md](ACCEPTANCE.md) for what has and has not been verified.
->
-> An independent review ([REVIEW.md](REVIEW.md)) stress-tested this build; all eleven findings it raised are addressed (F1–F4 analyzer bypasses, F5–F7 pathological-input robustness, F8 a dependency advisory, F9 base32/gzip/tee decoder chains now decoded to a block, and the F10/F11 policy nuances). Details in [REVIEW.md](REVIEW.md).
+Status: pre-1.0 (v0.1.3), tested live with Claude Code and Codex. What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md).
 
 ## Why another guard
 
@@ -101,9 +99,9 @@ Hooks fail open by default in most agents, so this matters:
 
 See [docs/limits.md](docs/limits.md) and [docs/threat-model.md](docs/threat-model.md).
 
-## Status against the spec
+## Roadmap
 
-[docs/spec-alignment.md](docs/spec-alignment.md) maps every requirement of the roadmap and v0/v1 spec to where it is implemented, what deviates, and what is still open (a trial on real repositories, a first signed release, Homebrew and package-manager wrappers). [ACCEPTANCE.md](ACCEPTANCE.md) holds the measured results.
+[docs/roadmap.md](docs/roadmap.md) describes the stages (v1 core now; recovery checks and plan-hash approval next) and what is still open for v1. Project records (acceptance results, an independent review, requirement-by-requirement status) live in [docs/project/](docs/project).
 
 ## Repository layout
 
@@ -118,10 +116,13 @@ internal/policy/      verdict table and Decide()
 internal/hook/        Claude Code and Codex adapters, error behavior
 internal/decisionlog/ JSONL log with redaction, report
 harness/              scenario pack, fixtures, Go regression test, run.py replay runner
+docs/                 policy, config, limits, threat model, roadmap; docs/project/ for project records
+review/               live-agent test write-ups and the open-source corpus trial (tools, configs, summaries)
 plugin/claude-code/   Claude Code plugin manifest (hooks only; the binary comes from a release)
 .goreleaser.yaml      release builds: reproducible archives, checksums, cosign signature, SBOMs
 install.sh            installer: verifies the cosign signature (when cosign is installed) and the sha256
 SECURITY.md           how to report a vulnerability privately
+CONTRIBUTING.md       ground rules, adding scenarios and guards
 ```
 
 ## License
