@@ -1,5 +1,7 @@
 # Contributing
 
+By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). Report security issues privately as described in [SECURITY.md](SECURITY.md).
+
 seatbelt is small on purpose: a shell-aware analyzer, a classifier, preflight checks, a plan gate and a policy table. Changes that keep it deterministic, local and honest about its limits are welcome.
 
 ## Ground rules
