@@ -22,6 +22,7 @@ seatbelt reduces the chance that a mistaken or manipulated agent damages infrast
 
 - **Claude Code:** an "ask" during `bypassPermissions` or `dontAsk` is turned into a block, on the assumption that no prompt would be shown. How Claude Code actually handles a hook "ask" in these modes is not documented and has not been tested.
 - **Codex:** does not support "ask" (it fails the hook and runs the tool), so every ask becomes a block. Codex hooks need to be trusted with `/hooks` before they run.
+- **Codex fails open on crashes.** Codex has no `onFailure` equivalent: a missing, killed or crashed hook lets the tool call run (observed: exit 127 and a no-status-code exit both proceed). seatbelt recovers panics inside its own process and blocks, so the only remaining fail-open case is the binary not starting. This cannot be fixed from inside the hook — use Codex's own sandbox (`--sandbox read-only`/`workspace-write`) and approval settings as the backstop, keep plan-only credentials, and run `seatbelt doctor` (it checks the hook entry exists and the binary is executable, and flags hook entries it does not recognise).
 - Hook crashes and agent-side timeouts: see the README section "What happens when seatbelt fails".
 
 ## Not in v1

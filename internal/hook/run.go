@@ -93,7 +93,13 @@ func Deps(cfg *config.Config, opt Options) policy.Deps {
 }
 
 // Run processes one hook event from in and returns the output to write.
-func Run(a Adapter, in io.Reader, opt Options) Output {
+//
+// A panic anywhere in the run is recovered and turned into a fail-closed block
+// (except in observe mode). This matters most for Codex, which has no
+// onFailure equivalent: a hook process that panics and exits non-cleanly would
+// otherwise let the tool call run. With this recovery the only remaining
+// Codex fail-open case is the binary not starting at all.
+func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	start := time.Now()
 	if opt.Timeout == 0 {
 		opt.Timeout = 25 * time.Second
@@ -101,6 +107,9 @@ func Run(a Adapter, in io.Reader, opt Options) Output {
 	raw, err := io.ReadAll(io.LimitReader(in, 8<<20))
 	entry := decisionlog.Entry{Time: start.UTC(), Version: Version, Agent: a.Name()}
 	userCfg, uerr := config.Load(opt.UserConfig, "")
+	// recoverCfg is the most specific config known when a panic is recovered;
+	// it decides whether observe mode suppresses the block.
+	var recoverCfg *config.Config = userCfg
 	logPath := func(cfg *config.Config) string {
 		switch {
 		case opt.LogPath != "":
@@ -147,6 +156,25 @@ func Run(a Adapter, in io.Reader, opt Options) Output {
 		}
 		return finish(cfg, a.Fail(block, "seatbelt: "+msg))
 	}
+	// A panic that escapes the normal paths (including policy.Run's own
+	// recover) still fails closed: block unless observe mode is in effect.
+	// This is what makes a Codex hook that panics block rather than fail open.
+	defer func() {
+		if p := recover(); p != nil {
+			msg := fmt.Sprintf("internal error: %v", p)
+			block := recoverCfg == nil || !recoverCfg.Observe()
+			entry.Error = msg
+			entry.Verdict = policy.Block
+			entry.Enforced = policy.Allow
+			if block {
+				entry.Enforced = policy.Block
+				msg += " (seatbelt fails closed here)"
+			} else {
+				msg += " (observe mode: allowed)"
+			}
+			out = finish(recoverCfg, a.Fail(block, "seatbelt: "+msg))
+		}
+	}()
 	if err != nil {
 		return fail(userCfg, "", "could not read hook input: "+err.Error())
 	}
@@ -168,6 +196,7 @@ func Run(a Adapter, in io.Reader, opt Options) Output {
 	if err != nil {
 		return fail(nil, ev.Cwd, "config error: "+err.Error())
 	}
+	recoverCfg = cfg
 	entry.Mode = cfg.Mode
 	d, err := policy.Run(opt.Timeout, func() policy.Decision { return policy.Decide(ev, cfg, Deps(cfg, opt)) })
 	if err != nil {
