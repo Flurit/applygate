@@ -109,7 +109,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Privacy: no telemetry, no network by default, redacted log outside the repo | done | `decisionlog` |
 | Honest limits in docs | done | `docs/limits.md` |
 | Language: Go with mvdan/sh and terraform-json | done | `go.mod` |
-| Distribution: install script, Homebrew, npm/pip wrapper, Claude Code plugin | partial | `install.sh` installs the real v0.1.0 release in 3 s on Linux (checksum-verified); `plugin/claude-code` exists; the Homebrew tap (`brews:` in `.goreleaser.yaml`) is commented out until a tap repository exists; npm and pip wrappers are not started |
+| Distribution: install script, Homebrew, npm/pip wrapper, Claude Code plugin | partial | `install.sh` installs the real v0.1.0 release in 3 s on Linux; after v0.1.0 it also verifies the cosign signature on `checksums.txt` when cosign is installed (`SEATBELT_VERIFY_SIGNATURE=require` makes it mandatory), and the README pins the installer URL to a tag; `plugin/claude-code` exists; the Homebrew tap (`brews:` in `.goreleaser.yaml`) is commented out until a tap repository exists; npm and pip wrappers are not started |
 | Five-minute quickstart, threat model, limits | done | `README.md`, `docs/threat-model.md`, `docs/limits.md` |
 | Apache-2.0 | done | `LICENSE` |
 

@@ -19,9 +19,31 @@ It is not a sandbox and not an AI reviewer. No model is in the decision path, th
 
 ## Quickstart
 
+### Verify a download
+
+Download a release and check its signature before running anything. Replace `v0.1.0` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Flurit/seatbelt/main/install.sh | sh   # checks the sha256 of the release archive
-# or: go install github.com/Flurit/seatbelt/cmd/seatbelt@latest
+tag=v0.1.0
+base=https://github.com/Flurit/seatbelt/releases/download/$tag
+curl -fsSLO "$base/checksums.txt" -O "$base/checksums.txt.sigstore.json" -O "$base/seatbelt_${tag#v}_linux_amd64.tar.gz"
+cosign verify-blob --bundle checksums.txt.sigstore.json \
+  --certificate-identity "https://github.com/Flurit/seatbelt/.github/workflows/release.yml@refs/tags/$tag" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
+sha256sum --ignore-missing -c checksums.txt     # macOS: shasum -a 256 --ignore-missing -c checksums.txt
+tar -xzf "seatbelt_${tag#v}_linux_amd64.tar.gz" seatbelt && install -m 755 seatbelt ~/.local/bin/
+```
+
+The signature ties `checksums.txt` to this repository's release workflow for that exact tag, and the checksums tie each archive to `checksums.txt`. Each archive also carries a GitHub build-provenance attestation: `gh attestation verify <archive> --repo Flurit/seatbelt`.
+
+### Install and set up
+
+```bash
+# Installer from a release tag, never from main. From the release after v0.1.0 it also verifies
+# the cosign signature when cosign is installed (SEATBELT_VERIFY_SIGNATURE=require makes that
+# mandatory); the v0.1.0 script checks the sha256 only, which does not detect a tampered release.
+curl -fsSL https://raw.githubusercontent.com/Flurit/seatbelt/v0.1.0/install.sh | sh
+# or: go install github.com/Flurit/seatbelt/cmd/seatbelt@v0.1.0
 # or: go build -o bin/seatbelt ./cmd/seatbelt
 cd your-infra-repo
 seatbelt init                            # writes .seatbelt.yaml (observe mode), detects Claude Code / Codex, installs their hooks
@@ -30,7 +52,9 @@ seatbelt doctor
 seatbelt check "terraform -chdir=envs/prod destroy"
 ```
 
-`seatbelt init --no-hooks` writes the config only; `seatbelt hook install --agent claude|codex [--scope user]` adds a hook by hand. Releases are built by `.github/workflows/release.yml`: tagged builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`) and every archive carries a GitHub build-provenance attestation. Verify a download with `gh attestation verify <archive> --repo Flurit/seatbelt`, or `cosign verify-blob --bundle checksums.txt.sigstore.json --certificate-identity-regexp '^https://github.com/Flurit/seatbelt/' --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt`. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
+`seatbelt init --no-hooks` writes the config only; `seatbelt hook install --agent claude|codex [--scope user]` adds a hook by hand. Releases are built by `.github/workflows/release.yml` from a tag: builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`), every archive carries a build-provenance attestation, and tags of published releases are never moved. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
+
+Security issues: see [SECURITY.md](SECURITY.md).
 
 After a few days in observe mode, run `seatbelt report` to see what would have been blocked, review any likely false positives, then set `mode: enforce`.
 
@@ -96,7 +120,8 @@ internal/decisionlog/ JSONL log with redaction, report
 harness/              scenario pack, fixtures, Go regression test, run.py replay runner
 plugin/claude-code/   Claude Code plugin manifest (hooks only; the binary comes from a release)
 .goreleaser.yaml      release builds: reproducible archives, checksums, cosign signature, SBOMs
-install.sh            curl | sh installer that verifies the release checksum
+install.sh            installer: verifies the cosign signature (when cosign is installed) and the sha256
+SECURITY.md           how to report a vulnerability privately
 ```
 
 ## License
