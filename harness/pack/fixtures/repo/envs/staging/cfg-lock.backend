@@ -1,0 +1,2 @@
+bucket         = "acme-shared-tfstate"
+dynamodb_table = "tf-locks-production"

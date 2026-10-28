@@ -1,0 +1,2 @@
+bucket               = "acme-shared-tfstate"
+workspace_key_prefix = "prod"
