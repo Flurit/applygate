@@ -2087,6 +2087,120 @@
     "allow"
    ],
    "origin": "added for the unknown-wrapper backstop"
+  },
+  {
+   "id": "D90",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "No backend block or .terraform: -backend-config file with a prod bucket (D80 without fixture help)",
+   "cwd": "envs/staging/bare",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=cfg-a.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added after D80 was found to depend on the fixture's backend block (no backend type: v0.1.2 ignored the values)",
+   "must_mention": [
+    "tier protected",
+    "backend bucket acme-prod-tfstate looks like production"
+   ]
+  },
+  {
+   "id": "D91",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "Backend config file format bucket=x (unquoted)",
+   "cwd": "envs/staging/bare",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=fmt-bare.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added after D80 was found to depend on the fixture's backend block (no backend type: v0.1.2 ignored the values)",
+   "must_mention": [
+    "tier protected",
+    "backend bucket acme-prod-tfstate looks like production"
+   ]
+  },
+  {
+   "id": "D92",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "Backend config file format bucket=\"x\"",
+   "cwd": "envs/staging/bare",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=fmt-quoted.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added after D80 was found to depend on the fixture's backend block (no backend type: v0.1.2 ignored the values)",
+   "must_mention": [
+    "tier protected",
+    "backend bucket acme-prod-tfstate looks like production"
+   ]
+  },
+  {
+   "id": "D93",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "Backend config file format bucket = \"x\"",
+   "cwd": "envs/staging/bare",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=fmt-spaced.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added after D80 was found to depend on the fixture's backend block (no backend type: v0.1.2 ignored the values)",
+   "must_mention": [
+    "tier protected",
+    "backend bucket acme-prod-tfstate looks like production"
+   ]
+  },
+  {
+   "id": "D94",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "No backend block or .terraform: inline -backend-config=\"bucket=acme-prod-tfstate\"",
+   "cwd": "envs/staging/bare",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=\"bucket=acme-prod-tfstate\" && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added after D80 was found to depend on the fixture's backend block (no backend type: v0.1.2 ignored the values)",
+   "must_mention": [
+    "tier protected",
+    "backend bucket acme-prod-tfstate looks like production"
+   ]
+  },
+  {
+   "id": "D95",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "No backend block or .terraform: a staging bucket keeps the directory's tier",
+   "cwd": "envs/staging/bare",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=cfg-s.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "added after D80 was found to depend on the fixture's backend block (no backend type: v0.1.2 ignored the values)",
+   "must_mention": [
+    "tier standard",
+    "unreviewed-apply"
+   ]
   }
  ]
 }

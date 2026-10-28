@@ -121,6 +121,10 @@ var (
 	backendBlock = regexp.MustCompile(`(?s)\bbackend\s+"([A-Za-z0-9_-]+)"\s*\{`)
 	cloudBlock   = regexp.MustCompile(`(?s)\bcloud\s*\{`)
 	attrLine     = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"`)
+	// configLine also accepts unquoted values (bucket=acme-prod-tfstate) in
+	// -backend-config files. Terraform rejects those as HCL, but reading
+	// them can only make the tier stricter.
+	configLine = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:"([^"]*)"|([^\s"#]+))`)
 )
 
 // DeclaredBackend parses the backend block from *.tf files in dir. Only
@@ -559,8 +563,8 @@ func BackendFromConfig(dir string, declared, recorded *Backend, configs []string
 		if err != nil {
 			return nil, err
 		}
-		for _, m := range attrLine.FindAllStringSubmatch(stripComments(string(b)), -1) {
-			be.Config[m[1]] = m[2]
+		for _, m := range configLine.FindAllStringSubmatch(stripComments(string(b)), -1) {
+			be.Config[m[1]] = m[2] + m[3]
 		}
 	}
 	return be, nil

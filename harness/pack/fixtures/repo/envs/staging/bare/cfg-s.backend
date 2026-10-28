@@ -1,0 +1,2 @@
+bucket = "acme-staging-tfstate"
+key    = "app/terraform.tfstate"

@@ -1,0 +1,2 @@
+bucket="acme-prod-tfstate"
+key="app/terraform.tfstate"
