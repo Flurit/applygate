@@ -144,6 +144,49 @@ func TestAllowProducesNoOutput(t *testing.T) {
 	}
 }
 
+func TestClaudeCanAsk(t *testing.T) {
+	// Only dontAsk suppresses the ask prompt on Claude Code. bypassPermissions
+	// still shows it (observed on Claude Code 2.1.312, test T3.2).
+	cases := []struct {
+		mode string
+		want bool
+	}{
+		{"default", true},
+		{"acceptEdits", true},
+		{"plan", true},
+		{"bypassPermissions", true},
+		{"dontAsk", false},
+	}
+	for _, c := range cases {
+		t.Run(c.mode, func(t *testing.T) {
+			raw, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash",
+				"permission_mode": c.mode, "tool_input": map[string]any{"command": "terraform state rm x"}})
+			ev, ok, err := Claude{}.Parse(raw)
+			if err != nil || !ok {
+				t.Fatalf("parse: ok=%v err=%v", ok, err)
+			}
+			if ev.CanAsk != c.want {
+				t.Fatalf("mode %q: CanAsk=%v, want %v", c.mode, ev.CanAsk, c.want)
+			}
+		})
+	}
+}
+
+func TestCodexCannotAsk(t *testing.T) {
+	// Codex has no "ask", so every mode must leave CanAsk false.
+	for _, mode := range []string{"default", "bypassPermissions", "dontAsk"} {
+		raw, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash",
+			"permission_mode": mode, "tool_input": map[string]any{"command": "terraform state rm x"}})
+		ev, ok, err := Codex{}.Parse(raw)
+		if err != nil || !ok {
+			t.Fatalf("parse: ok=%v err=%v", ok, err)
+		}
+		if ev.CanAsk {
+			t.Fatalf("codex mode %q: CanAsk must be false", mode)
+		}
+	}
+}
+
 func TestCodexAdapter(t *testing.T) {
 	root := setup(t, "enforce", "auto")
 	run := func(tool string, input map[string]any) string {
