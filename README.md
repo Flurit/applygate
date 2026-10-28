@@ -30,7 +30,7 @@ seatbelt doctor
 seatbelt check "terraform -chdir=envs/prod destroy"
 ```
 
-`seatbelt init --no-hooks` writes the config only; `seatbelt hook install --agent claude|codex [--scope user]` adds a hook by hand. Releases are built by `.github/workflows/release.yml`: tagged builds are reproducible, the checksum file is signed with cosign (keyless) and every archive carries a GitHub build-provenance attestation. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
+`seatbelt init --no-hooks` writes the config only; `seatbelt hook install --agent claude|codex [--scope user]` adds a hook by hand. Releases are built by `.github/workflows/release.yml`: tagged builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`) and every archive carries a GitHub build-provenance attestation. Verify a download with `gh attestation verify <archive> --repo Flurit/seatbelt`, or `cosign verify-blob --bundle checksums.txt.sigstore.json --certificate-identity-regexp '^https://github.com/Flurit/seatbelt/' --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt`. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
 
 After a few days in observe mode, run `seatbelt report` to see what would have been blocked, review any likely false positives, then set `mode: enforce`.
 
