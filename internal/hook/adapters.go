@@ -73,8 +73,12 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 	if in.ToolName == "" {
 		return policy.Event{}, false, errors.New("malformed hook event: no tool_name")
 	}
+	// Claude Code 2.1.312 shows a permission prompt for a hook "ask" even in
+	// bypassPermissions (live test T3.2), so only dontAsk converts ask to
+	// block. This is observed, not documented; rerun T3.2 on new versions
+	// (see docs/limits.md).
 	ev := policy.Event{Agent: "claude", Tool: in.ToolName, Cwd: in.Cwd, Session: in.SessionID, PermissionMode: in.PermissionMode,
-		CanAsk: in.PermissionMode != "dontAsk" && in.PermissionMode != "bypassPermissions"}
+		CanAsk: in.PermissionMode != "dontAsk"}
 	var ti struct {
 		Command      string `json:"command"`
 		FilePath     string `json:"file_path"`

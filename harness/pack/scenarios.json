@@ -836,7 +836,7 @@
    "id": "D44",
    "spec": "S4",
    "kind": "dangerous",
-   "title": "Unreviewed apply in staging under bypassPermissions: ask cannot be shown, so block",
+   "title": "Unreviewed apply in staging under dontAsk: ask cannot be shown, so block",
    "cwd": "envs/staging",
    "tool": "Bash",
    "tool_input": {
@@ -846,7 +846,7 @@
     "block"
    ],
    "origin": "reconstructed",
-   "permission_mode": "bypassPermissions",
+   "permission_mode": "dontAsk",
    "must_mention": [
     "seatbelt: BLOCK. (policy verdict: ask)",
     "cannot show an approval prompt"

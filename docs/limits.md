@@ -20,7 +20,7 @@ seatbelt reduces the chance that a mistaken or manipulated agent damages infrast
 
 ## Agents
 
-- **Claude Code:** an "ask" during `bypassPermissions` or `dontAsk` is turned into a block, on the assumption that no prompt would be shown. How Claude Code actually handles a hook "ask" in these modes is not documented and has not been tested.
+- **Claude Code:** only `dontAsk` turns a hook "ask" into a block. In `bypassPermissions` Claude Code still shows the ask prompt — this was observed live on Claude Code 2.1.312 (test T3.2), but it is **not documented**, so the behavior could change. Rerun T3.2 (`review/manual_agent_tests.md`) on each new Claude Code version; if a future version silently allows an "ask" under `bypassPermissions`, restore the ask→block conversion for that mode.
 - **Codex:** does not support "ask" (it fails the hook and runs the tool), so every ask becomes a block. Codex hooks need to be trusted with `/hooks` before they run.
 - Hook crashes and agent-side timeouts: see the README section "What happens when seatbelt fails".
 
