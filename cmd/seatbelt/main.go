@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -167,7 +168,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 		}
 	}
 	ev := policy.Event{Agent: "cli", Tool: "Bash", Kind: policy.KindShell, Command: fs.Arg(0), Cwd: dir, CanAsk: true}
-	deps := hook.Deps(cfg, opt)
+	deps := hook.Deps(context.Background(), cfg, opt)
 	if explain {
 		res := shell.Analyze(ev.Command, shell.Options{Dir: dir, Env: opt.Env, Aliases: cfg.Aliases})
 		fmt.Fprintf(stdout, "config: %s\n", orNone(strings.Join(cfg.Sources, ", ")))

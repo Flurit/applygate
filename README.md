@@ -60,7 +60,8 @@ Plan gate: in protected tiers critical findings block and high findings ask; in 
 
 Hooks fail open by default in most agents, so this matters:
 
-- **Internal errors it can catch** (malformed event, config error, panic, its own 25 s deadline): with `on_error: auto` (the default) it **blocks** in protected or unknown tiers and allows elsewhere. Blocking uses exit code 2, which Claude Code and Codex both treat as a block.
+- **Internal errors it can catch** (malformed event, config error, panic): with `on_error: auto` (the default) it **blocks** in protected or unknown tiers and allows elsewhere. Blocking uses exit code 2, which Claude Code and Codex both treat as a block.
+- **The internal 25 s deadline**: if a decision does not finish in time (for example a slow `terraform show`), seatbelt cancels the in-flight work — including the `show` subprocess — and **blocks in every tier**, protected or not, regardless of `on_error`. A command that cannot be checked is not allowed through. Observe mode is the only exception.
 - **Crashes it cannot catch, or the agent's hook timeout** (process killed, binary missing): the agent decides. Claude Code proceeds unless the hook has `"onFailure": "block"`, which `seatbelt hook install` sets (it needs Claude Code v2.1.295 or later; older versions fail open). Codex's behavior here is not documented.
 - **Observe mode** never blocks, including on errors.
 

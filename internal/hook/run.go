@@ -2,6 +2,7 @@ package hook
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,23 +45,28 @@ func EnvMap() map[string]string {
 
 // ShowPlan runs "<engine> show -json <planfile>" in dir. It is read-only:
 // show never plans or applies, though it starts provider plugins to load
-// their schemas.
-func ShowPlan(timeout time.Duration) func(engine, dir, planfile string) ([]byte, error) {
+// their schemas. The subprocess is cancelled when parent is done (the internal
+// deadline) or after timeout, whichever comes first.
+func ShowPlan(parent context.Context, timeout time.Duration) func(engine, dir, planfile string) ([]byte, error) {
 	return func(engine, dir, planfile string) ([]byte, error) {
 		bin := engine
 		if bin == "" {
 			bin = "terraform"
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		ctx, cancel := context.WithTimeout(parent, timeout)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, bin, "show", "-json", "-no-color", planfile)
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1")
+		// On cancel, don't wait forever for output: terraform's provider
+		// plugins can hold the stdout pipe open after terraform itself is
+		// killed. WaitDelay force-closes the pipe so cmd.Output returns.
+		cmd.WaitDelay = 2 * time.Second
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		out, err := cmd.Output()
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("%s show timed out after %s", bin, timeout)
+			return nil, fmt.Errorf("%s show cancelled or timed out after %s", bin, timeout)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("%s show failed: %v: %s", bin, err, firstLine(stderr.String()))
@@ -77,11 +83,12 @@ func firstLine(s string) string {
 	return s
 }
 
-// Deps builds policy dependencies for a config.
-func Deps(cfg *config.Config, opt Options) policy.Deps {
+// Deps builds policy dependencies for a config. ctx is cancelled on the
+// internal deadline; the plan gate's show subprocess is bound to it.
+func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
 	d := policy.Deps{Env: opt.Env, PlanJSON: opt.PlanJSON}
 	if d.PlanJSON == nil && cfg.RunShow() {
-		d.PlanJSON = ShowPlan(cfg.ShowTimeout())
+		d.PlanJSON = ShowPlan(ctx, cfg.ShowTimeout())
 	}
 	if !opt.NoGit {
 		d.Lockfile = preflight.LockfileDrift
@@ -169,8 +176,26 @@ func Run(a Adapter, in io.Reader, opt Options) Output {
 		return fail(nil, ev.Cwd, "config error: "+err.Error())
 	}
 	entry.Mode = cfg.Mode
-	d, err := policy.Run(opt.Timeout, func() policy.Decision { return policy.Decide(ev, cfg, Deps(cfg, opt)) })
+	d, err := policy.Run(opt.Timeout, func(ctx context.Context) policy.Decision {
+		return policy.Decide(ev, cfg, Deps(ctx, cfg, opt))
+	})
 	if err != nil {
+		if errors.Is(err, policy.ErrTimeout) {
+			// A timeout means the decision could not be reached. Fail closed
+			// in every tier (not just protected), because an unchecked command
+			// in a disposable tier can still reach a protected one. Observe
+			// mode still never blocks. In-flight work was cancelled via ctx.
+			block := !cfg.Observe()
+			msg := fmt.Sprintf("decision timed out after %s; cancelled in-flight plan/subprocess work", opt.Timeout)
+			entry.Error, entry.Verdict, entry.Enforced = msg, policy.Block, policy.Allow
+			if block {
+				entry.Enforced = policy.Block
+				msg += " (seatbelt fails closed here in every tier)"
+			} else {
+				msg += " (observe mode: allowed)"
+			}
+			return finish(cfg, a.Fail(block, "seatbelt: "+msg))
+		}
 		return fail(cfg, ev.Cwd, err.Error())
 	}
 	entry.Verdict, entry.Enforced, entry.Actions, entry.Notes = d.Verdict, d.Enforced, d.Actions, d.Notes
