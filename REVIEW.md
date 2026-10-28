@@ -7,17 +7,18 @@ only as a string inside a synthetic Claude Code PreToolUse event or as an argume
 to `seatbelt check`/`plan-check`.
 
 **Rule I followed:** I did not tune the analyzer, policy or packs to make anything
-pass. Where I think a verdict is wrong I report it. The only source changes in this
-PR are the CI hardening of Task 5 and one dependency bump it forced (see §6); no
-policy or analyzer logic was changed. Fixes for the findings below are left for
-follow-up PRs after your review.
+pass. Where I think a verdict is wrong I report it. The original review PR changed
+only the CI hardening of Task 5 and one dependency bump it forced (see §6). The
+findings below have since been fixed in follow-up PRs, and the live-agent tests have
+been run — see **[Status of findings](#status-of-findings)** for the current state.
 
 ## Measured vs assumed
 
-Everything in §1–§4 and §6 is **measured** on this machine against the real binary.
-§3 chaos cases and all live-agent behavior are **assumed/unverified** and moved to
-`review/manual_agent_tests.md`. §5 (OpenTofu planfile) is **unverified** (tofu not
-installed).
+Everything in §1–§4 and §6 was **measured** on this machine against the real binary.
+At review time, §3 chaos cases and live-agent behavior were **assumed/unverified**;
+they have since been verified in the live **T3** run (Claude Code 2.1.312, Codex
+0.159.2/0.165.0) — the procedure is in `review/manual_agent_tests.md`. §5 (OpenTofu
+planfile) is still **unverified** (tofu not installed).
 
 ---
 
@@ -278,22 +279,79 @@ availability loss reaching the internal deadline.
 | F6 | medium | robustness | brace expansion → 365 MB RSS, 1.2 s | `echo {{{…×5000…a…}}}` | **fixed** (#3) |
 | F7 | medium | robustness | 50 MB plan JSON = 3.5 s, no size cap, over 1 s target | 414k `resource_changes` | **fixed** (#3) |
 | F8 | low | hygiene | vulnerable dep `x/text` reachable | GO-2026-5970 | **fixed** (#1) |
-| F9 | low | design | base32/gzip decoders not followed (ask, not block) | `base32 -d \| bash` (AD-D2/D3) | open |
-| F10 | info | policy | B13 blocks (not asks) when planfile missing in protected tier | `terraform apply tfplan`, no file | open |
-| F11 | info | policy | create of unprotected prod stateful resource is allowed | real `aws_db_instance` create | open |
+| F9 | low | design | base32/gzip decoders not followed (ask, not block) | `base32 -d \| bash` (AD-D2/D3) | **fixed** (#10) |
+| F10 | info | policy | B13 blocks (not asks) when planfile missing in protected tier | `terraform apply tfplan`, no file | **fixed** (#10) |
+| F11 | info | policy | create of unprotected prod stateful resource is allowed | real `aws_db_instance` create | **fixed** (#10, narrowed) |
 
-**Update (post-merge):** F1–F7 were fixed in follow-up PRs #2 (analyzer: F1–F4) and
-#3 (robustness: F5–F7), and F8 in #1. After those merges the adversarial pack catches
-**51/51** dangerous with 0 benign false positives, and the pathological inputs are
-bounded (≈60k pipes 23 s → 70 ms; 5k nested braces 329 MB → ~0; 20 MB plan → 30 ms
-block). F9–F11 remain **open** by choice: F9 is a safe degradation (ask, not a miss),
-and F10/F11 are policy questions for the maintainer, not bugs. The original review made
-no logic changes; the fixes above did.
+## Status of findings
+
+All eleven findings have been addressed (see the Status column above): F1–F4 in #2,
+F5–F7 in #3, F8 in #1, and F9–F11 in #10. After the #2/#3 merges the adversarial pack
+catches **51/51** dangerous with 0 benign false positives, and the pathological inputs
+are bounded (≈60k pipes 23 s → 70 ms; 5k nested braces 329 MB → ~0; 20 MB plan → 30 ms
+block).
+
+### F11 decision (narrowed rule)
+
+F11 asked whether creating an unprotected stateful resource should at least ask. We
+took the **narrow** version, because asking on every unprotected create is too noisy:
+`deletion_protection` defaults to `false`, so nearly every prod database create would
+ask, which hurts the Gate 1 target of ≤5% of benign actions flagged and trains people
+to click through prompts. The risk is also later, not at create time — the damage
+happens on replace/destroy, which the existing rules already gate.
+
+Rule as implemented (`stateful-unprotected-create`, high → protected tier asks):
+
+- **Ask** only when a database (`aws_db_instance`, `aws_rds_cluster`,
+  `aws_docdb_cluster`, `aws_neptune_cluster`) is created with **both**
+  `deletion_protection` off **and** `skip_final_snapshot` true — no safety net at all.
+- **Allow + note** when only one safeguard is off (e.g. protection off but a final
+  snapshot kept): recorded as an Info `stateful-create-note` in the decision log, no
+  prompt.
+- Non-database stateful creates are not flagged on create.
+
+High severity already means "ask in protected, allow elsewhere", so no separate tier
+check was needed. **Fallback if preferred:** keep the broader "any unprotected
+stateful create" rule but still only in the protected tier, with this narrow form as
+the documented default. **Measure it:** the observe-mode trial (Gate 1) should count
+how many would-be asks this rule produces across the 5 real repos — loosen it if
+noisy, widen it if it misses a real case.
+
+### Other changes since the review
+
+These came out of the live T3 run and the follow-up PRs; none changes the verdict
+table:
+
+- **`ask` in `bypassPermissions`.** T3.2 showed Claude Code 2.1.312 honours a hook
+  `ask` in `bypassPermissions` (a prompt is shown), so only `dontAsk` now converts
+  `ask` to block. This is observed, not documented — rerun T3.2 on new Claude Code
+  versions (`docs/limits.md`).
+- **Codex fail-open.** Codex has no `onFailure`; a missing, killed or crashed hook
+  fails open (T3: exit 127 and a no-status-code exit both ran the tool). seatbelt now
+  recovers in-process panics and blocks, so the only remaining fail-open case is the
+  binary not starting. Use Codex's sandbox and approval settings as the backstop.
+- **Internal deadline.** On the 25 s deadline seatbelt cancels in-flight work
+  (including the `show` subprocess) and now fails closed in **every** tier.
+- **Launch directory.** `doctor` warns when a project-scope hook is not in the
+  directory the agent is launched from (project settings are read only from there).
+- **Human-facing text.** An `ask` prompt now shows human-facing wording; the
+  agent-facing "Next step" text is kept for blocks.
+
+### Live T3 summary (Claude Code 2.1.312, Codex 0.159.2/0.165.0)
+
+The per-test procedure is in `review/manual_agent_tests.md`; the full per-test log is
+in `review/T3_RESULTS.md`. Key outcomes used above: Claude Code shows the `ask` prompt
+in `bypassPermissions`; Claude Code blocks missing-binary / timeout / signal-kill via
+`onFailure: block`; Codex converts `ask` to a block and fails open on a missing binary
+(exit 127) and a signal-kill (no status code). **Codex timeout was not tested**, and
+the merged-config explanation for the "a failed hook does not override seatbelt's
+block" observation is marked *likely* in the log (the hook file contents were not
+captured).
 
 ## Still unverified
 
-- Any live Claude Code or Codex session (output format, `ask` in bypass modes, the
-  chaos cases) — `review/manual_agent_tests.md`.
+- Codex timeout behavior (the missing-binary and signal-kill fail-open cases were
+  tested in T3; the timeout case was not). macOS/Windows and other agents (Cursor, …).
 - OpenTofu planfile workspace check (tofu not installed).
 - The published GuardFall corpus itself (no public download URL found; the classes
   were reproduced from the Adversa/CSA write-ups).
@@ -303,10 +361,10 @@ no logic changes; the fixes above did.
 ## Open decisions to raise
 
 1. Adopt `harness/pack_v0_original` as the Gate 0 benchmark? It is the only set not
-   authored by the build session; seatbelt passes it in protected (17/17, B13 blocks
-   on a missing planfile).
+   authored by the build session; seatbelt passes it in protected (17/17; with F10,
+   B13 now *asks* on a missing planfile instead of blocking).
 2. Gate 1 observe-mode trial threshold — I agree with ≤5% benign flagged and zero
    critical misses; note F1–F4 are zero-rate on ordinary commands but 100% on their
    specific triggers, so the trial corpus should include wrapper/interpreter forms.
-3. Who runs the live Claude Code + Codex tests (T3.*) and on which version (needs
-   ≥ v2.1.295 for `onFailure`).
+3. ~~Who runs the live Claude Code + Codex tests~~ — done (T3 on Claude Code 2.1.312,
+   Codex 0.159.2/0.165.0).

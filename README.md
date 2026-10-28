@@ -2,9 +2,9 @@
 
 A deterministic, local pre-execution check for coding agents (Claude Code, Codex, and others with pre-tool hooks) that touch Terraform or OpenTofu infrastructure. Before the agent runs a tool call, seatbelt returns **allow**, **ask** or **block**, with a reason and a next step the agent can act on.
 
-> Working name. Status: v1 core, pre-release. Not yet tested with a live agent; see [ACCEPTANCE.md](ACCEPTANCE.md) for what has and has not been verified.
+> Working name. Status: v1 core, pre-release. Live-tested with Claude Code 2.1.312 and Codex 0.159.2/0.165.0 (the T3 suite); see [ACCEPTANCE.md](ACCEPTANCE.md) for what has and has not been verified.
 >
-> An independent review ([REVIEW.md](REVIEW.md)) stress-tested this build. The seven defects it found are **fixed** (F1–F4 analyzer bypasses, F5–F7 pathological-input robustness, F8 a dependency advisory); three lower-priority items are **open** by choice (F9 base32/gzip decoder chains are refused as *ask* rather than decoded to a hard block; F10 and F11 are policy questions). Details in [REVIEW.md](REVIEW.md).
+> An independent review ([REVIEW.md](REVIEW.md)) stress-tested this build; all eleven findings it raised are addressed (F1–F4 analyzer bypasses, F5–F7 pathological-input robustness, F8 a dependency advisory, F9 base32/gzip/tee decoder chains now decoded to a block, and the F10/F11 policy nuances). Details in [REVIEW.md](REVIEW.md).
 
 ## Why another guard
 
