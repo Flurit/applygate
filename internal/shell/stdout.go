@@ -49,6 +49,15 @@ func (a *analyzer) stdout(s *syntax.Stmt, st *state, in stdin, depth int) (strin
 	}
 	switch c := s.Cmd.(type) {
 	case *syntax.BinaryCmd:
+		if c.Op == syntax.AndStmt {
+			// cd X && pwd: both sides run in order, in the same shell.
+			left, ok := a.stdout(c.X, st, in, depth+1)
+			if !ok {
+				return "", false
+			}
+			right, ok := a.stdout(c.Y, st, stdin{}, depth+1)
+			return left + right, ok
+		}
 		if c.Op != syntax.Pipe {
 			return "", false
 		}
@@ -275,6 +284,14 @@ func (a *analyzer) builtinOut(args []Word, st *state, in stdin) (string, bool) {
 		if len(rest) == 1 {
 			return filepath.Base(rest[0]) + "\n", true
 		}
+	case "cd":
+		// Only inside a command substitution's own shell: changes the
+		// directory that a later pwd in the same substitution reports.
+		if len(rest) != 1 || strings.HasPrefix(rest[0], "-") || st.dir == "" && !filepath.IsAbs(rest[0]) {
+			return "", false
+		}
+		st.dir = a.abs(st, rest[0])
+		return "", true
 	case "pwd":
 		if st.dir != "" {
 			return st.dir + "\n", true
@@ -306,4 +323,21 @@ func containsAll(ss []string, want ...string) bool {
 		}
 	}
 	return true
+}
+
+// stdoutSeq is stdout for a list of statements run in order in one shell,
+// such as the body of $(cd "$dir"; pwd).
+func (a *analyzer) stdoutSeq(stmts []*syntax.Stmt, st *state) (string, bool) {
+	if len(stmts) == 0 || len(stmts) > 4 {
+		return "", false
+	}
+	var b strings.Builder
+	for _, s := range stmts {
+		out, ok := a.stdout(s, st, stdin{}, 0)
+		if !ok {
+			return "", false
+		}
+		b.WriteString(out)
+	}
+	return b.String(), true
 }

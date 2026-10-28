@@ -65,7 +65,7 @@ func TestAnalyze(t *testing.T) {
 		{`python3 -c "import os; os.system('terraform destroy')"`, []string{"PROBLEM: python3 code mentions"}, nil},
 		{"sudo -u ops env AWS_PROFILE=prod timeout 30 terraform apply -auto-approve", []string{"/repo: terraform apply -auto-approve"}, nil},
 		{"for c in plan destroy; do terraform $c; done", []string{"/repo: terraform plan", "/repo: terraform destroy"}, nil},
-		{"f(){ terraform \"$@\"; }; f destroy", []string{"/repo: terraform <?>"}, nil},
+		{"f(){ terraform \"$@\"; }; f destroy", []string{"/repo: terraform destroy"}, nil},
 		{"f(){ terraform $1; }; f destroy", []string{"/repo: terraform destroy"}, nil},
 		{"terraform {destroy,plan}", []string{"/repo: terraform destroy plan"}, nil},
 		{"find . -name '*.tf' -exec terraform destroy \\;", []string{"/repo: terraform destroy"}, nil},
@@ -196,6 +196,61 @@ func TestWrapperAndInterpreterGaps(t *testing.T) {
 			if strings.Contains(got, n) {
 				t.Errorf("%q: did not want %q in:\n%s", c.cmd, n, got)
 			}
+		}
+	}
+}
+
+func TestCredentialWrappersAndScriptIdioms(t *testing.T) {
+	fs := fakeFS(map[string]string{
+		"/repo/patterns/x/destroy.sh": "#!/usr/bin/env bash\nset -euo pipefail\n" +
+			"SCRIPTDIR=\"$( cd \"$( dirname \"${BASH_SOURCE[0]}\" )\" && pwd )\"\n" +
+			"ROOTDIR=\"$(cd ${SCRIPTDIR}/../..; pwd )\"\n" +
+			"terraform -chdir=$SCRIPTDIR destroy -auto-approve\n" +
+			"echo $ROOTDIR\n",
+		"/repo/retry.sh": "#!/bin/bash\nretry() { for i in 1 2 3; do if \"$@\"; then return 0; fi; done; return 1; }\n" +
+			"retry kubectl -n \"${1}\" delete application \"${2}\"\nretry terraform destroy\n",
+	})
+	cases := []struct {
+		cmd, want, profile string
+	}{
+		{"aws-vault exec prod-admin -- terraform destroy -auto-approve", "/repo: terraform destroy -auto-approve", "prod-admin"},
+		{"aws-vault exec --duration 1h prod-admin terraform destroy", "/repo: terraform destroy", "prod-admin"},
+		{"gds aws govuk-production-admin -- terraform apply", "/repo: terraform apply", "govuk-production-admin"},
+		{"saml2aws exec --exec-profile prod -- aws s3 rb s3://b --force", "/repo: aws s3 rb s3://b --force", "prod"},
+		{"aws-sso exec -p prod -- terraform destroy", "/repo: terraform destroy", "prod"},
+		{"doppler run --project p -- terraform destroy", "/repo: terraform destroy", ""},
+		{"op run --env-file .env -- tofu destroy", "/repo: tofu destroy", ""},
+		{"chamber exec svc1 svc2 -- terraform destroy", "/repo: terraform destroy", ""},
+		{"envchain aws terraform destroy", "/repo: terraform destroy", "aws"},
+		{"./patterns/x/destroy.sh", "/repo: terraform -chdir=/repo/patterns/x destroy -auto-approve", ""},
+		{"./patterns/x/destroy.sh", "/repo: echo /repo", ""},
+		{"./retry.sh argocd app1", "/repo: kubectl -n argocd delete application app1", ""},
+		{"./retry.sh argocd app1", "/repo: terraform destroy", ""},
+	}
+	for _, c := range cases {
+		r := Analyze(c.cmd, Options{Dir: "/repo", ReadFile: fs})
+		got := strings.Join(render(r), "\n")
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%q: want %q in\n%s", c.cmd, c.want, got)
+			continue
+		}
+		if c.profile != "" {
+			found := false
+			for _, inv := range r.Invocations {
+				if inv.Env["AWS_PROFILE"] == c.profile {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("%q: AWS_PROFILE %q not set on the wrapped command", c.cmd, c.profile)
+			}
+		}
+	}
+	// Other subcommands of the same tools run nothing.
+	for _, cmd := range []string{"aws-vault list", "op read op://vault/item/field", "doppler secrets", "gds aws"} {
+		r := Analyze(cmd, Options{Dir: "/repo", ReadFile: fs})
+		if len(r.Invocations) != 1 || len(r.Problems) != 0 {
+			t.Errorf("%q: %v", cmd, render(r))
 		}
 	}
 }
