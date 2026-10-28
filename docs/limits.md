@@ -5,6 +5,7 @@ seatbelt reduces the chance that a mistaken or manipulated agent damages infrast
 ## What it cannot see
 
 - **Paths around the hook.** If the agent can reach cloud credentials and run code by any route the hook does not inspect, seatbelt does not see it. Examples: an MCP server with its own credentials, a tool the matcher does not cover, or a process started earlier in the background.
+- **Encoded payloads.** `base64 -d`, `base32 -d`, `gzip`/`gunzip`/`zcat`, `xxd -r -p`, `rev` and `tee` piped into a shell are decoded and the result is analyzed. Decoder output is capped (256 KB) to stop a decompression bomb. Encodings seatbelt does not implement, or payloads built from unresolved runtime values, still fall back to an ask.
 - **Code in other languages.** `python -c`, `node -e` and scripts with non-shell shebangs are not analyzed. If such code mentions terraform, tofu, kubectl, aws operations or guard files, seatbelt treats it as dynamic (ask) or as tampering. If it mentions none of them, it passes.
 - **Runtime values.** Environment variables seatbelt cannot see, files written earlier in the same command, `read` from stdin, and command substitutions other than echo/printf/cat/base64/xxd/rev/which/dirname are unresolved. In a command position they cause an ask. As plain arguments to non-infrastructure programs they do not.
 - **Aliases and functions from the user's shell profile.** Only aliases defined in the same command or in config (`aliases:`, default `tf: terraform`) are expanded.

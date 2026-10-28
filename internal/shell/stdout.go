@@ -1,13 +1,20 @@
 package shell
 
 import (
+	"compress/gzip"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
+	"io"
 	"path/filepath"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
 )
+
+// maxDecodeBytes caps decoder/decompressor output so a decompression bomb
+// cannot blow up memory. A real embedded command is tiny.
+const maxDecodeBytes = 256 << 10
 
 // stdout computes what a statement would print, for the small set of
 // commands whose output is fully determined by their arguments and input:
@@ -179,6 +186,57 @@ func (a *analyzer) builtinOut(args []Word, st *state, in stdin) (string, bool) {
 			}
 		}
 		return "", false
+	case "base32", "gbase32":
+		decode := false
+		for _, f := range rest {
+			if f == "-d" || f == "--decode" {
+				decode = true
+			}
+		}
+		if !decode || !in.present || !in.known {
+			return "", false
+		}
+		clean := strings.ToUpper(strings.Join(strings.Fields(in.text), ""))
+		for _, enc := range []*base32.Encoding{base32.StdEncoding, base32.HexEncoding} {
+			if b, err := enc.DecodeString(clean); err == nil {
+				return string(b), true
+			}
+			if b, err := enc.WithPadding(base32.NoPadding).DecodeString(strings.TrimRight(clean, "=")); err == nil {
+				return string(b), true
+			}
+		}
+		return "", false
+	case "gzip", "gunzip", "zcat", "pigz", "unpigz":
+		if !in.present || !in.known {
+			return "", false
+		}
+		decode := name == "gunzip" || name == "zcat" || name == "unpigz"
+		for _, f := range rest {
+			if f == "-d" || f == "--decode" || f == "--decompress" || f == "--uncompress" ||
+				(strings.HasPrefix(f, "-") && !strings.HasPrefix(f, "--") && strings.ContainsRune(f, 'd')) {
+				decode = true
+			}
+		}
+		if !decode {
+			return "", false
+		}
+		zr, err := gzip.NewReader(strings.NewReader(in.text))
+		if err != nil {
+			return "", false
+		}
+		b, err := io.ReadAll(io.LimitReader(zr, maxDecodeBytes))
+		if err != nil {
+			return "", false
+		}
+		return string(b), true
+	case "tee":
+		// tee copies stdin to stdout (file writes are a side effect we don't
+		// model here), so for stdout it is a passthrough. This resolves
+		// `... | tee file | sh` to the piped text.
+		if !in.present {
+			return "", false
+		}
+		return in.text, in.known
 	case "xxd":
 		if !in.present || !in.known || !containsAll(rest, "-r", "-p") && !containsAll(rest, "-r", "-ps") {
 			return "", false

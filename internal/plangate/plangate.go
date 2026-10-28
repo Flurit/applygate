@@ -88,7 +88,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 		return nil, fmt.Errorf("plan JSON: %w", err)
 	}
 	res := &Result{}
-	var stateful, protection, exposure, stateInfra, outOfScope []string
+	var stateful, protection, exposure, stateInfra, outOfScope, unprotectedCreate []string
 	var crit = func(list *[]string, s string) { *list = append(*list, s) }
 
 	for _, rc := range p.ResourceChanges {
@@ -135,6 +135,11 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 				crit(&protection, rc.Address+": "+pr.What+" while it is being replaced")
 			case onChange && (acts.Update() || repl) && afterUnsafe && !beforeUnsafe:
 				crit(&protection, rc.Address+": "+pr.What)
+			case acts.Create() && afterUnsafe && rules.stateful[rc.Type]:
+				// F11: a core stateful resource created with a safeguard
+				// already disabled. This removes nothing today, so it is High
+				// (protected tiers ask) rather than Critical.
+				crit(&unprotectedCreate, rc.Address+": created with "+pr.What)
 			}
 		}
 		if !del {
@@ -165,6 +170,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 		add("destroy-count", preflight.High, fmt.Sprintf("plan destroys or replaces %d resources; the limit for this tier is %d", n, in.MaxDestroy),
 			append(append([]string(nil), res.Deletes...), res.Replaces...))
 	}
+	add("stateful-unprotected-create", preflight.High, "plan creates stateful resources without data protection", unprotectedCreate)
 	add("stateful-destroyed", preflight.Critical, "plan destroys or replaces stateful resources", stateful)
 	add("protection-removed", preflight.Critical, "plan removes data protection", protection)
 	add("exposure", preflight.High, "plan exposes resources", exposure)

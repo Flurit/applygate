@@ -2,6 +2,7 @@ package hook
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +93,20 @@ func TestFailureBehavior(t *testing.T) {
 				t.Fatalf("got %s, want %s (stderr %q)", got, c.want, o.Stderr)
 			}
 		})
+	}
+}
+
+func TestMissingPlanFileAsksNotBlocks(t *testing.T) {
+	// F10: applying a plan whose file does not exist is a High "plan-missing"
+	// finding, so in a protected tier it asks (nothing to apply) rather than
+	// blocking as an unreadable plan.
+	root := setup(t, "enforce", "auto")
+	noPlan := func(string, string, string) ([]byte, error) { return nil, errors.New("show: no such file") }
+	o := Run(Claude{}, strings.NewReader(event("Bash", filepath.Join(root, "prod"),
+		map[string]any{"command": "terraform apply tfplan"})),
+		Options{NoLog: true, NoGit: true, Env: map[string]string{}, PlanJSON: noPlan})
+	if got := decision(t, o); got != "ask" {
+		t.Fatalf("missing plan file in protected tier should ask, got %s (exit %d)", got, o.Exit)
 	}
 }
 

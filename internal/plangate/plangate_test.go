@@ -133,3 +133,40 @@ func TestPlanTooLarge(t *testing.T) {
 		t.Fatalf("want one critical plan-too-large finding, got %+v", res.Findings)
 	}
 }
+
+func TestUnprotectedStatefulCreate(t *testing.T) {
+	R := DefaultRules()
+
+	// F11: creating a prod DB with deletion protection off and the final
+	// snapshot skipped is a High finding (protected tiers ask).
+	res, _ := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(
+		rc{"aws_db_instance.d", "aws_db_instance", []string{"create"}, nil,
+			map[string]any{"deletion_protection": false, "skip_final_snapshot": true}},
+	)}, R)
+	sev := rules(t, res)
+	if s, ok := sev["stateful-unprotected-create"]; !ok || s != preflight.High {
+		t.Fatalf("want High stateful-unprotected-create, got findings %+v", res.Findings)
+	}
+	// Nothing is destroyed on a create.
+	if _, ok := sev["stateful-destroyed"]; ok {
+		t.Fatalf("create must not be a destroy: %+v", res.Findings)
+	}
+
+	// A well-protected create (deletion protection on, snapshot kept) is clean.
+	res2, _ := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(
+		rc{"aws_db_instance.d", "aws_db_instance", []string{"create"}, nil,
+			map[string]any{"deletion_protection": true, "skip_final_snapshot": false}},
+	)}, R)
+	if _, ok := rules(t, res2)["stateful-unprotected-create"]; ok {
+		t.Fatalf("protected create should be clean: %+v", res2.Findings)
+	}
+
+	// A stateless resource create is never flagged by this rule.
+	res3, _ := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(
+		rc{"aws_instance.a", "aws_instance", []string{"create"}, nil,
+			map[string]any{"disable_api_termination": false}},
+	)}, R)
+	if _, ok := rules(t, res3)["stateful-unprotected-create"]; ok {
+		t.Fatalf("stateless create should not fire: %+v", res3.Findings)
+	}
+}
