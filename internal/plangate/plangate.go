@@ -13,7 +13,7 @@ import (
 
 	tfjson "github.com/hashicorp/terraform-json"
 
-	"github.com/flurit-ai/seatbelt/internal/preflight"
+	"github.com/Flurit/seatbelt/internal/preflight"
 )
 
 //go:embed rules/aws.json

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flurit-ai/seatbelt/internal/decisionlog"
+	"github.com/Flurit/seatbelt/internal/decisionlog"
 )
 
 const prodConfig = `version: 1

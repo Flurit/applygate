@@ -14,7 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/flurit-ai/seatbelt/internal/classify"
+	"github.com/Flurit/seatbelt/internal/classify"
 )
 
 // Tier is an environment tier.

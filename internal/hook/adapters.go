@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/flurit-ai/seatbelt/internal/classify"
-	"github.com/flurit-ai/seatbelt/internal/policy"
+	"github.com/Flurit/seatbelt/internal/classify"
+	"github.com/Flurit/seatbelt/internal/policy"
 )
 
 // Output is what the hook process writes and its exit code.

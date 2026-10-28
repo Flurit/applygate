@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flurit-ai/seatbelt/internal/config"
-	"github.com/flurit-ai/seatbelt/internal/decisionlog"
-	"github.com/flurit-ai/seatbelt/internal/policy"
-	"github.com/flurit-ai/seatbelt/internal/preflight"
+	"github.com/Flurit/seatbelt/internal/config"
+	"github.com/Flurit/seatbelt/internal/decisionlog"
+	"github.com/Flurit/seatbelt/internal/policy"
+	"github.com/Flurit/seatbelt/internal/preflight"
 )
 
 // Version is set at build time.

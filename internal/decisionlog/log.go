@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flurit-ai/seatbelt/internal/policy"
+	"github.com/Flurit/seatbelt/internal/policy"
 )
 
 // Entry is one logged decision.

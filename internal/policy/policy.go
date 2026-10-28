@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flurit-ai/seatbelt/internal/classify"
-	"github.com/flurit-ai/seatbelt/internal/config"
-	"github.com/flurit-ai/seatbelt/internal/plangate"
-	"github.com/flurit-ai/seatbelt/internal/preflight"
-	"github.com/flurit-ai/seatbelt/internal/shell"
+	"github.com/Flurit/seatbelt/internal/classify"
+	"github.com/Flurit/seatbelt/internal/config"
+	"github.com/Flurit/seatbelt/internal/plangate"
+	"github.com/Flurit/seatbelt/internal/preflight"
+	"github.com/Flurit/seatbelt/internal/shell"
 )
 
 // Verdict is allow, ask or block.

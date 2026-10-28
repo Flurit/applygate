@@ -1,4 +1,4 @@
-module github.com/flurit-ai/seatbelt
+module github.com/Flurit/seatbelt
 
 go 1.26.7
 

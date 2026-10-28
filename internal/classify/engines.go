@@ -3,7 +3,7 @@ package classify
 import (
 	"strings"
 
-	"github.com/flurit-ai/seatbelt/internal/shell"
+	"github.com/Flurit/seatbelt/internal/shell"
 )
 
 // Terraform/OpenTofu flags that take a separate value ("-var a=b").

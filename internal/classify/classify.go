@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/flurit-ai/seatbelt/internal/shell"
+	"github.com/Flurit/seatbelt/internal/shell"
 )
 
 // Class is a command class from the v1 verdict table.

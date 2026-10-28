@@ -18,7 +18,7 @@ It is not a sandbox and not an AI reviewer. No model is in the decision path, th
 ## Quickstart
 
 ```bash
-go install github.com/flurit-ai/seatbelt/cmd/seatbelt@latest   # or build: go build -o bin/seatbelt ./cmd/seatbelt
+go install github.com/Flurit/seatbelt/cmd/seatbelt@latest   # or build: go build -o bin/seatbelt ./cmd/seatbelt
 cd your-infra-repo
 seatbelt init                            # writes .seatbelt.yaml in observe mode
 $EDITOR .seatbelt.yaml                   # map paths/workspaces/profiles to tiers
@@ -83,4 +83,4 @@ harness/              scenario pack, fixtures, Go regression test, run.py replay
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE). Maintained by flurit-ai.
+Apache-2.0. See [LICENSE](LICENSE). Maintained by Flurit.

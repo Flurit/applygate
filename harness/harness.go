@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/flurit-ai/seatbelt/internal/hook"
-	"github.com/flurit-ai/seatbelt/internal/policy"
+	"github.com/Flurit/seatbelt/internal/hook"
+	"github.com/Flurit/seatbelt/internal/policy"
 )
 
 //go:embed all:pack

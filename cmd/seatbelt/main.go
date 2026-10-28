@@ -15,14 +15,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flurit-ai/seatbelt/harness"
-	"github.com/flurit-ai/seatbelt/internal/classify"
-	"github.com/flurit-ai/seatbelt/internal/config"
-	"github.com/flurit-ai/seatbelt/internal/decisionlog"
-	"github.com/flurit-ai/seatbelt/internal/hook"
-	"github.com/flurit-ai/seatbelt/internal/plangate"
-	"github.com/flurit-ai/seatbelt/internal/policy"
-	"github.com/flurit-ai/seatbelt/internal/shell"
+	"github.com/Flurit/seatbelt/harness"
+	"github.com/Flurit/seatbelt/internal/classify"
+	"github.com/Flurit/seatbelt/internal/config"
+	"github.com/Flurit/seatbelt/internal/decisionlog"
+	"github.com/Flurit/seatbelt/internal/hook"
+	"github.com/Flurit/seatbelt/internal/plangate"
+	"github.com/Flurit/seatbelt/internal/policy"
+	"github.com/Flurit/seatbelt/internal/shell"
 )
 
 const usage = `seatbelt: allow / ask / block for agent actions on Terraform and OpenTofu
@@ -350,7 +350,7 @@ func cmdSelftest(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-const starterConfig = `# seatbelt config. https://github.com/flurit-ai/seatbelt/blob/main/docs/config.md
+const starterConfig = `# seatbelt config. https://github.com/Flurit/seatbelt/blob/main/docs/config.md
 version: 1
 # Start in observe mode: decisions are logged but nothing is blocked.
 # Run "seatbelt report" after a few days, then switch to enforce.

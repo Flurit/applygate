@@ -1,5 +1,5 @@
 seatbelt (working name)
-Copyright 2026 flurit-ai and seatbelt contributors
+Copyright 2026 Flurit and seatbelt contributors
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 It uses mvdan.cc/sh (BSD-3-Clause), github.com/hashicorp/terraform-json (MPL-2.0)

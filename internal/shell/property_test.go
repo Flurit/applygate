@@ -84,7 +84,9 @@ func FuzzAnalyze(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, s string) {
 		ch := make(chan *Result, 1)
-		go func() { ch <- Analyze(s, Options{Dir: "/r", Env: map[string]string{"HOME": "/h"}, ReadFile: fakeFS(nil), MaxDepth: 6}) }()
+		go func() {
+			ch <- Analyze(s, Options{Dir: "/r", Env: map[string]string{"HOME": "/h"}, ReadFile: fakeFS(nil), MaxDepth: 6})
+		}()
 		var res *Result
 		select {
 		case res = <-ch:
