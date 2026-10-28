@@ -34,6 +34,8 @@ FALSE_POSITIVES = [
      lambda r: r["command"].startswith("source venv/")),
 ]
 DEBATABLE = [
+    ("debatable-policy", "read-only AWS SDK script asks (accepted cost of asking on SDK code in protected/standard tiers)",
+     lambda r: r["command"].endswith("iam-policy-generator.py")),
     ("debatable-policy", "kubectl delete of example manifests in a disposable tier asks (spec: cloud-destructive in disposable = ask)",
      lambda r: all(a["class"] == "cloud-destructive" and a["tier"] == "disposable" for a in r["actions"])),
 ]

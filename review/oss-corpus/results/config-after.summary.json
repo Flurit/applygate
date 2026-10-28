@@ -15,35 +15,34 @@
    "allow": 1158,
    "noise": 57,
    "placeholder": 18,
-   "expected": 84,
+   "expected": 85,
    "fp-analyzer": 4,
-   "fp-policy": 3,
    "fp-environment": 1,
-   "debatable-policy": 9,
+   "debatable-policy": 10,
+   "fp-policy": 1,
    "total": 1334,
    "runnable": 1259,
-   "false_positives": 8,
-   "fp_rate": 0.64,
-   "fp_rate_incl_debatable": 1.35
+   "false_positives": 6,
+   "fp_rate": 0.48,
+   "fp_rate_incl_debatable": 1.27
   },
   "govuk-infrastructure": {
-   "allow": 230,
+   "allow": 232,
    "fp-analyzer": 2,
    "noise": 21,
    "expected": 12,
    "placeholder": 13,
-   "fp-policy": 2,
    "fp-environment": 1,
    "total": 281,
    "runnable": 247,
-   "false_positives": 5,
-   "fp_rate": 2.02,
-   "fp_rate_incl_debatable": 2.02
+   "false_positives": 3,
+   "fp_rate": 1.21,
+   "fp_rate_incl_debatable": 1.21
   },
   "terraform-aws-eks-blueprints": {
-   "allow": 632,
-   "debatable-policy": 9,
-   "expected": 53,
+   "allow": 630,
+   "debatable-policy": 10,
+   "expected": 54,
    "placeholder": 2,
    "noise": 27,
    "fp-policy": 1,
@@ -52,7 +51,7 @@
    "runnable": 697,
    "false_positives": 3,
    "fp_rate": 0.43,
-   "fp_rate_incl_debatable": 1.72
+   "fp_rate_incl_debatable": 1.87
   },
   "terraform-aws-vpc": {
    "allow": 53,
@@ -76,7 +75,7 @@
   [
    "expected",
    "ask/block matches the policy for the command and tier",
-   84
+   85
   ],
   [
    "noise",
@@ -97,11 +96,6 @@
    "placeholder",
    "documentation placeholder changes how the line parses",
    4
-  ],
-  [
-   "fp-policy",
-   "terraform init -reconfigure used to switch per-environment backends; spec classes it as state surgery",
-   3
   ],
   [
    "noise",
@@ -126,6 +120,16 @@
   [
    "fp-analyzer",
    "git command held in a variable built from a runtime loop value (${git} reflog ...)",
+   1
+  ],
+  [
+   "fp-policy",
+   "terraform init -reconfigure used to switch per-environment backends; spec classes it as state surgery",
+   1
+  ],
+  [
+   "debatable-policy",
+   "read-only AWS SDK script asks (accepted cost of asking on SDK code in protected/standard tiers)",
    1
   ]
  ]

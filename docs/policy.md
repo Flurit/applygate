@@ -29,6 +29,8 @@
 | cloud-write (create/update calls) | ask | allow | allow | added |
 | credential-access | ask | ask | ask | added (spec S10) |
 
+`init -reconfigure` is state surgery only when it is bare or migrates state: with `-backend-config` (resolved files or `key=value` pairs) and without `-migrate-state`/`-force-copy` it is read-only, because it only re-points the working directory. Later commands in the same command line are then judged against the backend the config describes, and the config file's name is a name hint (`production.backend` → protected). This deviates from the spec, which lists `init -reconfigure` as state surgery; the open-source corpus trial found it used routinely to switch environments ([oss-corpus-trial.md](oss-corpus-trial.md)).
+
 ## Finding severity × tier
 
 | Severity | Protected | Standard | Disposable |
@@ -54,6 +56,7 @@
 | plan-missing (the plan file does not exist, so there is nothing to apply) | high | plan |
 | workspace-mismatch (planfile workspace ≠ selected) | critical | planfile |
 | backend-changed | high | preflight |
+| backend-config-unreadable (an init in the same command points at a `-backend-config` file that cannot be read; only on later state-changing commands) | high | preflight |
 | stale-state | high | preflight |
 | state-lineage (local state file is from another lineage, behind or ahead of the remote serial; only with `preflight.live_state`) | high | preflight (state pull, opt-in) |
 | lockfile-drift | high | preflight (git) |
