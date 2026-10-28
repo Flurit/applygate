@@ -5,7 +5,7 @@
 #     (CGO off, -trimpath, timestamps pinned to the commit),
 #   - tar.gz archives with LICENSE, NOTICE and README.md,
 #   - checksums.txt (sha256) signed keylessly with cosign (Sigstore, using the
-#     workflow's GitHub OIDC identity; verify with `cosign verify-blob`),
+#     workflow's GitHub OIDC identity; a .sigstore.json bundle, see `signs`),
 #   - a syft SBOM for every archive.
 # Build provenance attestations are produced by the workflow afterwards with
 # actions/attest-build-provenance, not here.
@@ -58,19 +58,23 @@ checksum:
   algorithm: sha256
 
 signs:
-  # Keyless signing of checksums.txt. The signature and certificate are
-  # uploaded next to it as checksums.txt.sig and checksums.txt.pem.
+  # Keyless signing of checksums.txt with cosign 3.x, which writes one
+  # Sigstore bundle (signature + certificate + transparency-log entry) and
+  # ignores the old --output-signature/--output-certificate flags. The bundle
+  # is uploaded next to the checksums as checksums.txt.sigstore.json. Verify:
+  #   cosign verify-blob --bundle checksums.txt.sigstore.json \
+  #     --certificate-identity-regexp '^https://github.com/Flurit/seatbelt/' \
+  #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  #     checksums.txt
   - id: checksums
     cmd: cosign
     artifacts: checksum
-    certificate: "${artifact}.pem"
-    signature: "${artifact}.sig"
+    signature: "${artifact}.sigstore.json"
     output: true
     args:
       - sign-blob
       - --yes
-      - --output-signature=${signature}
-      - --output-certificate=${certificate}
+      - --bundle=${signature}
       - ${artifact}
 
 sboms:
