@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 1 * *" # monthly: hook formats and guards change quickly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test -race -count=1 ./...
+      - name: build
+        run: go build -trimpath -o bin/seatbelt ./cmd/seatbelt
+      - name: selftest (scenario pack through the binary)
+        run: bin/seatbelt selftest
+      - name: black-box replay (never executes scenario commands)
+        run: python3 -I harness/run.py --guard bin/seatbelt --md replay.md && cat replay.md >> "$GITHUB_STEP_SUMMARY"
+      - name: fuzz shell analyzer (short)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -run XXX -fuzz FuzzAnalyze -fuzztime 30s ./internal/shell

@@ -1,0 +1,55 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "aws_security_group.db",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "db",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "db",
+     "ingress": [
+      {
+       "from_port": 5432,
+       "to_port": 5432,
+       "protocol": "tcp",
+       "cidr_blocks": [
+        "0.0.0.0/0"
+       ],
+       "ipv6_cidr_blocks": []
+      }
+     ]
+    },
+    "after_unknown": {}
+   }
+  },
+  {
+   "address": "aws_iam_policy.agent",
+   "mode": "managed",
+   "type": "aws_iam_policy",
+   "name": "agent",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "agent",
+     "policy": "{\"Version\": \"2012-10-17\", \"Statement\": [{\"Effect\": \"Allow\", \"Action\": \"*\", \"Resource\": \"*\"}]}"
+    },
+    "after_unknown": {}
+   }
+  }
+ ],
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}

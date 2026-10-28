@@ -1,0 +1,23 @@
+# Fixture config for the scenario pack. Paths are relative to this file.
+version: 1
+mode: enforce
+strict: true
+environments:
+  - name: prod
+    tier: protected
+    match:
+      paths: ["envs/prod/**", "envs/prod-*/**"]
+      workspaces: ["prod", "production"]
+      backends: ["s3://acme-tf-state-prod/*"]
+      aws_profiles: ["prod-admin", "prod-*"]
+  - name: staging
+    tier: standard
+    match:
+      paths: ["envs/staging/**", "envs/qa/**", "envs/shared/**"]
+      workspaces: ["staging"]
+      aws_profiles: ["staging"]
+  - name: dev
+    tier: disposable
+    match:
+      paths: ["envs/dev/**", "envs/sandbox/**"]
+      aws_profiles: ["dev", "sandbox"]

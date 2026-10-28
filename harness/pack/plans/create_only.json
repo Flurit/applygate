@@ -1,0 +1,72 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "aws_s3_bucket.logs",
+   "mode": "managed",
+   "type": "aws_s3_bucket",
+   "name": "logs",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "bucket": "acme-logs",
+     "force_destroy": false
+    },
+    "after_unknown": {}
+   }
+  },
+  {
+   "address": "aws_iam_role.reader",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "reader",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "reader"
+    },
+    "after_unknown": {}
+   }
+  },
+  {
+   "address": "aws_security_group.web",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "web",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "name": "web",
+     "ingress": [
+      {
+       "from_port": 443,
+       "to_port": 443,
+       "protocol": "tcp",
+       "cidr_blocks": [
+        "0.0.0.0/0"
+       ],
+       "ipv6_cidr_blocks": []
+      }
+     ]
+    },
+    "after_unknown": {}
+   }
+  }
+ ],
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}

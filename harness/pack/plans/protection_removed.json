@@ -1,0 +1,61 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "aws_s3_bucket.data",
+   "mode": "managed",
+   "type": "aws_s3_bucket",
+   "name": "data",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "before": {
+     "bucket": "acme-data",
+     "force_destroy": false
+    },
+    "after": {
+     "bucket": "acme-data",
+     "force_destroy": true
+    },
+    "after_unknown": {}
+   }
+  },
+  {
+   "address": "aws_s3_bucket_versioning.data",
+   "mode": "managed",
+   "type": "aws_s3_bucket_versioning",
+   "name": "data",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "before": {
+     "bucket": "acme-data",
+     "versioning_configuration": [
+      {
+       "status": "Enabled",
+       "mfa_delete": ""
+      }
+     ]
+    },
+    "after": {
+     "bucket": "acme-data",
+     "versioning_configuration": [
+      {
+       "status": "Suspended",
+       "mfa_delete": ""
+      }
+     ]
+    },
+    "after_unknown": {}
+   }
+  }
+ ],
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}

@@ -1,0 +1,64 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "aws_db_instance.main",
+   "mode": "managed",
+   "type": "aws_db_instance",
+   "name": "main",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "delete"
+    ],
+    "before": {
+     "identifier": "prod-db",
+     "engine": "postgres",
+     "deletion_protection": false,
+     "skip_final_snapshot": true,
+     "backup_retention_period": 7
+    },
+    "after": null,
+    "after_unknown": {}
+   }
+  },
+  {
+   "address": "aws_backup_vault.main",
+   "mode": "managed",
+   "type": "aws_backup_vault",
+   "name": "main",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "delete"
+    ],
+    "before": {
+     "name": "prod-vault"
+    },
+    "after": null,
+    "after_unknown": {}
+   }
+  },
+  {
+   "address": "aws_backup_plan.daily",
+   "mode": "managed",
+   "type": "aws_backup_plan",
+   "name": "daily",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "delete"
+    ],
+    "before": {
+     "name": "daily"
+    },
+    "after": null,
+    "after_unknown": {}
+   }
+  }
+ ],
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}

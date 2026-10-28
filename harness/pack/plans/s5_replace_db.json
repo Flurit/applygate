@@ -1,0 +1,37 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "aws_db_instance.main",
+   "mode": "managed",
+   "type": "aws_db_instance",
+   "name": "main",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "delete",
+     "create"
+    ],
+    "before": {
+     "identifier": "prod-db",
+     "engine": "postgres",
+     "deletion_protection": true,
+     "skip_final_snapshot": false,
+     "backup_retention_period": 7
+    },
+    "after": {
+     "identifier": "prod-db",
+     "engine": "postgres",
+     "deletion_protection": false,
+     "skip_final_snapshot": true,
+     "backup_retention_period": 7
+    },
+    "after_unknown": {}
+   }
+  }
+ ],
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}

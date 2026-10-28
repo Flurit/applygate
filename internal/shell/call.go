@@ -1,0 +1,522 @@
+package shell
+
+import (
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "ash": true, "mksh": true, "busybox": false}
+
+var foreignInterpreters = map[string]string{
+	"python": "-c", "python3": "-c", "python2": "-c", "perl": "-e", "ruby": "-e",
+	"node": "-e", "deno": "eval", "php": "-r", "pwsh": "-c", "powershell": "-c", "osascript": "-e",
+}
+
+func base(name string) string { return filepath.Base(name) }
+
+func lits(ss ...string) []Word {
+	out := make([]Word, len(ss))
+	for i, s := range ss {
+		out[i] = Word{Text: s, Resolved: true, Prefix: s}
+	}
+	return out
+}
+
+// call handles one simple command. cmdSt carries prefix assignments; st is
+// the enclosing shell state (mutated by cd, alias, and similar builtins).
+func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []string, depth int, in stdin) {
+	if len(args) == 0 {
+		return
+	}
+	if depth > a.opt.MaxDepth {
+		a.problem(st, via, joinWords(args), "nesting deeper than the analyzer follows")
+		return
+	}
+	record := func() {
+		a.res.Invocations = append(a.res.Invocations, Invocation{
+			Args: args, Dir: cmdSt.dir, Env: cmdSt.env(), Redirs: redirs, Via: append([]string(nil), via...),
+		})
+	}
+	if !args[0].Resolved {
+		record()
+		return
+	}
+	name := args[0].Text
+	bn := base(name)
+	rest := args[1:]
+
+	// Aliases expand only on unquoted names; we do not track quoting of the
+	// name, so expand whenever the name matches.
+	if rep, ok := st.aliases[name]; ok && !strings.Contains(name, "/") {
+		f := strings.Fields(rep)
+		if len(f) > 0 && f[0] != name {
+			a.call(append(lits(f...), rest...), redirs, cmdSt, st, append(via, "alias "+name), depth+1, in)
+			return
+		}
+	}
+	if body, ok := st.funcs[name]; ok {
+		fst := st.clone()
+		fst.params = make([]value, len(rest))
+		for i, w := range rest {
+			fst.params[i] = value{text: w.Text, ok: w.Resolved}
+		}
+		delete(fst.funcs, name) // stop direct recursion
+		a.stmt(body, fst, append(via, "function "+name), depth+1, in)
+		return
+	}
+
+	switch bn {
+	case "cd", "pushd":
+		target := ""
+		ok := true
+		for _, w := range rest {
+			if strings.HasPrefix(w.Text, "-") && w.Resolved && w.Text != "-" {
+				continue
+			}
+			target, ok = w.Text, w.Resolved
+			break
+		}
+		switch {
+		case !ok:
+			st.dir = ""
+		case target == "" || target == "~":
+			st.dir = a.opt.Env["HOME"]
+		case target == "-":
+			st.dir = ""
+		case st.dir == "" && !filepath.IsAbs(target):
+		default:
+			st.dir = a.abs(st, target)
+		}
+		return
+	case "alias":
+		for _, w := range rest {
+			if k, v, ok := strings.Cut(w.Text, "="); ok && w.Resolved {
+				st.aliases[k] = v
+			}
+		}
+		return
+	case "eval":
+		if !allResolved(rest) {
+			a.problem(st, via, joinWords(args), "eval of text that cannot be resolved statically")
+			return
+		}
+		a.source(joinWords(rest), st, append(via, "eval"), depth+1)
+		return
+	case "source", ".":
+		if len(rest) == 0 {
+			return
+		}
+		if !rest[0].Resolved {
+			a.problem(st, via, joinWords(args), "source of a file whose name cannot be resolved")
+			return
+		}
+		b, err := a.opt.ReadFile(a.abs(st, rest[0].Text))
+		if err != nil {
+			a.problem(st, via, joinWords(args), "source of a file that cannot be read: "+err.Error())
+			return
+		}
+		a.source(string(b), st, append(via, "source "+rest[0].Text), depth+1)
+		return
+	case "exec", "command", "builtin", "nohup", "time", "chronic", "unbuffer", "setsid", "caffeinate", "noglob":
+		if bn == "command" || bn == "type" {
+			for _, w := range rest {
+				if w.Text == "-v" || w.Text == "-V" {
+					return // lookup only
+				}
+			}
+		}
+		a.call(skipFlags(rest, map[string]bool{"-a": true}), redirs, cmdSt, st, append(via, bn), depth+1, in)
+		return
+	case "sudo", "doas":
+		a.call(skipFlags(rest, map[string]bool{"-u": true, "-g": true, "-C": true, "-D": true, "-h": true, "-p": true, "-r": true, "-t": true, "-U": true}), redirs, cmdSt, st, append(via, bn), depth+1, in)
+		return
+	case "nice", "ionice", "stdbuf", "flock", "taskset":
+		valued := map[string]bool{"-n": true, "-c": true, "-p": true, "-i": true, "-o": true, "-e": true, "-w": true}
+		r := skipFlags(rest, valued)
+		if bn == "flock" || bn == "taskset" {
+			if len(r) > 0 {
+				r = r[1:] // lock file or CPU mask
+			}
+		}
+		a.call(r, redirs, cmdSt, st, append(via, bn), depth+1, in)
+		return
+	case "timeout":
+		r := skipFlags(rest, map[string]bool{"-s": true, "-k": true, "--signal": true, "--kill-after": true})
+		if len(r) > 0 {
+			r = r[1:] // duration
+		}
+		a.call(r, redirs, cmdSt, st, append(via, "timeout"), depth+1, in)
+		return
+	case "env":
+		a.env(rest, redirs, cmdSt, st, via, depth, in)
+		return
+	case "xargs":
+		r := skipFlags(rest, map[string]bool{"-I": true, "-n": true, "-P": true, "-d": true, "-a": true, "-E": true, "-L": true, "-s": true, "-i": false})
+		if len(r) == 0 {
+			r = lits("echo")
+		}
+		r = append(append([]Word(nil), r...), Word{Resolved: false})
+		a.call(r, redirs, cmdSt, st, append(via, "xargs"), depth+1, stdin{})
+		return
+	case "watch":
+		r := skipFlags(rest, map[string]bool{"-n": true, "--interval": true, "-d": false})
+		a.reparse(r, st, via, "watch", depth)
+		return
+	case "script":
+		for i, w := range rest {
+			if (w.Text == "-c" || w.Text == "--command") && i+1 < len(rest) {
+				a.reparse(rest[i+1:i+2], st, via, "script -c", depth)
+				return
+			}
+		}
+		record()
+		return
+	case "ssh":
+		// ssh [opts] host [command...]: the remote command runs elsewhere,
+		// but we still look at it so a remote terraform destroy is not hidden.
+		r := skipFlags(rest, map[string]bool{"-p": true, "-i": true, "-l": true, "-o": true, "-F": true, "-J": true, "-L": true, "-R": true, "-D": true, "-E": true, "-S": true, "-W": true, "-b": true, "-c": true, "-m": true, "-O": true, "-Q": true, "-w": true, "-B": true, "-e": true, "-I": true})
+		if len(r) > 1 {
+			rs := st.childState()
+			rs.dir = ""
+			a.reparseIn(r[1:], rs, via, "ssh "+r[0].Text, depth)
+		}
+		record()
+		return
+	case "find", "fd":
+		a.findExec(rest, redirs, cmdSt, st, via, depth)
+		record()
+		return
+	case "make", "gmake":
+		if a.make(args, cmdSt, st, via, depth) {
+			return
+		}
+		record()
+		return
+	case "docker", "podman", "nerdctl":
+		a.container(args, redirs, cmdSt, st, via, depth)
+		record()
+		return
+	}
+
+	if shells[bn] || bn == "busybox" && len(rest) > 0 && shells[rest[0].Text] {
+		if bn == "busybox" {
+			rest = rest[1:]
+		}
+		a.shell(bn, rest, cmdSt, st, via, depth, in)
+		return
+	}
+	if flag, ok := foreignInterpreters[strings.TrimRight(bn, "0123456789.")]; ok || foreignInterpreters[bn] != "" {
+		if flag == "" {
+			flag = foreignInterpreters[bn]
+		}
+		a.foreign(bn, flag, args, cmdSt, st, via, in)
+		record()
+		return
+	}
+	// A path to a script: read it and analyze it as shell when it is one.
+	if strings.Contains(name, "/") {
+		if a.script(name, rest, cmdSt, st, via, depth) {
+			return
+		}
+	}
+	record()
+}
+
+func (a *analyzer) env(rest []Word, redirs []Redir, cmdSt, st *state, via []string, depth int, in stdin) {
+	es := cmdSt.clone()
+	i := 0
+	for i < len(rest) {
+		w := rest[i]
+		t := w.Text
+		switch {
+		case t == "-i" || t == "--ignore-environment" || t == "-0" || t == "--null" || t == "-v":
+			i++
+		case t == "-u" || t == "--unset":
+			if i+1 < len(rest) {
+				delete(es.vars, rest[i+1].Text)
+			}
+			i += 2
+		case t == "-C" || t == "--chdir":
+			if i+1 < len(rest) {
+				if rest[i+1].Resolved {
+					es.dir = a.abs(es, rest[i+1].Text)
+				} else {
+					es.dir = ""
+				}
+			}
+			i += 2
+		case strings.HasPrefix(t, "--chdir="):
+			es.dir = a.abs(es, strings.TrimPrefix(t, "--chdir="))
+			i++
+		case t == "-S" || t == "--split-string":
+			if i+1 < len(rest) {
+				split := strings.Fields(rest[i+1].Text)
+				if !rest[i+1].Resolved {
+					a.problem(st, via, "env -S "+rest[i+1].Text, "env -S with text that cannot be resolved")
+					return
+				}
+				nr := append(lits(split...), rest[i+2:]...)
+				a.env(nr, redirs, es, st, append(via, "env -S"), depth+1, in)
+			}
+			return
+		case strings.HasPrefix(t, "-"):
+			i++
+		case strings.Contains(t, "=") && !strings.HasPrefix(t, "="):
+			k, v, _ := strings.Cut(t, "=")
+			es.vars[k] = value{text: v, ok: w.Resolved}
+			es.exported[k] = true
+			i++
+		default:
+			a.call(rest[i:], redirs, es, st, append(via, "env"), depth+1, in)
+			return
+		}
+	}
+}
+
+// shell handles sh/bash/zsh invocations: -c strings, script files and stdin.
+func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string, depth int, in stdin) {
+	child := cmdSt.childState()
+	var hasC bool
+	i := 0
+	for i < len(rest) {
+		t := rest[i].Text
+		if t == "-o" || t == "+o" || t == "-O" || t == "+O" || t == "--rcfile" || t == "--init-file" {
+			i += 2
+			continue
+		}
+		if t == "--" {
+			i++
+			break
+		}
+		if strings.HasPrefix(t, "--") {
+			i++
+			continue
+		}
+		if (strings.HasPrefix(t, "-") || strings.HasPrefix(t, "+")) && len(t) > 1 {
+			if strings.Contains(t[1:], "c") {
+				hasC = true
+			}
+			i++
+			continue
+		}
+		break
+	}
+	rest = rest[i:]
+	label := bn
+	switch {
+	case hasC:
+		if len(rest) == 0 {
+			return
+		}
+		if !rest[0].Resolved {
+			a.problem(st, via, bn+" -c "+rest[0].Text, bn+" -c with a command string that cannot be resolved statically")
+			return
+		}
+		// sh -c 'cmd' arg0 arg1...: the first word after the string is $0.
+		if len(rest) > 1 {
+			child.arg0 = value{text: rest[1].Text, ok: rest[1].Resolved}
+			child.params = valuesOf(rest[2:])
+		}
+		a.source(rest[0].Text, child, append(via, label+" -c"), depth+1)
+	case len(rest) > 0:
+		if !rest[0].Resolved {
+			a.problem(st, via, bn+" "+joinWords(rest), bn+" running a script whose name cannot be resolved")
+			return
+		}
+		b, err := a.opt.ReadFile(a.abs(st, rest[0].Text))
+		if err != nil {
+			a.problem(st, via, bn+" "+rest[0].Text, "script cannot be read: "+err.Error())
+			return
+		}
+		child.params = valuesOf(rest[1:])
+		child.arg0 = value{text: rest[0].Text, ok: true}
+		a.source(string(b), child, append(via, bn+" "+rest[0].Text), depth+1)
+	case in.present:
+		if !in.known {
+			a.problem(st, via, in.desc+" | "+bn, "text piped into "+bn+" cannot be resolved statically")
+			return
+		}
+		a.source(in.text, child, append(via, in.desc+" | "+bn), depth+1)
+	}
+}
+
+var shebangShell = regexp.MustCompile(`^#!\s*(\S*/)?(env\s+)?(ba|z|da|k|mk|a)?sh\b`)
+
+func (a *analyzer) script(name string, rest []Word, cmdSt, st *state, via []string, depth int) bool {
+	b, err := a.opt.ReadFile(a.abs(st, name))
+	if err != nil {
+		return false
+	}
+	src := string(b)
+	first, _, _ := strings.Cut(src, "\n")
+	if strings.HasPrefix(first, "#!") && !shebangShell.MatchString(first) {
+		if m := Mentions(src); len(m) > 0 {
+			a.problem(st, via, name, "script in another language mentions infrastructure tools; cannot be analyzed")
+		}
+		return false
+	}
+	child := cmdSt.childState()
+	child.params = valuesOf(rest)
+	child.arg0 = value{text: name, ok: true}
+	a.source(src, child, append(via, "script "+name), depth+1)
+	return true
+}
+
+func (a *analyzer) foreign(bn, flag string, args []Word, cmdSt, st *state, via []string, in stdin) {
+	var code string
+	for i, w := range args[1:] {
+		if w.Text == flag && i+2 < len(args) {
+			code = args[i+2].Text
+			break
+		}
+	}
+	if code == "" && in.present {
+		code = in.text
+	}
+	if code == "" && len(args) > 1 && !strings.HasPrefix(args[1].Text, "-") && args[1].Resolved {
+		if b, err := a.opt.ReadFile(a.abs(st, args[1].Text)); err == nil {
+			code = string(b)
+		}
+	}
+	if Mentions(code) != nil {
+		a.problem(st, via, bn+" "+code, bn+" code mentions infrastructure tools or guard files; it cannot be analyzed")
+	}
+}
+
+func (a *analyzer) reparse(r []Word, st *state, via []string, label string, depth int) {
+	a.reparseIn(r, st.childState(), via, label, depth)
+}
+
+func (a *analyzer) reparseIn(r []Word, child *state, via []string, label string, depth int) {
+	if len(r) == 0 {
+		return
+	}
+	if !allResolved(r) {
+		a.problem(child, via, label+" "+joinWords(r), label+" with a command that cannot be resolved statically")
+		return
+	}
+	a.source(joinWords(r), child, append(via, label), depth+1)
+}
+
+func (a *analyzer) findExec(rest []Word, redirs []Redir, cmdSt, st *state, via []string, depth int) {
+	for i := 0; i < len(rest); i++ {
+		t := rest[i].Text
+		if t != "-exec" && t != "-execdir" && t != "-ok" && t != "-okdir" && t != "-x" && t != "--exec" && t != "-X" && t != "--exec-batch" {
+			continue
+		}
+		j := i + 1
+		for j < len(rest) && rest[j].Text != ";" && rest[j].Text != "+" && rest[j].Text != `\;` {
+			j++
+		}
+		sub := append([]Word(nil), rest[i+1:j]...)
+		for k := range sub {
+			if sub[k].Text == "{}" {
+				sub[k] = Word{Resolved: false}
+			}
+		}
+		a.call(sub, nil, cmdSt, st, append(via, "find "+t), depth+1, stdin{})
+		i = j
+	}
+}
+
+// container unwraps "docker run ... <image> args" when the image is a
+// Terraform or OpenTofu image, so the arguments are classified as such.
+func (a *analyzer) container(args []Word, redirs []Redir, cmdSt, st *state, via []string, depth int) {
+	for i, w := range args {
+		if i < 2 {
+			continue
+		}
+		img := strings.ToLower(w.Text)
+		engine := ""
+		switch {
+		case strings.Contains(img, "terragrunt"):
+			engine = "terragrunt"
+		case strings.Contains(img, "opentofu") || strings.Contains(img, "/tofu"):
+			engine = "tofu"
+		case strings.Contains(img, "terraform"):
+			engine = "terraform"
+		}
+		if engine == "" || strings.HasPrefix(img, "-") {
+			continue
+		}
+		r := args[i+1:]
+		if len(r) > 0 && (base(r[0].Text) == "terraform" || base(r[0].Text) == "tofu" || base(r[0].Text) == "terragrunt") {
+			r = r[1:]
+		}
+		a.call(append(lits(engine), r...), redirs, cmdSt, st, append(via, args[0].Text+" image "+w.Text), depth+1, stdin{})
+		return
+	}
+}
+
+// skipFlags drops leading options; valued names consume the next word.
+func skipFlags(ws []Word, valued map[string]bool) []Word {
+	i := 0
+	for i < len(ws) {
+		t := ws[i].Text
+		if t == "--" {
+			return ws[i+1:]
+		}
+		if !strings.HasPrefix(t, "-") || t == "-" {
+			break
+		}
+		if valued[t] {
+			i += 2
+			continue
+		}
+		i++
+	}
+	if i > len(ws) {
+		return nil
+	}
+	return ws[i:]
+}
+
+func valuesOf(ws []Word) []value {
+	out := make([]value, len(ws))
+	for i, w := range ws {
+		out[i] = value{text: w.Text, ok: w.Resolved}
+	}
+	return out
+}
+
+func allResolved(ws []Word) bool {
+	for _, w := range ws {
+		if !w.Resolved {
+			return false
+		}
+	}
+	return true
+}
+
+func joinWords(ws []Word) string {
+	parts := make([]string, len(ws))
+	for i, w := range ws {
+		if w.Resolved {
+			parts[i] = w.Text
+		} else {
+			parts[i] = w.Prefix + "<?>"
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+var mentionRe = regexp.MustCompile(`(?i)\b(terraform|tofu|terragrunt|kubectl)\b|\baws\s+[a-z0-9-]+\s+[a-z0-9-]+|\.claude/settings|managed-settings|\.codex/(hooks\.json|config\.toml)|\.seatbelt\.ya?ml|\.aws/credentials|\.tfstate\b`)
+
+// Mentions returns the infrastructure or guard-file words found in text.
+func Mentions(text string) []string {
+	m := mentionRe.FindAllString(text, 8)
+	if len(m) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range m {
+		s = strings.ToLower(strings.Join(strings.Fields(s), " "))
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}

@@ -1,0 +1,32 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "aws_s3_bucket.tfstate",
+   "mode": "managed",
+   "type": "aws_s3_bucket",
+   "name": "tfstate",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "update"
+    ],
+    "before": {
+     "bucket": "acme-tf-state-prod",
+     "tags": {}
+    },
+    "after": {
+     "bucket": "acme-tf-state-prod",
+     "tags": {
+      "owner": "agent"
+     }
+    },
+    "after_unknown": {}
+   }
+  }
+ ],
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}
