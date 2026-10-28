@@ -268,23 +268,27 @@ This is the one dependency change in the PR — no policy/analyzer logic touched
 Severity: **critical** = a destructive command is allowed in a protected tier, or
 availability loss reaching the internal deadline.
 
-| # | Severity | Area | Finding | Exact trigger |
-|---|---|---|---|---|
-| F1 | critical | analyzer | interpreter body with concatenated binary name allowed | `python3 -c "…['ter'+'raform','destroy','-auto-approve']…"` (AD-P1) |
-| F2 | critical | analyzer | `script -c` wrapper not unwrapped | `script -qc 'terraform destroy -auto-approve' /dev/null` (AD-W5) |
-| F3 | critical | analyzer | `chroot` wrapper not unwrapped | `chroot /mnt/root terraform destroy -auto-approve` (AD-W11) |
-| F4 | critical | analyzer | GNU `parallel` not unwrapped | `parallel terraform destroy ::: -auto-approve` (AD-W13) |
-| F5 | critical | robustness | input can reach the 25 s deadline (DoS); disposable tier then allows | `echo x` + `\| cat` ×60,000 |
-| F6 | medium | robustness | brace expansion → 365 MB RSS, 1.2 s | `echo {{{…×5000…a…}}}` |
-| F7 | medium | robustness | 50 MB plan JSON = 3.5 s, no size cap, over 1 s target | 414k `resource_changes` |
-| F8 | low | hygiene | vulnerable dep `x/text` reachable (fixed in this PR) | GO-2026-5970 |
-| F9 | low | design | base32/gzip decoders not followed (ask, not block) | `base32 -d \| bash` (AD-D2/D3) |
-| F10 | info | policy | B13 blocks (not asks) when planfile missing in protected tier | `terraform apply tfplan`, no file |
-| F11 | info | policy | create of unprotected prod stateful resource is allowed | real `aws_db_instance` create |
+| # | Severity | Area | Finding | Exact trigger | Status |
+|---|---|---|---|---|---|
+| F1 | critical | analyzer | interpreter body with concatenated binary name allowed | `python3 -c "…['ter'+'raform','destroy','-auto-approve']…"` (AD-P1) | **fixed** (#2) |
+| F2 | critical | analyzer | `script -c` wrapper not unwrapped | `script -qc 'terraform destroy -auto-approve' /dev/null` (AD-W5) | **fixed** (#2) |
+| F3 | critical | analyzer | `chroot` wrapper not unwrapped | `chroot /mnt/root terraform destroy -auto-approve` (AD-W11) | **fixed** (#2) |
+| F4 | critical | analyzer | GNU `parallel` not unwrapped | `parallel terraform destroy ::: -auto-approve` (AD-W13) | **fixed** (#2) |
+| F5 | critical | robustness | input can reach the 25 s deadline (DoS); disposable tier then allows | `echo x` + `\| cat` ×60,000 | **fixed** (#3) |
+| F6 | medium | robustness | brace expansion → 365 MB RSS, 1.2 s | `echo {{{…×5000…a…}}}` | **fixed** (#3) |
+| F7 | medium | robustness | 50 MB plan JSON = 3.5 s, no size cap, over 1 s target | 414k `resource_changes` | **fixed** (#3) |
+| F8 | low | hygiene | vulnerable dep `x/text` reachable | GO-2026-5970 | **fixed** (#1) |
+| F9 | low | design | base32/gzip decoders not followed (ask, not block) | `base32 -d \| bash` (AD-D2/D3) | open |
+| F10 | info | policy | B13 blocks (not asks) when planfile missing in protected tier | `terraform apply tfplan`, no file | open |
+| F11 | info | policy | create of unprotected prod stateful resource is allowed | real `aws_db_instance` create | open |
 
-Nothing in this review changed policy or analyzer logic; F1–F7 and F9–F11 are left for
-follow-up PRs after your review. F8 is fixed here because adding govulncheck to CI
-would otherwise fail the build.
+**Update (post-merge):** F1–F7 were fixed in follow-up PRs #2 (analyzer: F1–F4) and
+#3 (robustness: F5–F7), and F8 in #1. After those merges the adversarial pack catches
+**51/51** dangerous with 0 benign false positives, and the pathological inputs are
+bounded (≈60k pipes 23 s → 70 ms; 5k nested braces 329 MB → ~0; 20 MB plan → 30 ms
+block). F9–F11 remain **open** by choice: F9 is a safe degradation (ask, not a miss),
+and F10/F11 are policy questions for the maintainer, not bugs. The original review made
+no logic changes; the fixes above did.
 
 ## Still unverified
 

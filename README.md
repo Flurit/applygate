@@ -3,6 +3,8 @@
 A deterministic, local pre-execution check for coding agents (Claude Code, Codex, and others with pre-tool hooks) that touch Terraform or OpenTofu infrastructure. Before the agent runs a tool call, seatbelt returns **allow**, **ask** or **block**, with a reason and a next step the agent can act on.
 
 > Working name. Status: v1 core, pre-release. Not yet tested with a live agent; see [ACCEPTANCE.md](ACCEPTANCE.md) for what has and has not been verified.
+>
+> An independent review ([REVIEW.md](REVIEW.md)) stress-tested this build. The seven defects it found are **fixed** (F1–F4 analyzer bypasses, F5–F7 pathological-input robustness, F8 a dependency advisory); three lower-priority items are **open** by choice (F9 base32/gzip decoder chains are refused as *ask* rather than decoded to a hard block; F10 and F11 are policy questions). Details in [REVIEW.md](REVIEW.md).
 
 ## Why another guard
 
@@ -10,7 +12,7 @@ Command-pattern matching is table stakes. In our v0 test slice, existing guards 
 
 seatbelt does two things a matcher cannot:
 
-1. **Shell-aware command analysis.** It parses commands the way bash does ([mvdan/sh](https://github.com/mvdan/sh)), tracks `cd`, variables, `export`, loops and functions, unwraps `bash -c`, `eval`, here-documents, `sudo`/`env`/`timeout`/`xargs`/`find -exec`, reads Makefile recipes and shell scripts, and decodes `echo … | base64 -d | sh`. It tells commands apart from text: `grep "terraform destroy"` is a grep. Anything it cannot resolve statically, such as fetched text piped into a shell, it **refuses** (ask) instead of guessing.
+1. **Shell-aware command analysis.** It parses commands the way bash does ([mvdan/sh](https://github.com/mvdan/sh)), tracks `cd`, variables, `export`, loops and functions, unwraps `bash -c`, `eval`, here-documents, `sudo`/`env`/`timeout`/`xargs`/`script`/`chroot`/`parallel`/`find -exec`, reads Makefile recipes and shell scripts, and decodes `echo … | base64 -d | sh`. It tells commands apart from text: `grep "terraform destroy"` is a grep. Anything it cannot resolve statically, such as fetched text piped into a shell, it **refuses** (ask) instead of guessing.
 2. **Preflight and plan-level checks.** It maps the working directory, workspace, backend and AWS profile to an environment tier. It flags a saved plan made in another workspace (read from the planfile itself), a backend block changed since `init`, stale or archived state files, and lock-file or module-source drift. For `apply <planfile>` it reads `show -json` and checks for destroyed or replaced stateful resources, removed protection (deletion protection, final snapshots, force-destroy, versioning), internet exposure, IAM wildcards, and changes to the state backend itself.
 
 It is not a sandbox and not an AI reviewer. No model is in the decision path, there is no telemetry, and it makes no network calls by default.
