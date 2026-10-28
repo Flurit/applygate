@@ -156,11 +156,27 @@ func terraformArgs(a *Action, args []shell.Word) {
 		set(ReadOnly, sub+" is read-only")
 	case "init":
 		a.TouchesState = true
+		var backendCfg []string
+		resolved := true
+		for _, f := range flags {
+			if f.name == "backend-config" {
+				backendCfg = append(backendCfg, f.value)
+				resolved = resolved && f.value != "" && !strings.Contains(f.value, "<?>")
+			}
+		}
+		if resolved {
+			a.BackendConfig = backendCfg
+		}
 		switch {
-		case flagOn(flags, "reconfigure"):
-			set(StateSurgery, "init -reconfigure discards the configured backend")
 		case flagOn(flags, "migrate-state") || flagOn(flags, "force-copy"):
 			set(StateSurgery, "init -migrate-state moves state between backends")
+		case flagOn(flags, "reconfigure") && len(backendCfg) > 0 && resolved:
+			// Switching a working directory between per-environment backends
+			// (init -backend-config prod.backend -reconfigure) changes no
+			// state. Later commands are judged against the new backend.
+			set(ReadOnly, "init -reconfigure -backend-config points the working directory at another backend without changing state")
+		case flagOn(flags, "reconfigure"):
+			set(StateSurgery, "init -reconfigure discards the configured backend")
 		default:
 			set(ReadOnly, "init prepares the working directory")
 		}

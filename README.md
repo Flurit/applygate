@@ -21,10 +21,10 @@ It is not a sandbox and not an AI reviewer. No model is in the decision path, th
 
 ### Verify a download
 
-Download a release and check its signature before running anything. Replace `v0.1.1` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
+Download a release and check its signature before running anything. Replace `v0.1.2` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
 
 ```bash
-tag=v0.1.1
+tag=v0.1.2
 base=https://github.com/Flurit/seatbelt/releases/download/$tag
 curl -fsSLO "$base/checksums.txt" -O "$base/checksums.txt.sigstore.json" -O "$base/seatbelt_${tag#v}_linux_amd64.tar.gz"
 cosign verify-blob --bundle checksums.txt.sigstore.json \
@@ -42,8 +42,8 @@ The signature ties `checksums.txt` to this repository's release workflow for tha
 # Installer from a release tag, never from main. It verifies the cosign signature on checksums.txt
 # when cosign is installed and warns when it is not; SEATBELT_VERIFY_SIGNATURE=require makes cosign
 # mandatory. Without cosign only the sha256 is checked, which does not detect a tampered release.
-curl -fsSL https://raw.githubusercontent.com/Flurit/seatbelt/v0.1.1/install.sh | SEATBELT_VERIFY_SIGNATURE=require sh
-# or: go install github.com/Flurit/seatbelt/cmd/seatbelt@v0.1.1
+curl -fsSL https://raw.githubusercontent.com/Flurit/seatbelt/v0.1.2/install.sh | SEATBELT_VERIFY_SIGNATURE=require sh
+# or: go install github.com/Flurit/seatbelt/cmd/seatbelt@v0.1.2
 # or: go build -o bin/seatbelt ./cmd/seatbelt
 cd your-infra-repo
 seatbelt init                            # writes .seatbelt.yaml (observe mode), detects Claude Code / Codex, installs their hooks
@@ -68,7 +68,7 @@ After a few days in observe mode, run `seatbelt report` to see what would have b
 | Apply of a saved plan | `terraform apply tfplan` | plan gate | plan gate | allow |
 | Unreviewed apply | `apply -auto-approve` with no plan | block | ask | allow |
 | Destroy | destroy, `apply -destroy`, `-replace`, a plan that deletes | block | ask | allow |
-| State surgery | state rm/mv/push, force-unlock, taint, init -reconfigure | block | ask | ask |
+| State surgery | state rm/mv/push, force-unlock, taint, bare init -reconfigure, -migrate-state | block | ask | ask |
 | Cloud CLI destructive | `aws … delete-*`, `s3 rb`, terminate, `kubectl delete` | block | ask | ask |
 | Guard tampering | skip-permissions flags, edits to hook config, seatbelt config or log | block | block | block |
 | Dynamic / unresolvable | `eval "$(curl …)"`, `sh -c "$X"`, `curl … \| bash` | ask | ask | allow |

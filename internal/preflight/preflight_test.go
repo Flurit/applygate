@@ -124,3 +124,24 @@ func TestLineageMismatch(t *testing.T) {
 }
 
 func itoa(i int) string { return strconvItoa(i) }
+
+func TestBackendFromConfig(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "prod.backend"), []byte("# prod\nbucket = \"state-prod\"\nkey    = \"app/terraform.tfstate\"\n"), 0o644)
+	declared := &Backend{Type: "s3", Config: map[string]string{"region": "eu-west-1"}}
+	be, err := BackendFromConfig(dir, declared, nil, []string{"prod.backend", "key=override.tfstate"}, os.ReadFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if be.URL() != "s3://state-prod/override.tfstate" || be.Config["region"] != "eu-west-1" {
+		t.Fatalf("got %s %v", be.URL(), be.Config)
+	}
+	// Without a declared block the recorded backend's type is used.
+	be, _ = BackendFromConfig(dir, nil, &Backend{Type: "s3"}, []string{"bucket=b", "key=k"}, os.ReadFile)
+	if be.URL() != "s3://b/k" {
+		t.Fatalf("got %s", be.URL())
+	}
+	if be, err := BackendFromConfig(dir, declared, nil, []string{"missing.backend"}, os.ReadFile); err == nil || be != nil {
+		t.Fatalf("missing file: be=%v err=%v", be, err)
+	}
+}

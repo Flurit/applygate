@@ -525,3 +525,39 @@ func short(lineage string) string {
 	}
 	return lineage
 }
+
+// BackendFromConfig returns the backend a "terraform init -backend-config ..."
+// in dir would configure: the declared backend block (or, without one, the
+// recorded backend's type) with each -backend-config file or key=value pair
+// applied in order. A file that cannot be read returns an error and a nil
+// backend, because the target is then unknown.
+func BackendFromConfig(dir string, declared, recorded *Backend, configs []string, readFile func(string) ([]byte, error)) (*Backend, error) {
+	be := &Backend{Config: map[string]string{}}
+	switch {
+	case declared != nil:
+		be.Type = declared.Type
+		for k, v := range declared.Config {
+			be.Config[k] = v
+		}
+	case recorded != nil:
+		be.Type = recorded.Type
+	}
+	for _, c := range configs {
+		if k, v, ok := strings.Cut(c, "="); ok && !strings.ContainsAny(k, "/\\.") {
+			be.Config[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), `"`)
+			continue
+		}
+		p := c
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(dir, p)
+		}
+		b, err := readFile(p)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range attrLine.FindAllStringSubmatch(stripComments(string(b)), -1) {
+			be.Config[m[1]] = m[2]
+		}
+	}
+	return be, nil
+}

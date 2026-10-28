@@ -64,6 +64,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | The eight spec classes and their protected/standard/disposable verdicts | done | `policy.Table`; `docs/policy.md` verdict table, column "spec" |
 | Unknown wrapper commands: "ask in protected tiers" (open decision) | done | class `unknown-wrapper` |
 | Classes the spec does not list | deviates | `mutating`, `cloud-write`, `credential-access` added and documented in `docs/policy.md` |
+| `init -reconfigure` as state surgery | deviates | read-only when it only re-points (`-backend-config` resolved, no `-migrate-state`/`-force-copy`); later commands in the same command line use the new backend ([policy.md](policy.md), [oss-corpus-trial.md](oss-corpus-trial.md)) |
 | Pure-delete saved plan treated as destroy | deviates | documented in `ACCEPTANCE.md` "Deviations" |
 
 ### Preflight and plan gate
@@ -101,7 +102,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 |---|---|---|
 | Test corpus: v0 pack, bypass classes, golden tests, property tests for shell parsing | done | `harness`, `internal/shell/*_test.go`, fuzz corpus |
 | Speed: command decision under 50 ms p95, plan under 1 s for 1,000 resources | done | measured p95 2.9 ms in process, 1,000-resource plan 17 ms ([ACCEPTANCE.md](../ACCEPTANCE.md)); `show -json` cost excluded |
-| False positives under 5% of benign controls | done | 0/32 on the pack; 0.64% on 1,259 commands from 5 public repositories ([oss-corpus-trial.md](oss-corpus-trial.md)) |
+| False positives under 5% of benign controls | done | 0/34 on the pack; 0.48% on 1,259 commands from 5 public repositories ([oss-corpus-trial.md](oss-corpus-trial.md)) |
 | Failure behavior: crash, timeout, malformed event end in configured behavior | done | `hook_test.go`, `run.py --probes` |
 | Self-protection: config, hook entries, log | done | `guard-tampering` class, `DefaultProtectedPaths` |
 | Managed-settings deployment for organizations | done (documented) | `docs/threat-model.md` |
@@ -117,8 +118,8 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 
 | Item | Status |
 |---|---|
-| Passes the v0 pack at the agreed threshold | partial: passes the reconstructed pack 86/86; no threshold agreed, original pack unavailable |
-| Observe-mode trial on 5 real repositories | partial: static stand-in on 5 public repositories ([oss-corpus-trial.md](oss-corpus-trial.md)), 0.64% false positives on 1,259 runnable commands; no agent sessions yet |
+| Passes the v0 pack at the agreed threshold | partial: passes the reconstructed pack 91/91; no threshold agreed, original pack unavailable |
+| Observe-mode trial on 5 real repositories | partial: static stand-in on 5 public repositories ([oss-corpus-trial.md](oss-corpus-trial.md)), 0.48% false positives on 1,259 runnable commands; no agent sessions yet |
 | Installs in under 5 minutes on macOS and Linux | partial: 3 s on Linux against v0.1.0; not exercised on a Mac |
 | Works with Claude Code and one more agent | done: Claude Code and Codex, live-tested (T3) |
 | Fail-closed behavior verified by chaos tests | done |

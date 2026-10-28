@@ -15,42 +15,43 @@
    "allow": 1002,
    "noise": 82,
    "placeholder": 43,
-   "expected": 199,
+   "expected": 200,
    "fp-analyzer": 4,
-   "fp-policy": 3,
    "fp-environment": 1,
+   "fp-policy": 1,
+   "debatable-policy": 1,
    "total": 1334,
    "runnable": 1209,
-   "false_positives": 8,
-   "fp_rate": 0.66,
-   "fp_rate_incl_debatable": 0.66
+   "false_positives": 6,
+   "fp_rate": 0.5,
+   "fp_rate_incl_debatable": 0.58
   },
   "govuk-infrastructure": {
-   "allow": 230,
+   "allow": 232,
    "fp-analyzer": 2,
    "noise": 21,
    "expected": 12,
    "placeholder": 13,
-   "fp-policy": 2,
    "fp-environment": 1,
    "total": 281,
    "runnable": 247,
-   "false_positives": 5,
-   "fp_rate": 2.02,
-   "fp_rate_incl_debatable": 2.02
+   "false_positives": 3,
+   "fp_rate": 1.21,
+   "fp_rate_incl_debatable": 1.21
   },
   "terraform-aws-eks-blueprints": {
-   "expected": 152,
-   "allow": 493,
+   "expected": 153,
+   "allow": 491,
    "noise": 51,
    "placeholder": 27,
    "fp-policy": 1,
    "fp-analyzer": 2,
+   "debatable-policy": 1,
    "total": 726,
    "runnable": 648,
    "false_positives": 3,
    "fp_rate": 0.46,
-   "fp_rate_incl_debatable": 0.46
+   "fp_rate_incl_debatable": 0.62
   },
   "terraform-aws-vpc": {
    "allow": 36,
@@ -75,7 +76,7 @@
   [
    "expected",
    "ask/block matches the policy for the command and tier",
-   199
+   200
   ],
   [
    "noise",
@@ -91,11 +92,6 @@
    "placeholder",
    "documentation placeholder changes how the line parses",
    5
-  ],
-  [
-   "fp-policy",
-   "terraform init -reconfigure used to switch per-environment backends; spec classes it as state surgery",
-   3
   ],
   [
    "noise",
@@ -120,6 +116,16 @@
   [
    "fp-analyzer",
    "git command held in a variable built from a runtime loop value (${git} reflog ...)",
+   1
+  ],
+  [
+   "fp-policy",
+   "terraform init -reconfigure used to switch per-environment backends; spec classes it as state surgery",
+   1
+  ],
+  [
+   "debatable-policy",
+   "read-only AWS SDK script asks (accepted cost of asking on SDK code in protected/standard tiers)",
    1
   ]
  ]

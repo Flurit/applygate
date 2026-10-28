@@ -39,6 +39,11 @@ type Action struct {
 	PlanFile string // for apply of a saved plan
 	Sub      string // engine subcommand, e.g. "destroy", "state rm"
 	Via      []string
+	// BackendConfig holds the -backend-config values of an init (files or
+	// key=value pairs). Later commands in the same directory and command
+	// line run against the backend they describe, not the one recorded by
+	// the previous init.
+	BackendConfig []string
 	// SelectWorkspace is set by "workspace select|new NAME"; later commands
 	// in the same directory run in that workspace.
 	SelectWorkspace string

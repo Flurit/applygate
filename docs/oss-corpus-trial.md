@@ -1,6 +1,6 @@
 # Open-source corpus trial
 
-Date: 2026-10-28. seatbelt `main` at `48a1d26` (v0.1.1) for "before", and the same code plus the fixes in this change for "after".
+Date: 2026-10-28. "Before" is v0.1.1 (`48a1d26`). "After" is v0.1.2: the fixes this trial prompted (PR #17) plus the three policy decisions taken on its findings (below).
 
 This is a **stand-in for the spec's observe-mode trial**, not the trial itself. The spec asks for seatbelt in observe mode on 5 real repositories while people and agents work in them. This trial replays the commands that 5 public Terraform repositories document or run (READMEs, CI workflows, Makefiles, scripts) through `seatbelt check`, and reviews every ask and block by hand. It measures false positives on realistic infrastructure commands. It does not measure what an agent would actually do, and it never exercises the plan gate (no command in the corpus applies a saved plan).
 
@@ -32,25 +32,26 @@ The configs are in `review/oss-corpus/configs/`. They are what a careful user wo
 
 False-positive rate = false positives / runnable commands (all commands minus noise and placeholders).
 
-## Results (with the trial configs, after the fixes)
+## Results (with the trial configs, after)
 
 | Repository | Commands | Runnable | Allow | Expected ask/block | False positives | Debatable | FP rate |
 |---|---|---|---|---|---|---|---|
-| govuk-infrastructure | 281 | 247 | 230 | 12 | 5 | 0 | 2.0% |
+| govuk-infrastructure | 281 | 247 | 232 | 12 | 3 | 0 | 1.2% |
 | cloud-platform-infrastructure | 251 | 239 | 226 | 13 | 0 | 0 | 0.0% |
 | terragrunt-infrastructure-live-example | 17 | 17 | 17 | 0 | 0 | 0 | 0.0% |
 | terraform-aws-vpc | 59 | 59 | 53 | 6 | 0 | 0 | 0.0% |
-| terraform-aws-eks-blueprints | 726 | 697 | 632 | 53 | 3 | 9 | 0.4% |
-| **All** | **1,334** | **1,259** | **1,158** | **84** | **8** | **9** | **0.64%** (1.35% with debatable) |
+| terraform-aws-eks-blueprints | 726 | 697 | 630 | 54 | 3 | 10 | 0.4% |
+| **All** | **1,334** | **1,259** | **1,158** | **85** | **6** | **10** | **0.48%** (1.27% with debatable) |
 
-Every repository is under the spec's 5% bar. The expected asks and blocks are destroy and `-auto-approve` applies in standard tiers, state surgery in migration guides, cluster teardown scripts, and CloudFormation or S3 writes and bare `terraform apply` in environments the config does not map (strict mode treats those as protected).
+Every repository is under the spec's 5% bar. The expected asks and blocks are destroy and `-auto-approve` applies in standard tiers, state surgery in migration guides, cluster teardown scripts, CloudFormation or S3 writes and bare `terraform apply` in environments the config does not map (strict mode treats those as protected), and one AWS SDK script that deletes log groups.
 
-| Run | False positives | FP rate | Misses found |
+| Run | False positives | FP rate | Known misses |
 |---|---|---|---|
-| Trial configs, before the fixes | 9 | 0.71% | 5 (credential wrappers) |
-| Trial configs, after the fixes | 8 | 0.64% | 0 of those 5 |
-| No config (strict), before | 16 | 1.32% | 5 |
-| No config (strict), after | 8 | 0.66% | 0 of those 5 |
+| Trial configs, v0.1.1 | 9 | 0.71% | 6 (5 credential-wrapped commands, 1 boto3 script) |
+| Trial configs, after the trial fixes only (PR #17) | 8 | 0.64% | 1 (boto3 script) |
+| Trial configs, v0.1.2 (fixes + policy decisions) | 6 | 0.48% | 0 |
+| No config (strict), v0.1.1 | 16 | 1.32% | 6 |
+| No config (strict), v0.1.2 | 6 | 0.50% | 0 |
 
 Without a config, 332 commands are flagged instead of 176, all in the protected tier, because every unconfigured directory counts as protected in strict mode. README instructions such as `terraform destroy` in an example directory are then blocked. That is the intended out-of-the-box behavior, but it is a lot of friction on day one, which is why `seatbelt init` starts in observe mode.
 
@@ -71,23 +72,24 @@ seatbelt now unwraps these tools and uses the profile or role they name (`prod-a
 
 Scenarios B31 and B32 cover the first two; unit tests cover the rest.
 
-### 3. Remaining false positives (8)
+### 3. Remaining false positives (6)
 
 | Count | Cause | Example |
 |---|---|---|
-| 3 | **Policy:** `terraform init -reconfigure` is state surgery in the spec, but govuk uses `init -backend-config <env>.backend -reconfigure` routinely to switch environments, and eks-blueprints CI uses it in validation | `gds aws govuk-test-admin -- terraform init -backend-config test.backend -reconfigure -upgrade` |
+| 1 | Policy: a bare `terraform init -reconfigure` (no `-backend-config`) is still state surgery | eks-blueprints CI: `terraform init -reconfigure` |
 | 2 | Analyzer: a command substitution's output used as the program name | `while $(kill -0 $PID 2>/dev/null); do sleep 1; done` |
 | 1 | Analyzer: a Makefile recipe calls `$(call …)`, which is not expanded | `make lint_docs` |
 | 1 | Analyzer: the program is held in a variable built from a runtime loop value | `${git} reflog expire …` |
 | 1 | Environment: `source venv/bin/activate` before the virtualenv exists (fresh clone) | `source venv/bin/activate` |
 
-### 4. Debatable (9)
+### 4. Debatable (10)
 
-`kubectl delete -f example.yaml` and similar teardown in disposable example directories ask, because the spec's table makes cloud-destructive commands ask even in disposable tiers. Every one of the 9 is a sandbox teardown step.
+- 9 × `kubectl delete -f example.yaml` and similar teardown in disposable example directories ask, because cloud-destructive commands ask in every tier. Kept on purpose (decision 2 below).
+- 1 × a read-only boto3 script (`iam-policy-generator.py`, reads S3 objects) asks: the accepted cost of decision 3.
 
 ### 5. Misses
 
-Apart from the wrappers, one destructive command was allowed: a CI step runs `python3 .github/scripts/delete-log-groups.py`, which deletes CloudWatch log groups through boto3. Python that mentions no infrastructure CLI passes by design (`docs/limits.md`). Counting AWS SDK imports (`boto3`, `botocore`, `@aws-sdk/`) as infrastructure mentions would make such scripts ask.
+With v0.1.1 two kinds of destructive command were allowed: the credential-wrapped commands (finding 1) and a CI step running `python3 .github/scripts/delete-log-groups.py`, which deletes CloudWatch log groups through boto3. Both now ask or block.
 
 One apparent miss was an extraction artifact: `./destroy.sh prod` in the EKS hub-and-spoke README was replayed from the wrong directory (the README's `cd spokes` is outside the code block). Run from `spokes/`, seatbelt blocks it, because the script selects workspace `prod`.
 
@@ -96,11 +98,11 @@ One apparent miss was an extraction artifact: `./destroy.sh prod` in the EKS hub
 - **A catch-all overrides everything below it.** The first trial configs mapped `examples/**` to disposable and `**` to standard. Because the most protected match wins, every example became standard. Use `strict: false` with `default_tier` for a default, not a `**` environment. `docs/config.md` now says so.
 - **Unmapped roles and paths stay protected.** govuk's ephemeral-cluster commands and `gds aws govuk-test-admin` roles were treated as protected because the trial config did not map `terraform/deployments/ephemeral/**` or the `govuk-test-*` roles. A real config would, and most of those 12 asks and blocks would become allow or ask.
 
-## Decisions for the maintainers
+## Decisions taken on these findings (v0.1.2)
 
-1. **`init -reconfigure`**: keep as state surgery (spec), or treat as read-only when it only re-points the working directory (`-backend-config` given, no `-migrate-state`/`-force-copy`). This would remove 3 of the 8 false positives.
-2. **`kubectl delete` in disposable tiers**: keep ask (spec), or allow. This would remove the 9 debatable asks.
-3. **AWS SDK code**: treat `boto3`/`botocore`/`@aws-sdk/` mentions in Python or Node code as infrastructure (ask), closing the boto3 miss at the cost of asks on read-only SDK scripts.
+1. **`terraform init -reconfigure -backend-config …` is read-only.** It re-points the working directory at another backend and changes no state. The same command line's later commands are judged against the backend the `-backend-config` files or values describe, not the one recorded by the previous init, and the config file's name counts as a name hint (`production.backend` → protected). A bare `-reconfigure`, a `-backend-config` that cannot be resolved, `-migrate-state` and `-force-copy` stay state surgery. If the config file cannot be read, later state-changing commands get a high `backend-config-unreadable` finding. Scenarios D55, D57 and B33. This removed 2 false positives (govuk's environment switches).
+2. **`kubectl delete` keeps asking in disposable tiers.** A disposable directory does not prove the kube context points at a sandbox cluster, and seatbelt cannot see the context. The 9 debatable asks stay.
+3. **AWS SDK code counts as infrastructure.** Python, Node and non-shell scripts that mention `boto3`, `botocore`, `aws-sdk`, `@aws-sdk/` or `github.com/aws/aws-sdk-go` are dynamic: ask in protected and standard tiers, allow in disposable ones. Scenarios D56 and B34. This closed the boto3 miss and added one ask on a read-only script.
 
 ## Limits of this trial
 

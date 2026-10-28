@@ -384,7 +384,7 @@ func (a *analyzer) script(name string, rest []Word, cmdSt, st *state, via []stri
 	first, _, _ := strings.Cut(src, "\n")
 	if strings.HasPrefix(first, "#!") && !shebangShell.MatchString(first) {
 		if m := Mentions(src); len(m) > 0 {
-			a.problem(st, via, name, "script in another language mentions infrastructure tools; cannot be analyzed")
+			a.problem(st, via, name, "script in another language mentions infrastructure tools or an AWS SDK; cannot be analyzed")
 		}
 		return false
 	}
@@ -416,7 +416,7 @@ func (a *analyzer) foreign(bn, flag string, args []Word, cmdSt, st *state, via [
 	// "terra"."form") hides from a plain scan, so also test a form with those
 	// joins collapsed.
 	if Mentions(code) != nil || Mentions(dejoinLiterals(code)) != nil {
-		a.problem(st, via, bn+" "+code, bn+" code mentions infrastructure tools or guard files; it cannot be analyzed")
+		a.problem(st, via, bn+" "+code, bn+" code mentions infrastructure tools, an AWS SDK or guard files; it cannot be analyzed")
 	}
 }
 
@@ -582,7 +582,7 @@ func joinWords(ws []Word) string {
 	return strings.Join(parts, " ")
 }
 
-var mentionRe = regexp.MustCompile(`(?i)\b(terraform|tofu|terragrunt|kubectl)\b|\baws\s+[a-z0-9-]+\s+[a-z0-9-]+|\.claude/settings|managed-settings|\.codex/(hooks\.json|config\.toml)|\.seatbelt\.ya?ml|\.aws/credentials|\.tfstate\b`)
+var mentionRe = regexp.MustCompile(`(?i)\b(terraform|tofu|terragrunt|kubectl)\b|\baws\s+[a-z0-9-]+\s+[a-z0-9-]+|\.claude/settings|managed-settings|\.codex/(hooks\.json|config\.toml)|\.seatbelt\.ya?ml|\.aws/credentials|\.tfstate\b|\b(boto3|botocore|aws-sdk)\b|@aws-sdk/|github\.com/aws/aws-sdk-go`)
 
 // Mentions returns the infrastructure or guard-file words found in text.
 func Mentions(text string) []string {
