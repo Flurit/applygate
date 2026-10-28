@@ -31,6 +31,8 @@ seatbelt check "terraform -chdir=envs/prod destroy"
 
 After a few days in observe mode, run `seatbelt report` to see what would have been blocked, review any likely false positives, then set `mode: enforce`.
 
+**Launch from the repo root.** With a project-scope install, Claude Code and Codex load project settings only from the directory the session starts in. A hook at `<repo>/.claude/settings.json` will not run if you launch the agent from a subdirectory. `seatbelt doctor` warns when this is the case; launch from the directory holding the hook, or install at user scope with `hook install --scope user`.
+
 ## Verdicts
 
 | Class | Examples | Protected | Standard | Disposable |

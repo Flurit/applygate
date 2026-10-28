@@ -22,6 +22,7 @@ seatbelt reduces the chance that a mistaken or manipulated agent damages infrast
 
 - **Claude Code:** only `dontAsk` turns a hook "ask" into a block. In `bypassPermissions` Claude Code still shows the ask prompt — this was observed live on Claude Code 2.1.312 (test T3.2), but it is **not documented**, so the behavior could change. Rerun T3.2 (`review/manual_agent_tests.md`) on each new Claude Code version; if a future version silently allows an "ask" under `bypassPermissions`, restore the ask→block conversion for that mode.
 - **Codex:** does not support "ask" (it fails the hook and runs the tool), so every ask becomes a block. Codex hooks need to be trusted with `/hooks` before they run.
+- **Launch directory (project scope).** Claude Code and Codex read *project* settings only from the directory the session is launched in, not from ancestors. A hook installed at `<repo>/.claude/settings.json` is therefore silent if the agent is started from a subdirectory such as `<repo>/envs/prod`. `seatbelt doctor` warns when a project-scope seatbelt hook lives in an ancestor of the current directory. Launch the agent from the directory holding the hook, or install at user scope (`hook install --scope user`).
 - Hook crashes and agent-side timeouts: see the README section "What happens when seatbelt fails".
 
 ## Not in v1
