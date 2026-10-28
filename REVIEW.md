@@ -299,7 +299,33 @@ All eleven findings have been addressed.
 | F8 | fixed | CI: `x/text` bumped, `govulncheck` added |
 | F9 | fixed | analyzer: `base32`, `gzip`/`gunzip`/`zcat`, `tee` decoders followed → block |
 | F10 | fixed | plan gate: a *missing* plan file is High `plan-missing` (ask), not a Critical block |
-| F11 | fixed | plan gate: creating a stateful resource with a safeguard disabled is High `stateful-unprotected-create` (protected asks) |
+| F11 | fixed (narrowed) | plan gate: a database created with **both** deletion protection off and the final snapshot skipped is High `stateful-unprotected-create` (protected asks); see the decision below |
+
+### F11 decision (narrowed rule)
+
+F11 asked whether creating an unprotected stateful resource should at least ask. We
+took the **narrow** version, because asking on every unprotected create is too noisy:
+`deletion_protection` defaults to `false`, so nearly every prod database create would
+ask, which hurts the Gate 1 target of ≤5% of benign actions flagged and trains people
+to click through prompts. The risk is also later, not at create time — the damage
+happens on replace/destroy, which the existing rules already gate.
+
+Rule as implemented (`stateful-unprotected-create`, high → protected tier asks):
+
+- **Ask** only when a database (`aws_db_instance`, `aws_rds_cluster`,
+  `aws_docdb_cluster`, `aws_neptune_cluster`) is created with **both**
+  `deletion_protection` off **and** `skip_final_snapshot` true — no safety net at all.
+- **Allow + note** when only one safeguard is off (e.g. protection off but a final
+  snapshot kept): recorded as an Info `stateful-create-note` in the decision log, no
+  prompt.
+- Non-database stateful creates are not flagged on create.
+
+High severity already means "ask in protected, allow elsewhere", so no separate tier
+check was needed. **Fallback if preferred:** keep the broader "any unprotected
+stateful create" rule but still only in the protected tier, with this narrow form as
+the documented default. **Measure it:** the observe-mode trial (Gate 1) should count
+how many would-be asks this rule produces across the 5 real repos — loosen it if
+noisy, widen it if it misses a real case.
 
 ### Other changes since the review
 
