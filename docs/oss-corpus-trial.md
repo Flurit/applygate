@@ -104,6 +104,8 @@ One apparent miss was an extraction artifact: `./destroy.sh prod` in the EKS hub
 2. **`kubectl delete` keeps asking in disposable tiers.** A disposable directory does not prove the kube context points at a sandbox cluster, and seatbelt cannot see the context. The 9 debatable asks stay.
 3. **AWS SDK code counts as infrastructure.** Python, Node and non-shell scripts that mention `boto3`, `botocore`, `aws-sdk`, `@aws-sdk/` or `github.com/aws/aws-sdk-go` are dynamic: ask in protected and standard tiers, allow in disposable ones. Scenarios D56 and B34. This closed the boto3 miss and added one ask on a read-only script.
 
+After v0.1.2, the unknown-wrapper backstop was checked against the same corpus: no verdict changed and it caused no text-mention false positives ([review/oss-corpus/backstop.md](../review/oss-corpus/backstop.md)).
+
 ## Limits of this trial
 
 - Documented and CI commands are not agent behavior. An agent may run commands no README shows, and skip ones that are shown.

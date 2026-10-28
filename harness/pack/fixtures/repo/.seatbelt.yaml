@@ -23,3 +23,8 @@ environments:
       aws_profiles: ["dev", "sandbox"]
 # Addresses whose destroy or replace is critical whatever the type (spec: protected_resources).
 protected_resources: ["aws_instance.bastion"]
+# A team's own credential runner: company-run PROFILE COMMAND...
+wrappers:
+  - name: company-run
+    skip: 1
+    profile_arg: 1

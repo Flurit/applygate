@@ -36,10 +36,16 @@ preflight:
   live_state: false             # user config only: "<engine> state pull" to compare lineage/serial (network)
 
 protected_paths: []             # extra guard files the agent may not modify
+wrappers:                       # extra programs that run a command given in their arguments
+  - name: company-run           # company-run PROFILE terraform apply ...
+    skip: 1                     # positional arguments before the command (used when there is no "--")
+    profile_arg: 1              # optional: the positional that names an AWS profile or role
 protected_resources: []         # address globs whose destroy/replace is critical, e.g. ["aws_instance.bastion", "module.data.*"]
 ```
 
 **Defaults.** Because the most protected matching environment wins, an environment that matches everything (`paths: ["**"]`) overrides every less protected one: `examples/**` → disposable plus `**` → standard makes the examples standard too. For a default, set `strict: false` and `default_tier` instead.
+
+`wrappers` lists a team's own runners that execute the command in their arguments, so seatbelt analyzes that command instead of the runner. The command starts after `--` when there is one, otherwise after `skip` positional arguments; `profile_arg` names the positional that is an AWS profile or role, which counts as a tier signal like `AWS_PROFILE`. Built-in runners (`aws-vault`, `gds aws`, `direnv`, `mise`, `nix-shell`, …) need no entry, and an unknown runner around `terraform`, `tofu` or `terragrunt` is caught by the backstop anyway; list a runner here when it wraps other tools such as `aws` or `kubectl`, or to get its profile argument used for the tier. Entries from the user and repository configs are combined.
 
 `protected_resources` extends the plan gate's built-in stateful-type list with addresses that matter in *this* repository whatever their type: a bastion host, a module holding data, a specific bucket. Globs match the full Terraform address (`module.x.*`, `aws_instance.*`). A destroy or replace of a matching resource in a saved plan is a critical finding, so protected tiers block and standard tiers ask.
 

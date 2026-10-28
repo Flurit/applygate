@@ -66,6 +66,18 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		return
 	}
 
+	if spec, ok := a.opt.Wrappers[bn]; ok {
+		if cmd, profile, ok := configWrapper(spec, rest); ok {
+			ws := cmdSt.clone()
+			if profile.Resolved && profile.Text != "" {
+				ws.vars["AWS_PROFILE"] = value{text: profile.Text, ok: true}
+				ws.exported["AWS_PROFILE"] = true
+			}
+			a.call(cmd, redirs, ws, st, append(via, bn+" (configured wrapper)"), depth+1, in)
+			return
+		}
+	}
+
 	switch bn {
 	case "cd", "pushd":
 		target := ""
@@ -128,6 +140,19 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		}
 		a.call(skipFlags(rest, map[string]bool{"-a": true}), redirs, cmdSt, st, append(via, bn), depth+1, in)
 		return
+	case "direnv", "mise", "rtx", "asdf", "devbox", "nix", "nix-shell":
+		if cmd, script, ok := envRunner(bn, rest); ok {
+			if script != nil {
+				if !script.Resolved {
+					a.problem(st, via, joinWords(args), bn+" runs a command line that cannot be resolved statically")
+					return
+				}
+				a.source(script.Text, cmdSt.childState(), append(via, bn), depth+1)
+				return
+			}
+			a.call(cmd, redirs, cmdSt, st, append(via, bn), depth+1, in)
+			return
+		}
 	case "aws-vault", "aws-okta", "gds", "saml2aws", "aws-sso", "doppler", "op", "chamber", "infisical", "envchain", "aws-runas":
 		if cmd, profile, ok := credentialWrapper(bn, rest); ok {
 			// The wrapped command runs with the wrapper's credentials; the
@@ -252,7 +277,10 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			return
 		}
 	}
+	// Backstop for wrappers seatbelt does not know: a standalone terraform,
+	// tofu or terragrunt argument starts the command the wrapper would run.
 	record()
+	a.backstop(bn, rest, redirs, cmdSt, st, via, depth)
 }
 
 func (a *analyzer) env(rest []Word, redirs []Redir, cmdSt, st *state, via []string, depth int, in stdin) {

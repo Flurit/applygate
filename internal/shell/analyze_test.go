@@ -254,3 +254,50 @@ func TestCredentialWrappersAndScriptIdioms(t *testing.T) {
 		}
 	}
 }
+
+func TestUnknownWrapperBackstop(t *testing.T) {
+	opt := Options{Dir: "/repo", ReadFile: fakeFS(nil), Wrappers: map[string]WrapperSpec{"company-run": {Skip: 1, ProfileArg: 1}}}
+	run := func(cmd string) string {
+		return strings.Join(render(Analyze(cmd, opt)), "\n")
+	}
+	found := []struct{ cmd, want string }{
+		{"madeup-tool run -- terraform destroy -auto-approve", "/repo: terraform destroy -auto-approve"},
+		{"foo exec prod terraform apply -auto-approve", "/repo: terraform apply -auto-approve"},
+		{"./bin/tool go /usr/local/bin/tofu destroy", "/repo: /usr/local/bin/tofu destroy"},
+		{"direnv exec . terraform destroy", "/repo: terraform destroy"},
+		{"mise exec -- tofu destroy", "/repo: tofu destroy"},
+		{"mise x terraform@1.9 -- terraform destroy", "/repo: terraform destroy"},
+		{"asdf exec terraform destroy", "/repo: terraform destroy"},
+		{"devbox run -- terraform destroy", "/repo: terraform destroy"},
+		{"nix develop -c terraform destroy", "/repo: terraform destroy"},
+		{"nix-shell --run 'terraform destroy'", "/repo: terraform destroy"},
+		{"nix-shell -p terraform --command 'cd envs/prod && terraform destroy'", "/repo/envs/prod: terraform destroy"},
+		{"some-tool --command 'tofu destroy'", "/repo: tofu destroy"},
+		{"some-tool --run='terragrunt run-all destroy'", "/repo: terragrunt run-all destroy"},
+		{"company-run prod-admin aws s3 rb s3://b --force", "/repo: aws s3 rb s3://b --force"},
+		{"company-run prod-admin -- terraform destroy", "/repo: terraform destroy"},
+		{"nix-shell --run \"$CMD\"", "PROBLEM: nix-shell runs a command line that cannot be resolved"},
+	}
+	for _, c := range found {
+		if got := run(c.cmd); !strings.Contains(got, c.want) {
+			t.Errorf("%q: want %q in\n%s", c.cmd, c.want, got)
+		}
+	}
+	// No second invocation is analyzed for text, package managers, message
+	// flags, quoted strings or longer words.
+	for _, cmd := range []string{
+		`git commit -m "docs: never run terraform destroy"`, `grep -rn "terraform destroy" docs/`, "echo terraform destroy",
+		"man terraform", "my-linter --check terraform/", "brew install terraform", "foo --message terraform destroy",
+		`foo run "terraform destroy"`, "foo --title terraform apply", "tool deploy terraform-modules", "curl -c terraform x",
+	} {
+		r := Analyze(cmd, opt)
+		if len(r.Invocations) != 1 || len(r.Problems) != 0 {
+			t.Errorf("%q: expected only the program itself, got\n%s", cmd, strings.Join(render(r), "\n"))
+		}
+	}
+	// The configured wrapper's profile reaches the wrapped command.
+	r := Analyze("company-run prod-admin aws s3 rb s3://b --force", opt)
+	if r.Invocations[len(r.Invocations)-1].Env["AWS_PROFILE"] != "prod-admin" {
+		t.Errorf("AWS_PROFILE not set: %+v", r.Invocations)
+	}
+}

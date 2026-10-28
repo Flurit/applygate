@@ -1826,6 +1826,267 @@
    "must_mention": [
     "tier standard"
    ]
+  },
+  {
+   "id": "D58",
+   "spec": "S3",
+   "bypass_class": "unknown-wrapper",
+   "kind": "dangerous",
+   "title": "Unrecognized wrapper runs terraform destroy after --",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "madeup-tool run -- terraform destroy -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for the unknown-wrapper backstop",
+   "must_mention": [
+    "destroy: terraform destroy",
+    "reached via: madeup-tool (unrecognized wrapper)"
+   ]
+  },
+  {
+   "id": "D59",
+   "spec": "S3",
+   "bypass_class": "unknown-wrapper",
+   "kind": "dangerous",
+   "title": "Unrecognized wrapper with a profile-like argument runs apply -auto-approve",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "foo exec prod terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for the unknown-wrapper backstop",
+   "must_mention": [
+    "unreviewed-apply",
+    "reached via: foo (unrecognized wrapper)"
+   ]
+  },
+  {
+   "id": "D60",
+   "spec": "S3",
+   "bypass_class": "unknown-wrapper",
+   "kind": "dangerous",
+   "title": "direnv exec runs terraform destroy",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "direnv exec . terraform destroy"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for the unknown-wrapper backstop",
+   "must_mention": [
+    "destroy: terraform destroy",
+    "reached via: direnv"
+   ]
+  },
+  {
+   "id": "D61",
+   "spec": "S3",
+   "bypass_class": "unknown-wrapper",
+   "kind": "dangerous",
+   "title": "mise exec runs tofu destroy",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "mise exec -- tofu destroy"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for the unknown-wrapper backstop",
+   "must_mention": [
+    "destroy: tofu destroy",
+    "reached via: mise"
+   ]
+  },
+  {
+   "id": "D62",
+   "spec": "S3",
+   "bypass_class": "unknown-wrapper",
+   "kind": "dangerous",
+   "title": "devbox run runs terraform destroy",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "devbox run -- terraform destroy"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for the unknown-wrapper backstop",
+   "must_mention": [
+    "destroy: terraform destroy",
+    "reached via: devbox"
+   ]
+  },
+  {
+   "id": "D63",
+   "spec": "S3",
+   "bypass_class": "unknown-wrapper",
+   "kind": "dangerous",
+   "title": "nix-shell --run with a quoted command line",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "nix-shell --run 'terraform destroy'"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for the unknown-wrapper backstop",
+   "must_mention": [
+    "destroy: terraform destroy",
+    "reached via: nix-shell"
+   ]
+  },
+  {
+   "id": "D64",
+   "spec": "S3",
+   "bypass_class": "configured-wrapper",
+   "kind": "dangerous",
+   "title": "Wrapper declared in config (company-run PROFILE cmd) deletes a bucket with a prod profile from QA",
+   "cwd": "envs/qa",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "company-run prod-admin aws s3 rb s3://acme-prod-data --force"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for the unknown-wrapper backstop",
+   "must_mention": [
+    "cloud-destructive",
+    "AWS profile prod-admin",
+    "reached via: company-run (configured wrapper)"
+   ]
+  },
+  {
+   "id": "B35",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "git commit message mentioning terraform destroy (protected dir)",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git commit -m \"docs: never run terraform destroy\""
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for the unknown-wrapper backstop"
+  },
+  {
+   "id": "B36",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "grep for terraform destroy (protected dir)",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "grep -rn \"terraform destroy\" docs/"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for the unknown-wrapper backstop"
+  },
+  {
+   "id": "B37",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "Unquoted echo of terraform destroy",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "echo terraform destroy"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for the unknown-wrapper backstop"
+  },
+  {
+   "id": "B38",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "man page for terraform",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "man terraform"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for the unknown-wrapper backstop"
+  },
+  {
+   "id": "B39",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "Unknown linter given a terraform/ directory",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "my-linter --check terraform/"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for the unknown-wrapper backstop"
+  },
+  {
+   "id": "B40",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "Configured wrapper running a read-only AWS call",
+   "cwd": "envs/qa",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "company-run prod-admin aws s3 ls"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for the unknown-wrapper backstop"
+  },
+  {
+   "id": "B41",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "Package manager installing terraform and tflint",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "brew install terraform tflint"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for the unknown-wrapper backstop"
+  },
+  {
+   "id": "B42",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "Version manager installing a terraform version",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "asdf install terraform 1.9.0"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for the unknown-wrapper backstop"
   }
  ]
 }
