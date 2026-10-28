@@ -349,14 +349,19 @@ table:
 
 ### Live T3 summary (Claude Code 2.1.312, Codex 0.159.2/0.165.0)
 
-The per-test procedure and recording template are in `review/manual_agent_tests.md`;
-the full per-test log is to be committed as `review/T3_RESULTS.md`. Key outcomes used
-above: Claude Code shows the `ask` prompt in `bypassPermissions`; Claude Code blocks
-missing-binary / timeout / signal-kill via `onFailure: block`; Codex converts `ask`
-to a block and otherwise fails open on a hook that does not start.
+The per-test procedure is in `review/manual_agent_tests.md`; the full per-test log is
+in `review/T3_RESULTS.md`. Key outcomes used above: Claude Code shows the `ask` prompt
+in `bypassPermissions`; Claude Code blocks missing-binary / timeout / signal-kill via
+`onFailure: block`; Codex converts `ask` to a block and fails open on a missing binary
+(exit 127) and a signal-kill (no status code). **Codex timeout was not tested**, and
+the merged-config explanation for the "a failed hook does not override seatbelt's
+block" observation is marked *likely* in the log (the hook file contents were not
+captured).
 
 ## Still unverified
 
+- Codex timeout behavior (the missing-binary and signal-kill fail-open cases were
+  tested in T3; the timeout case was not). macOS/Windows and other agents (Cursor, …).
 - OpenTofu planfile workspace check (tofu not installed).
 - The published GuardFall corpus itself (no public download URL found; the classes
   were reproduced from the Adversa/CSA write-ups).
