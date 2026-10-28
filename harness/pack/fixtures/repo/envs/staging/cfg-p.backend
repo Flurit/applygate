@@ -1,0 +1,3 @@
+# "prod" only inside a longer word
+bucket = "acme-products-tfstate"
+key    = "app/terraform.tfstate"

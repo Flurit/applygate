@@ -1642,6 +1642,190 @@
     "allow"
    ],
    "origin": "added for the init -reconfigure and AWS SDK policy changes (docs/oss-corpus-trial.md)"
+  },
+  {
+   "id": "D80",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "Neutral-named -backend-config file with a production bucket makes the tier protected",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=cfg-a.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for backend-config tier hints (bucket, key, workspace_key_prefix, dynamodb_table, address)",
+   "must_mention": [
+    "tier protected",
+    "backend s3://acme-prod-tfstate/app/terraform.tfstate looks like production"
+   ]
+  },
+  {
+   "id": "D81",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "Inline -backend-config bucket=acme-prod-tfstate makes the tier protected",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=\"bucket=acme-prod-tfstate\" && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for backend-config tier hints (bucket, key, workspace_key_prefix, dynamodb_table, address)",
+   "must_mention": [
+    "tier protected",
+    "acme-prod-tfstate"
+   ]
+  },
+  {
+   "id": "D82",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "A staging bucket in -backend-config keeps the directory's tier (standard)",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=cfg-s.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "added for backend-config tier hints (bucket, key, workspace_key_prefix, dynamodb_table, address)",
+   "must_mention": [
+    "tier standard",
+    "unreviewed-apply"
+   ]
+  },
+  {
+   "id": "D83",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "acme-products-tfstate only contains 'prod' inside a longer word: stays standard",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=cfg-p.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "added for backend-config tier hints (bucket, key, workspace_key_prefix, dynamodb_table, address)",
+   "must_mention": [
+    "tier standard",
+    "unreviewed-apply"
+   ]
+  },
+  {
+   "id": "D84",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "workspace_key_prefix = \"prod\" in a -backend-config file makes the tier protected",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=cfg-wkp.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for backend-config tier hints (bucket, key, workspace_key_prefix, dynamodb_table, address)",
+   "must_mention": [
+    "backend workspace_key_prefix prod looks like production"
+   ]
+  },
+  {
+   "id": "D85",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "dynamodb_table = \"tf-locks-production\" in a -backend-config file makes the tier protected",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=cfg-lock.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for backend-config tier hints (bucket, key, workspace_key_prefix, dynamodb_table, address)",
+   "must_mention": [
+    "backend dynamodb_table tf-locks-production looks like production"
+   ]
+  },
+  {
+   "id": "D86",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "Inline -backend-config address for an http backend under /prod/ makes the tier protected",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=\"address=https://tfstate.example.com/prod/app\" && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for backend-config tier hints (bucket, key, workspace_key_prefix, dynamodb_table, address)",
+   "must_mention": [
+    "backend address https://tfstate.example.com/prod/app looks like production"
+   ]
+  },
+  {
+   "id": "D87",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "Recorded backend (no init in the command) with workspace_key_prefix production is protected",
+   "cwd": "envs/qa/payments",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for backend-config tier hints (bucket, key, workspace_key_prefix, dynamodb_table, address)",
+   "must_mention": [
+    "backend workspace_key_prefix production looks like production"
+   ]
+  },
+  {
+   "id": "D88",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "Recorded http backend whose address is under /prod/ is protected",
+   "cwd": "envs/qa/webhooks",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for backend-config tier hints (bucket, key, workspace_key_prefix, dynamodb_table, address)",
+   "must_mention": [
+    "backend https://tfstate.example.com/prod/webhooks looks like production"
+   ]
+  },
+  {
+   "id": "D89",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "Recorded backend with workspace_key_prefix qa keeps the directory's tier (standard)",
+   "cwd": "envs/qa/ledger",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply -auto-approve"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "added for backend-config tier hints (bucket, key, workspace_key_prefix, dynamodb_table, address)",
+   "must_mention": [
+    "tier standard"
+   ]
   }
  ]
 }
