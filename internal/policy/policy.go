@@ -3,6 +3,7 @@
 package policy
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -471,7 +472,14 @@ var ErrTimeout = errors.New("decision timed out")
 
 // Run calls f with a time limit and converts a panic into an error, so the
 // caller can apply the configured error behavior instead of crashing.
-func Run(timeout time.Duration, f func() Decision) (d Decision, err error) {
+//
+// f receives a context that is cancelled when the deadline fires (or when Run
+// returns). f must thread it into any in-flight work it starts — the plan
+// gate's `show -json` subprocess in particular — so that work is cancelled on
+// deadline rather than left running after Run has already returned ErrTimeout.
+func Run(timeout time.Duration, f func(context.Context) Decision) (d Decision, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	type result struct {
 		d   Decision
 		err error
@@ -483,12 +491,12 @@ func Run(timeout time.Duration, f func() Decision) (d Decision, err error) {
 				ch <- result{err: fmt.Errorf("internal error: %v", p)}
 			}
 		}()
-		ch <- result{d: f()}
+		ch <- result{d: f(ctx)}
 	}()
 	select {
 	case r := <-ch:
 		return r.d, r.err
-	case <-time.After(timeout):
+	case <-ctx.Done():
 		return Decision{}, ErrTimeout
 	}
 }

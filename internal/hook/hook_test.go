@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -128,6 +129,47 @@ func TestFailureBehavior(t *testing.T) {
 				t.Fatalf("got %s, want %s (stderr %q)", got, c.want, o.Stderr)
 			}
 		})
+	}
+}
+
+func TestTimeoutFailsClosedEveryTier(t *testing.T) {
+	// A fake slow `show`: the plan gate hangs, the internal deadline fires. The
+	// decision must then block in EVERY tier, including disposable, where an
+	// apply of a saved plan would otherwise be allowed.
+	slow := func(string, string, string) ([]byte, error) { time.Sleep(2 * time.Second); return nil, nil }
+	for _, dir := range []string{"prod", "dev"} { // protected, disposable
+		t.Run(dir, func(t *testing.T) {
+			root := setup(t, "enforce", "auto")
+			in := event("Bash", filepath.Join(root, dir), map[string]any{"command": "terraform apply tfplan"})
+			o := Run(Claude{}, strings.NewReader(in), Options{NoLog: true, NoGit: true,
+				Env: map[string]string{}, PlanJSON: slow, Timeout: 200 * time.Millisecond})
+			if o.Exit != 2 {
+				t.Fatalf("%s tier: timeout must fail closed (exit 2), got exit %d stderr %q", dir, o.Exit, o.Stderr)
+			}
+			if !strings.Contains(o.Stderr, "timed out") {
+				t.Fatalf("%s tier: reason should mention the timeout: %q", dir, o.Stderr)
+			}
+		})
+	}
+}
+
+func TestShowPlanCancelledByContext(t *testing.T) {
+	// A fake `terraform` that sleeps far past the deadline. Cancelling the
+	// parent context must kill the subprocess promptly, not wait out show_timeout.
+	bindir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bindir, "terraform"), []byte("#!/bin/sh\nexec sleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bindir+":"+os.Getenv("PATH"))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(200 * time.Millisecond); cancel() }()
+	start := time.Now()
+	_, err := ShowPlan(ctx, 30*time.Second)("terraform", t.TempDir(), "tfplan")
+	if err == nil {
+		t.Fatal("expected an error when the context is cancelled")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("subprocess was not cancelled by context: took %s", d)
 	}
 }
 
