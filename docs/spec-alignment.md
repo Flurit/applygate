@@ -102,7 +102,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 |---|---|---|
 | Test corpus: v0 pack, bypass classes, golden tests, property tests for shell parsing | done | `harness`, `internal/shell/*_test.go`, fuzz corpus |
 | Speed: command decision under 50 ms p95, plan under 1 s for 1,000 resources | done | measured p95 2.9 ms in process, 1,000-resource plan 17 ms ([ACCEPTANCE.md](../ACCEPTANCE.md)); `show -json` cost excluded |
-| False positives under 5% of benign controls | done | 0/34 on the pack; 0.48% on 1,259 commands from 5 public repositories ([oss-corpus-trial.md](oss-corpus-trial.md)) |
+| False positives under 5% of benign controls | done | 0/42 on the pack; 0.48% on 1,259 commands from 5 public repositories ([oss-corpus-trial.md](oss-corpus-trial.md)) |
 | Failure behavior: crash, timeout, malformed event end in configured behavior | done | `hook_test.go`, `run.py --probes` |
 | Self-protection: config, hook entries, log | done | `guard-tampering` class, `DefaultProtectedPaths` |
 | Managed-settings deployment for organizations | done (documented) | `docs/threat-model.md` |
@@ -118,7 +118,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 
 | Item | Status |
 |---|---|
-| Passes the v0 pack at the agreed threshold | partial: passes the reconstructed pack 91/91; no threshold agreed, original pack unavailable |
+| Passes the v0 pack at the agreed threshold | partial: passes the reconstructed pack 106/106; no threshold agreed, original pack unavailable |
 | Observe-mode trial on 5 real repositories | partial: static stand-in on 5 public repositories ([oss-corpus-trial.md](oss-corpus-trial.md)), 0.48% false positives on 1,259 runnable commands; no agent sessions yet |
 | Installs in under 5 minutes on macOS and Linux | partial: 3 s on Linux against v0.1.0; not exercised on a Mac |
 | Works with Claude Code and one more agent | done: Claude Code and Codex, live-tested (T3) |
