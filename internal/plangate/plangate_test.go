@@ -120,3 +120,16 @@ func TestLargePlanLatency(t *testing.T) {
 		t.Errorf("plan evaluation took %s, over the 1s target", el)
 	}
 }
+
+// TestPlanTooLarge checks the F7 size cap: an oversized plan is a critical
+// finding (so protected tiers block) instead of being parsed for seconds.
+func TestPlanTooLarge(t *testing.T) {
+	big := make([]byte, maxPlanBytes+1)
+	res, err := Evaluate(Input{PlanJSON: big, MaxDestroy: 0}, DefaultRules())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].Rule != "plan-too-large" || res.Findings[0].Severity != preflight.Critical {
+		t.Fatalf("want one critical plan-too-large finding, got %+v", res.Findings)
+	}
+}
