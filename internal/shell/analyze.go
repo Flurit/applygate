@@ -7,6 +7,7 @@
 package shell
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -284,7 +285,7 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			left := st.clone()
 			a.stmt(c.X, left, via, depth, in)
 			out, ok := a.stdout(c.X, st.clone(), in, 0)
-			a.stmt(c.Y, st.clone(), via, depth, stdin{text: out, known: ok, present: true, desc: "output of " + short(nodeText(c.X))})
+			a.stmt(c.Y, st.clone(), via, depth, stdin{text: out, known: ok, present: true, desc: "output of " + short(pipeSource(c.X))})
 		default:
 			a.stmt(c.X, st, via, depth, in)
 			a.stmt(c.Y, st, via, depth, stdin{})
@@ -419,10 +420,37 @@ func (a *analyzer) callExpr(c *syntax.CallExpr, redirs []Redir, st *state, via [
 	a.call(args, redirs, cmdSt, st, via, depth, in)
 }
 
+const braceGuardMax = 1024
+
+// litLen sums the literal length of a word's parts, stopping once it exceeds
+// cap. It is a cheap size estimate used to skip brace expansion on huge words.
+func litLen(parts []syntax.WordPart, cap int) int {
+	n := 0
+	for _, p := range parts {
+		switch x := p.(type) {
+		case *syntax.Lit:
+			n += len(x.Value)
+		case *syntax.SglQuoted:
+			n += len(x.Value)
+		case *syntax.DblQuoted:
+			n += litLen(x.Parts, cap)
+		default:
+			n++
+		}
+		if n > cap {
+			return n
+		}
+	}
+	return n
+}
+
 // words resolves one syntax word, applying brace expansion.
 func (a *analyzer) words(w *syntax.Word, st *state, via []string, depth int) []Word {
 	cp := &syntax.Word{Parts: append([]syntax.WordPart(nil), w.Parts...)}
-	if syntax.SplitBraces(cp) {
+	// syntax.SplitBraces allocates heavily on deeply nested braces (e.g.
+	// "{{{...}}}") even when there is nothing to expand. A real brace
+	// expansion is short, so skip it for pathologically long words (worst case under the cap stays small).
+	if litLen(w.Parts, braceGuardMax) <= braceGuardMax && syntax.SplitBraces(cp) {
 		n := 1
 		for _, p := range cp.Parts {
 			if be, ok := p.(*syntax.BraceExp); ok {
@@ -604,12 +632,64 @@ func (a *analyzer) abs(st *state, p string) string {
 	return filepath.Join(st.dir, p)
 }
 
-func nodeText(n syntax.Node) string {
-	var b strings.Builder
-	if err := syntax.NewPrinter(syntax.Minify(true)).Print(&b, n); err != nil {
-		return ""
+// limitWriter aborts after max bytes so printing a huge node (e.g. the whole
+// upstream of a 60k-stage pipeline) stays O(1) instead of rendering it all only
+// for short() to throw it away. The printer stops at the first write error.
+type limitWriter struct {
+	b   strings.Builder
+	max int
+}
+
+func (w *limitWriter) Write(p []byte) (int, error) {
+	if w.b.Len() >= w.max {
+		return 0, errWriteLimit
 	}
-	return b.String()
+	if n := w.max - w.b.Len(); len(p) > n {
+		w.b.Write(p[:n])
+		return n, errWriteLimit
+	}
+	return w.b.Write(p)
+}
+
+var errWriteLimit = errors.New("node text limit reached")
+
+func nodeText(n syntax.Node) string {
+	w := &limitWriter{max: 4096}
+	// A write-limit error is expected and means the output was truncated.
+	_ = syntax.NewPrinter(syntax.Minify(true)).Print(w, n)
+	return w.b.String()
+}
+
+// pipeSource names the left side of a pipe for a human-readable "output of …"
+// message. Rendering a composite upstream is O(n) (the printer traverses the
+// whole node even past a write limit), which in a 60k-stage pipeline becomes
+// O(n) per stage. So small upstreams are rendered exactly as before; only a
+// pathologically large one is labelled generically.
+func pipeSource(n syntax.Node) string {
+	if smallNode(n, 32) {
+		return nodeText(n)
+	}
+	return "a pipeline"
+}
+
+// smallNode reports whether n contains at most budget statements, visiting at
+// most budget+1 of them. Cheap even when called per pipe stage.
+func smallNode(n syntax.Node, budget int) bool {
+	count := 0
+	ok := true
+	syntax.Walk(n, func(nd syntax.Node) bool {
+		if !ok {
+			return false
+		}
+		if _, isStmt := nd.(*syntax.Stmt); isStmt {
+			if count++; count > budget {
+				ok = false
+				return false
+			}
+		}
+		return true
+	})
+	return ok
 }
 
 func unescapeLit(s string) string {

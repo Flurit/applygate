@@ -70,7 +70,19 @@ type Result struct {
 }
 
 // Evaluate parses and checks the plan.
+// maxPlanBytes caps the plan JSON we will parse. Beyond this, parsing costs
+// seconds and could approach the decision deadline, so an oversized plan is
+// treated as a critical finding (protected tiers block) rather than parsed.
+const maxPlanBytes = 16 << 20
+
 func Evaluate(in Input, rules *Rules) (*Result, error) {
+	if len(in.PlanJSON) > maxPlanBytes {
+		return &Result{Findings: []preflight.Finding{{
+			Rule:     "plan-too-large",
+			Severity: preflight.Critical,
+			Message:  fmt.Sprintf("plan JSON is %d MB, over the %d MB limit; too large to evaluate", len(in.PlanJSON)>>20, maxPlanBytes>>20),
+		}}}, nil
+	}
 	var p tfjson.Plan
 	if err := json.Unmarshal(in.PlanJSON, &p); err != nil {
 		return nil, fmt.Errorf("plan JSON: %w", err)
