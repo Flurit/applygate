@@ -518,6 +518,60 @@ func isSeatbeltEntry(e any) bool {
 	return false
 }
 
+// settingsHasSeatbelt reports whether a settings file's PreToolUse hooks
+// include a seatbelt entry.
+func settingsHasSeatbelt(b []byte) bool {
+	var doc map[string]any
+	if json.Unmarshal(b, &doc) != nil {
+		return false
+	}
+	hooks, _ := doc["hooks"].(map[string]any)
+	pre, _ := hooks["PreToolUse"].([]any)
+	for _, e := range pre {
+		if isSeatbeltEntry(e) {
+			return true
+		}
+	}
+	return false
+}
+
+// seatbeltHookDir searches cwd and its ancestors for a project settings file
+// (rel, e.g. .claude/settings.json) that contains a seatbelt hook, and returns
+// the directory that holds it, or "" if none is found.
+func seatbeltHookDir(cwd, rel string) string {
+	dir := cwd
+	for {
+		if b, err := os.ReadFile(filepath.Join(dir, rel)); err == nil && settingsHasSeatbelt(b) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+// launchDirWarnings warns when a project-scope seatbelt hook lives in an
+// ancestor of cwd. Claude Code and Codex read project settings only from the
+// directory the session is launched in, so a hook in an ancestor is not loaded
+// when the agent starts in cwd.
+func launchDirWarnings(cwd string) []string {
+	var warns []string
+	for _, agent := range []string{"claude", "codex"} {
+		rel, err := settingsPath(agent, "project")
+		if err != nil {
+			continue
+		}
+		if dir := seatbeltHookDir(cwd, rel); dir != "" && dir != cwd {
+			warns = append(warns, fmt.Sprintf(
+				"%s project hook is in %s, not the current directory; %s reads project settings only from the directory it is launched in, so starting it here will not apply the hook — launch from %s, or install at user scope (--scope user)",
+				agent, dir, agent, dir))
+		}
+	}
+	return warns
+}
+
 func cmdDoctor(stdout, stderr io.Writer) int {
 	problems := 0
 	say := func(ok bool, format string, a ...any) {
@@ -579,6 +633,9 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 	}
 	sort.Strings(where)
 	say(found > 0, "hooks installed: %s", orNone(strings.Join(where, ", ")))
+	for _, w := range launchDirWarnings(wd) {
+		say(false, "%s", w)
+	}
 	var buf bytes.Buffer
 	rc := cmdSelftest(nil, &buf, &buf)
 	say(rc == 0, "selftest: %s", strings.TrimSpace(lastLine(buf.String())))
