@@ -9,7 +9,43 @@ import (
 	"time"
 
 	"github.com/Flurit/seatbelt/internal/decisionlog"
+	"github.com/Flurit/seatbelt/internal/policy"
 )
+
+// panicOnRender parses like Codex but panics while rendering, to exercise the
+// top-level panic recovery in Run (a case policy.Run's own recover does not
+// cover).
+type panicOnRender struct{ Codex }
+
+func (panicOnRender) Render(policy.Decision) Output { panic("render boom") }
+
+// panicOnParse panics during Parse, before any config for the event is loaded.
+type panicOnParse struct{ Codex }
+
+func (panicOnParse) Parse([]byte) (policy.Event, bool, error) { panic("parse boom") }
+
+func TestPanicRecoveryFailsClosed(t *testing.T) {
+	// A panic outside policy.Run (here, in the adapter) must still block, so a
+	// Codex hook that panics does not fail open.
+	root := setup(t, "enforce", "auto")
+	in := event("Bash", filepath.Join(root, "dev"), map[string]any{"command": "ls"})
+	for _, a := range []Adapter{panicOnRender{}, panicOnParse{}} {
+		o := Run(a, strings.NewReader(in), Options{NoLog: true, NoGit: true, Env: map[string]string{}})
+		if o.Exit != 2 {
+			t.Fatalf("%T: panic must fail closed (exit 2), got exit %d stderr %q", a, o.Exit, o.Stderr)
+		}
+	}
+}
+
+func TestPanicRecoveryObserveAllows(t *testing.T) {
+	// Observe mode never blocks, even on a panic.
+	root := setup(t, "observe", "auto")
+	in := event("Bash", filepath.Join(root, "prod"), map[string]any{"command": "ls"})
+	o := Run(panicOnRender{}, strings.NewReader(in), Options{NoLog: true, NoGit: true, Env: map[string]string{}})
+	if o.Exit != 0 {
+		t.Fatalf("observe mode must not block on panic, got exit %d stderr %q", o.Exit, o.Stderr)
+	}
+}
 
 const prodConfig = `version: 1
 mode: %MODE%

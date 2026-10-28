@@ -65,7 +65,9 @@ Plan gate: in protected tiers critical findings block and high findings ask; in 
 Hooks fail open by default in most agents, so this matters:
 
 - **Internal errors it can catch** (malformed event, config error, panic, its own 25 s deadline): with `on_error: auto` (the default) it **blocks** in protected or unknown tiers and allows elsewhere. Blocking uses exit code 2, which Claude Code and Codex both treat as a block.
-- **Crashes it cannot catch, or the agent's hook timeout** (process killed, binary missing): the agent decides. Claude Code proceeds unless the hook has `"onFailure": "block"`, which `seatbelt hook install` sets (it needs Claude Code v2.1.295 or later; older versions fail open). Codex's behavior here is not documented.
+- **Crashes it cannot catch, or the agent's hook timeout** (process killed, binary missing): the agent decides. Claude Code proceeds unless the hook has `"onFailure": "block"`, which `seatbelt hook install` sets (it needs Claude Code v2.1.295 or later; older versions fail open).
+
+  **Codex has no `onFailure` equivalent and fails open here.** A missing, killed or crashed Codex hook lets the tool call run (observed: exit 127 and a no-status-code exit both proceed). seatbelt now recovers panics inside its own process and turns them into a block, so the *only* remaining Codex fail-open case is the binary not starting at all. seatbelt cannot close that gap from inside the hook, so with Codex also rely on its sandbox and approval settings (`--sandbox workspace-write` or `read-only`, `approval_policy`/`--full-auto` off for infra work) as the backstop, keep plan-only credentials, and run `seatbelt doctor` to confirm the hook binary exists and is executable.
 - **Observe mode** never blocks, including on errors.
 
 See [docs/limits.md](docs/limits.md) and [docs/threat-model.md](docs/threat-model.md).

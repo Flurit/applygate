@@ -572,6 +572,77 @@ func launchDirWarnings(cwd string) []string {
 	return warns
 }
 
+// hookScan summarizes one settings file's PreToolUse hooks.
+type hookScan struct {
+	seatbeltBins []string // command binaries of seatbelt entries
+	unrecognised []string // short summaries of entries seatbelt did not install
+}
+
+func scanHooks(b []byte) (hookScan, bool) {
+	var doc map[string]any
+	if json.Unmarshal(b, &doc) != nil {
+		return hookScan{}, false
+	}
+	var s hookScan
+	hooks, _ := doc["hooks"].(map[string]any)
+	pre, _ := hooks["PreToolUse"].([]any)
+	for _, e := range pre {
+		if isSeatbeltEntry(e) {
+			s.seatbeltBins = append(s.seatbeltBins, entryBinary(e))
+			continue
+		}
+		s.unrecognised = append(s.unrecognised, entrySummary(e))
+	}
+	return s, true
+}
+
+// entryBinary returns the binary of the first command hook in an entry.
+func entryBinary(e any) string {
+	m, _ := e.(map[string]any)
+	hs, _ := m["hooks"].([]any)
+	for _, h := range hs {
+		hm, _ := h.(map[string]any)
+		if c, _ := hm["command"].(string); c != "" {
+			if f := strings.Fields(c); len(f) > 0 {
+				return strings.Trim(f[0], `"`)
+			}
+		}
+	}
+	return ""
+}
+
+// entrySummary is a short "matcher -> command" label for doctor output.
+func entrySummary(e any) string {
+	m, _ := e.(map[string]any)
+	matcher, _ := m["matcher"].(string)
+	if matcher == "" {
+		matcher = "(no matcher)"
+	}
+	hs, _ := m["hooks"].([]any)
+	for _, h := range hs {
+		hm, _ := h.(map[string]any)
+		if c, _ := hm["command"].(string); c != "" {
+			return matcher + " -> " + c
+		}
+	}
+	return matcher
+}
+
+// binExecutable reports whether path is a runnable file.
+func binExecutable(path string) (bool, string) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return false, "not found"
+	}
+	if fi.IsDir() {
+		return false, "is a directory"
+	}
+	if fi.Mode().Perm()&0o111 == 0 {
+		return false, "not executable"
+	}
+	return true, ""
+}
+
 func cmdDoctor(stdout, stderr io.Writer) int {
 	problems := 0
 	say := func(ok bool, format string, a ...any) {
@@ -612,21 +683,28 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 			if err != nil {
 				continue
 			}
-			var doc map[string]any
-			if json.Unmarshal(b, &doc) != nil {
+			scan, ok := scanHooks(b)
+			if !ok {
 				say(false, "%s is not valid JSON", p)
 				continue
 			}
-			hooks, _ := doc["hooks"].(map[string]any)
-			pre, _ := hooks["PreToolUse"].([]any)
-			for _, e := range pre {
-				if isSeatbeltEntry(e) {
-					found++
-					where = append(where, agent+" ("+p+")")
-					cmd := e.(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
-					bin := strings.Trim(strings.Fields(cmd)[0], `"`)
-					_, serr := os.Stat(bin)
-					say(serr == nil, "%s hook command binary exists: %s", agent, bin)
+			if len(scan.seatbeltBins) > 0 {
+				found++
+				where = append(where, agent+" ("+p+")")
+				for _, bin := range scan.seatbeltBins {
+					ok, why := binExecutable(bin)
+					if ok {
+						say(true, "%s hook command binary is executable: %s", agent, bin)
+					} else {
+						say(false, "%s hook command binary %s: %s", agent, why, bin)
+					}
+				}
+			} else if agent == "codex" {
+				say(false, "codex settings %s has no seatbelt hook entry (run: seatbelt hook install --agent codex)", p)
+			}
+			if agent == "codex" {
+				for _, u := range scan.unrecognised {
+					say(false, "codex: unrecognised PreToolUse hook entry in %s (Codex runs trusted hooks; review it): %s", p, u)
 				}
 			}
 		}
