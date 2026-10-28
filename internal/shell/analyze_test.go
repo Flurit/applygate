@@ -154,3 +154,48 @@ func TestFieldSplittingAndShellArgs(t *testing.T) {
 		t.Errorf("quoted expansion must stay one word: %v", render(r))
 	}
 }
+
+// TestWrapperAndInterpreterGaps covers the four gaps found in independent review:
+// the script -c cluster, chroot, GNU parallel, and tool names split across
+// string-literal concatenation inside an interpreter body.
+func TestWrapperAndInterpreterGaps(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want []string
+		not  []string
+	}{
+		// F2: script -c bundled into a short-flag cluster.
+		{"script -qc 'terraform destroy -auto-approve' /dev/null", []string{"/repo: terraform destroy -auto-approve"}, nil},
+		{"script -c 'terraform destroy' out.log", []string{"/repo: terraform destroy"}, nil},
+		// F3: chroot runs its trailing argv as a command.
+		{"chroot /mnt/root terraform destroy -auto-approve", []string{"/repo: terraform destroy -auto-approve"}, nil},
+		{"chroot --userspec 0:0 /mnt terraform destroy", []string{"/repo: terraform destroy"}, nil},
+		// F4: GNU parallel.
+		{"parallel terraform destroy ::: -auto-approve", []string{"/repo: terraform destroy"}, nil},
+		{"parallel -j4 terraform destroy ::: a b", []string{"/repo: terraform destroy"}, nil},
+		{"parallel ::: 'terraform destroy'", []string{"/repo: terraform destroy"}, nil},
+		// F1: tool name split by string-literal concatenation in interpreter code.
+		{`python3 -c "import subprocess; subprocess.run(['ter'+'raform','destroy','-auto-approve'])"`,
+			[]string{"PROBLEM: python3 code mentions infrastructure"}, nil},
+		{`node -e "require('child_process').execSync('terra'+'form destroy')"`,
+			[]string{"PROBLEM: node code mentions infrastructure"}, nil},
+		{`perl -e 'system("terra"."form destroy")'`, []string{"PROBLEM: perl code mentions infrastructure"}, nil},
+		// Benign interpreter code must not be flagged.
+		{`python3 -c "print(1+1)"`, nil, []string{"PROBLEM"}},
+		{`node -e "console.log('a'+'b')"`, nil, []string{"PROBLEM"}},
+	}
+	for _, c := range cases {
+		r := Analyze(c.cmd, Options{Dir: "/repo", Env: map[string]string{"HOME": "/h"}, ReadFile: fakeFS(nil), MaxDepth: 8})
+		got := strings.Join(render(r), "\n")
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%q: want %q in:\n%s", c.cmd, w, got)
+			}
+		}
+		for _, n := range c.not {
+			if strings.Contains(got, n) {
+				t.Errorf("%q: did not want %q in:\n%s", c.cmd, n, got)
+			}
+		}
+	}
+}
