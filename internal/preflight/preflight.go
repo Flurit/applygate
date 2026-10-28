@@ -11,6 +11,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -433,4 +434,94 @@ func CallerAccount(profile string, timeout time.Duration) (string, error) {
 		return "", err
 	}
 	return id.Account, nil
+}
+
+// StateInfo is the identity of a state file: its lineage and serial.
+type StateInfo struct {
+	Lineage string
+	Serial  uint64
+}
+
+// ParseState reads lineage and serial from a state file's JSON.
+func ParseState(b []byte) (StateInfo, bool) {
+	var raw struct {
+		Lineage string `json:"lineage"`
+		Serial  uint64 `json:"serial"`
+	}
+	if json.Unmarshal(b, &raw) != nil || raw.Lineage == "" {
+		return StateInfo{}, false
+	}
+	return StateInfo{Lineage: raw.Lineage, Serial: raw.Serial}, true
+}
+
+// PullState runs "<engine> state pull" in dir and returns the remote state.
+// It is read-only but contacts the backend, so it is only called when
+// preflight.live_state is enabled in the user config.
+func PullState(parent context.Context, engine, dir string, timeout time.Duration) ([]byte, error) {
+	bin := engine
+	if bin == "" || bin == "terragrunt" {
+		bin = "terraform"
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "state", "pull")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1")
+	cmd.WaitDelay = 2 * time.Second
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("%s state pull cancelled or timed out after %s", bin, timeout)
+	}
+	if err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if i := strings.IndexByte(msg, '\n'); i >= 0 {
+			msg = msg[:i]
+		}
+		return nil, fmt.Errorf("%s state pull failed: %v: %s", bin, err, msg)
+	}
+	return out, nil
+}
+
+// LineageMismatch compares local state files (names relative to dir) with
+// the remote state and reports the ones that are foreign (another lineage),
+// stale (behind the remote serial) or diverged (ahead of it). A local file
+// identical in lineage and serial to the remote state produces no finding.
+func LineageMismatch(dir string, states []string, remote []byte) *Finding {
+	rs, ok := ParseState(remote)
+	if !ok {
+		return &Finding{Rule: "state-lineage", Severity: Info, Message: "the remote state could not be parsed for lineage and serial"}
+	}
+	var ev []string
+	for _, n := range states {
+		b, err := os.ReadFile(filepath.Join(dir, n))
+		if err != nil {
+			continue
+		}
+		ls, ok := ParseState(b)
+		switch {
+		case !ok:
+			continue
+		case ls.Lineage != rs.Lineage:
+			ev = append(ev, fmt.Sprintf("%s is from another state lineage (%s, remote is %s): foreign state", n, short(ls.Lineage), short(rs.Lineage)))
+		case ls.Serial < rs.Serial:
+			ev = append(ev, fmt.Sprintf("%s is behind the remote state (serial %d, remote %d): stale", n, ls.Serial, rs.Serial))
+		case ls.Serial > rs.Serial:
+			ev = append(ev, fmt.Sprintf("%s is ahead of the remote state (serial %d, remote %d): diverged", n, ls.Serial, rs.Serial))
+		}
+	}
+	if len(ev) == 0 {
+		return nil
+	}
+	return &Finding{Rule: "state-lineage", Severity: High,
+		Message:  "local state files do not match the remote state's lineage and serial; a plan or destroy here may use the wrong state",
+		Evidence: ev}
+}
+
+func short(lineage string) string {
+	if len(lineage) > 8 {
+		return lineage[:8] + "…"
+	}
+	return lineage
 }

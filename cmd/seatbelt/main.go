@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,6 +24,7 @@ import (
 	"github.com/Flurit/seatbelt/internal/hook"
 	"github.com/Flurit/seatbelt/internal/plangate"
 	"github.com/Flurit/seatbelt/internal/policy"
+	"github.com/Flurit/seatbelt/internal/preflight"
 	"github.com/Flurit/seatbelt/internal/shell"
 )
 
@@ -38,7 +40,7 @@ Usage:
                                       evaluate "terraform show -json" output
   seatbelt report [--log FILE]        summarize the decision log
   seatbelt selftest [-v]              run the scenario pack against this binary
-  seatbelt init                       write a starter .seatbelt.yaml in the current directory
+  seatbelt init [--no-hooks]          write a starter .seatbelt.yaml, detect agents, install hooks
   seatbelt hook install|remove --agent claude|codex [--scope project|user]
   seatbelt doctor                     check config, hooks and versions
   seatbelt version
@@ -70,7 +72,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "selftest":
 		return cmdSelftest(args[1:], stdout, stderr)
 	case "init":
-		return cmdInit(stdout, stderr)
+		return cmdInit(args[1:], stdout, stderr)
 	case "doctor":
 		return cmdDoctor(stdout, stderr)
 	case "version", "--version", "-v":
@@ -256,7 +258,7 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 	if t == "" {
 		t = cfg.Resolve(config.Signals{Dir: dir}).Tier
 	}
-	res, err := plangate.Evaluate(plangate.Input{PlanJSON: js, MaxDestroy: cfg.MaxDestroy(t), Scope: cfg.PlanGate.Scope}, plangate.DefaultRules())
+	res, err := plangate.Evaluate(plangate.Input{PlanJSON: js, MaxDestroy: cfg.MaxDestroy(t), Scope: cfg.PlanGate.Scope, Protected: cfg.ProtectedResources, Backend: preflight.InitBackend(dir)}, plangate.DefaultRules())
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -379,9 +381,21 @@ environments:
       workspaces: ["dev"]
 plan_gate:
   max_destroy: {protected: 0}
+# Resource addresses whose destroy or replace is always critical, whatever
+# their type (globs on the Terraform address).
+# protected_resources: ["aws_instance.bastion", "module.data.*"]
 `
 
-func cmdInit(stdout, stderr io.Writer) int {
+// cmdInit writes the starter config, detects installed agents and installs
+// their project-scope hooks (the spec's "init" command). --no-hooks skips the
+// hook step.
+func cmdInit(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	noHooks := fs.Bool("no-hooks", false, "write the config only; do not detect agents or install hooks")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 	if _, err := os.Stat(config.FileName); err == nil {
 		fmt.Fprintf(stderr, "%s already exists; not overwriting\n", config.FileName)
 		return 1
@@ -390,8 +404,49 @@ func cmdInit(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "wrote %s (observe mode). Edit the environments, then run:\n  seatbelt hook install --agent claude\n", config.FileName)
-	return 0
+	fmt.Fprintf(stdout, "wrote %s (observe mode). Edit the environments to match this repository.\n", config.FileName)
+	if *noHooks {
+		fmt.Fprintln(stdout, "hooks not installed (--no-hooks). Later: seatbelt hook install --agent claude|codex")
+		return 0
+	}
+	home, _ := os.UserHomeDir()
+	wd, _ := os.Getwd()
+	agents := detectAgents(home, wd, exec.LookPath)
+	if len(agents) == 0 {
+		fmt.Fprintln(stdout, "no coding agent detected (looked for Claude Code and Codex). Install a hook later with: seatbelt hook install --agent claude|codex")
+		return 0
+	}
+	fmt.Fprintf(stdout, "detected agents: %s\n", strings.Join(agents, ", "))
+	rc := 0
+	for _, a := range agents {
+		if r := cmdInstall("install", []string{"--agent", a}, stdout, stderr); r != 0 {
+			rc = r
+		}
+	}
+	fmt.Fprintln(stdout, "run: seatbelt doctor")
+	return rc
+}
+
+// detectAgents returns the agents that look installed for this user or
+// repository: a user or project settings directory, or the CLI on PATH.
+func detectAgents(home, wd string, lookPath func(string) (string, error)) []string {
+	isDir := func(p string) bool {
+		fi, err := os.Stat(p)
+		return err == nil && fi.IsDir()
+	}
+	var out []string
+	for _, a := range []struct{ name, dir, bin string }{{"claude", ".claude", "claude"}, {"codex", ".codex", "codex"}} {
+		found := isDir(filepath.Join(home, a.dir)) || isDir(filepath.Join(wd, a.dir))
+		if !found && lookPath != nil {
+			if _, err := lookPath(a.bin); err == nil {
+				found = true
+			}
+		}
+		if found {
+			out = append(out, a.name)
+		}
+	}
+	return out
 }
 
 func selfPath() string {

@@ -1,0 +1,10 @@
+{
+  "name": "seatbelt",
+  "version": "0.1.0",
+  "description": "Pre-execution allow/ask/block check for agent actions on Terraform and OpenTofu infrastructure (requires the seatbelt binary on PATH).",
+  "author": { "name": "Flurit" },
+  "homepage": "https://github.com/Flurit/seatbelt",
+  "repository": "https://github.com/Flurit/seatbelt",
+  "license": "Apache-2.0",
+  "keywords": ["terraform", "opentofu", "guardrail", "hooks", "infrastructure"]
+}

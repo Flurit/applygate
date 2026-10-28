@@ -303,4 +303,8 @@ func TestCodexAdapter(t *testing.T) {
 	if got := run("Bash", map[string]any{"command": "terraform plan"}); got != "allow" {
 		t.Fatalf("plan: %s", got)
 	}
+	// An edit event that names the file directly (file_path) is guarded too.
+	if got := run("Edit", map[string]any{"file_path": filepath.Join(root, ".codex", "hooks.json")}); got != "deny" {
+		t.Fatalf("Edit with file_path on hooks: %s", got)
+	}
 }

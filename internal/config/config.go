@@ -55,6 +55,10 @@ type Config struct {
 	PlanGate       PlanGate      `yaml:"plan_gate"`
 	Preflight      Preflight     `yaml:"preflight"`
 	ProtectedPaths []string      `yaml:"protected_paths"`
+	// ProtectedResources are resource address globs (for example
+	// "aws_db_instance.*" or "module.data.*") whose destroy or replace in a
+	// saved plan is a critical finding, whatever their type.
+	ProtectedResources []string `yaml:"protected_resources"`
 
 	// Root is the directory of the repository config file ("" if none).
 	Root string `yaml:"-"`
@@ -93,8 +97,12 @@ type Preflight struct {
 	Lockfile   *bool `yaml:"lockfile"`
 	Backend    *bool `yaml:"backend"`
 	// LiveIdentity enables a read-only "aws sts get-caller-identity" call.
-	// Off by default; it is the only network access seatbelt makes.
+	// Off by default. User config only.
 	LiveIdentity bool `yaml:"live_identity"`
+	// LiveState enables a read-only "<engine> state pull" when local state
+	// files sit next to a remote backend, to compare lineage and serial.
+	// Off by default. User config only.
+	LiveState bool `yaml:"live_state"`
 }
 
 func on(b *bool, def bool) bool {
@@ -274,7 +282,11 @@ func merge(cfg *Config, path string, repo bool) error {
 	if c.Preflight.LiveIdentity && !repo {
 		cfg.Preflight.LiveIdentity = true // network access is a user decision
 	}
+	if c.Preflight.LiveState && !repo {
+		cfg.Preflight.LiveState = true // network access is a user decision
+	}
 	cfg.ProtectedPaths = append(cfg.ProtectedPaths, c.ProtectedPaths...)
+	cfg.ProtectedResources = append(cfg.ProtectedResources, c.ProtectedResources...)
 	return nil
 }
 

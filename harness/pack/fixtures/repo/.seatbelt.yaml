@@ -21,3 +21,5 @@ environments:
     match:
       paths: ["envs/dev/**", "envs/sandbox/**"]
       aws_profiles: ["dev", "sandbox"]
+# Addresses whose destroy or replace is critical whatever the type (spec: protected_resources).
+protected_resources: ["aws_instance.bastion"]

@@ -188,3 +188,81 @@ func TestUnprotectedStatefulCreate(t *testing.T) {
 		t.Fatalf("non-DB create should not fire the narrowed rule: %+v", res4.Findings)
 	}
 }
+
+// TestProtectedResources covers the protected_resources config: address
+// globs whose destroy or replace is critical whatever the resource type.
+func TestProtectedResources(t *testing.T) {
+	R := DefaultRules()
+	res, _ := Evaluate(Input{MaxDestroy: -1, Protected: []string{"aws_instance.bastion", "module.data.*"}, PlanJSON: planJSON(
+		rc{"aws_instance.bastion", "aws_instance", []string{"create", "delete"}, map[string]any{}, map[string]any{}},
+		rc{"module.data.aws_instance.x", "aws_instance", []string{"delete"}, map[string]any{}, nil},
+		rc{"aws_instance.web", "aws_instance", []string{"delete"}, map[string]any{}, nil},
+	)}, R)
+	sev := rules(t, res)
+	if s, ok := sev["protected-resource"]; !ok || s != preflight.Critical {
+		t.Fatalf("want Critical protected-resource, got %+v", res.Findings)
+	}
+	for _, f := range res.Findings {
+		if f.Rule == "protected-resource" {
+			if len(f.Evidence) != 2 {
+				t.Fatalf("want the bastion and module.data resources only, got %v", f.Evidence)
+			}
+		}
+	}
+	// An update to a protected resource is not a destroy.
+	res2, _ := Evaluate(Input{MaxDestroy: -1, Protected: []string{"aws_instance.bastion"}, PlanJSON: planJSON(
+		rc{"aws_instance.bastion", "aws_instance", []string{"update"}, map[string]any{}, map[string]any{}},
+	)}, R)
+	if _, ok := rules(t, res2)["protected-resource"]; ok {
+		t.Fatalf("update must not fire protected-resource: %+v", res2.Findings)
+	}
+}
+
+// TestCodeExecution covers spec scenario S12: provisioners and external data
+// sources in the plan's configuration are a High finding.
+func TestCodeExecution(t *testing.T) {
+	R := DefaultRules()
+	plan := map[string]any{
+		"format_version": "1.2",
+		"resource_changes": []any{
+			map[string]any{"address": "aws_instance.a", "mode": "managed", "type": "aws_instance", "name": "a",
+				"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{}}},
+			map[string]any{"address": "data.external.secrets", "mode": "data", "type": "external", "name": "secrets",
+				"change": map[string]any{"actions": []string{"read"}, "before": nil, "after": map[string]any{}}},
+		},
+		"configuration": map[string]any{"root_module": map[string]any{
+			"resources": []any{
+				map[string]any{"address": "aws_instance.a", "mode": "managed", "type": "aws_instance", "name": "a",
+					"provisioners": []any{map[string]any{"type": "local-exec"}}},
+				map[string]any{"address": "data.external.secrets", "mode": "data", "type": "external", "name": "secrets"},
+			},
+			"module_calls": map[string]any{"db": map[string]any{"source": "./db", "module": map[string]any{
+				"resources": []any{map[string]any{"address": "null_resource.bootstrap", "mode": "managed", "type": "null_resource", "name": "bootstrap",
+					"provisioners": []any{map[string]any{"type": "remote-exec"}}}},
+			}}},
+		}},
+	}
+	js, _ := json.Marshal(plan)
+	res, err := Evaluate(Input{MaxDestroy: -1, PlanJSON: js}, R)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f *preflight.Finding
+	for i := range res.Findings {
+		if res.Findings[i].Rule == "code-execution" {
+			f = &res.Findings[i]
+		}
+	}
+	if f == nil || f.Severity != preflight.High {
+		t.Fatalf("want High code-execution, got %+v", res.Findings)
+	}
+	want := []string{"aws_instance.a: provisioner local-exec", "data.external.secrets: external data source runs a program", "module.db.null_resource.bootstrap: provisioner remote-exec"}
+	if fmt.Sprint(f.Evidence) != fmt.Sprint(want) {
+		t.Fatalf("evidence %v, want %v", f.Evidence, want)
+	}
+	// A plain plan has no code-execution finding.
+	res2, _ := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(rc{"aws_instance.a", "aws_instance", []string{"create"}, nil, map[string]any{}})}, R)
+	if _, ok := rules(t, res2)["code-execution"]; ok {
+		t.Fatalf("unexpected code-execution: %+v", res2.Findings)
+	}
+}

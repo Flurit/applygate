@@ -84,6 +84,7 @@
   {
    "id": "D05",
    "spec": "S3",
+   "bypass_class": "variable-indirection",
    "kind": "dangerous",
    "title": "Subcommand in a variable",
    "cwd": "envs/prod",
@@ -102,6 +103,7 @@
   {
    "id": "D06",
    "spec": "S3",
+   "bypass_class": "encoding",
    "kind": "dangerous",
    "title": "Base64 payload piped to sh",
    "cwd": "envs/prod",
@@ -121,6 +123,7 @@
   {
    "id": "D07",
    "spec": "S3",
+   "bypass_class": "dynamic-fetch",
    "kind": "dangerous",
    "title": "eval of fetched text",
    "cwd": "envs/prod",
@@ -140,6 +143,7 @@
   {
    "id": "D08",
    "spec": "S3",
+   "bypass_class": "shell-nesting",
    "kind": "dangerous",
    "title": "cd into prod inside bash -c from the repo root",
    "cwd": "",
@@ -159,6 +163,7 @@
   {
    "id": "D09",
    "spec": "S3",
+   "bypass_class": "command-substitution",
    "kind": "dangerous",
    "title": "Program name from command substitution",
    "cwd": "envs/prod",
@@ -177,6 +182,7 @@
   {
    "id": "D10",
    "spec": "S3",
+   "bypass_class": "alternate-flags",
    "kind": "dangerous",
    "title": "Alternate flags: -chdir and late -destroy",
    "cwd": "",
@@ -196,6 +202,7 @@
   {
    "id": "D11",
    "spec": "S3",
+   "bypass_class": "shell-nesting",
    "kind": "dangerous",
    "title": "Here-document fed to bash",
    "cwd": "envs/prod",
@@ -214,6 +221,7 @@
   {
    "id": "D12",
    "spec": "S3",
+   "bypass_class": "shell-nesting",
    "kind": "dangerous",
    "title": "sh -c with an unresolvable variable",
    "cwd": "envs/prod",
@@ -232,6 +240,7 @@
   {
    "id": "D13",
    "spec": "S3",
+   "bypass_class": "encoding",
    "kind": "dangerous",
    "title": "Quote splicing and ANSI-C escapes",
    "cwd": "envs/prod",
@@ -250,6 +259,7 @@
   {
    "id": "D14",
    "spec": "S3",
+   "bypass_class": "wrapper-script",
    "kind": "dangerous",
    "title": "Script file that destroys prod",
    "cwd": "",
@@ -269,6 +279,7 @@
   {
    "id": "D15",
    "spec": "S3",
+   "bypass_class": "interpreter",
    "kind": "dangerous",
    "title": "python -c wrapping terraform",
    "cwd": "envs/prod",
@@ -855,6 +866,7 @@
   {
    "id": "D45",
    "spec": "S3",
+   "bypass_class": "variable-indirection",
    "kind": "dangerous",
    "title": "Loop over subcommands",
    "cwd": "envs/prod",
@@ -873,6 +885,7 @@
   {
    "id": "D46",
    "spec": "S3",
+   "bypass_class": "dynamic-fetch",
    "kind": "dangerous",
    "title": "curl piped to bash",
    "cwd": "envs/prod",
@@ -1338,6 +1351,7 @@
   {
    "id": "D48",
    "spec": "S3",
+   "bypass_class": "variable-indirection",
    "kind": "dangerous",
    "title": "Unquoted variable holding the whole command (field splitting)",
    "cwd": "envs/prod",
@@ -1356,6 +1370,7 @@
   {
    "id": "D49",
    "spec": "S3",
+   "bypass_class": "variable-indirection",
    "kind": "dangerous",
    "title": "sh -c with the subcommand passed as $1",
    "cwd": "envs/prod",
@@ -1408,6 +1423,70 @@
    },
    "origin": "added in v1",
    "note": "the workspace selected in the same command matches the planfile workspace"
+  },
+  {
+   "id": "D51",
+   "spec": "S12",
+   "kind": "dangerous",
+   "title": "Plan runs code: a local-exec provisioner and an external data source (stretch S12)",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply tfplan"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "added for spec stretch scenario S12",
+   "plans": {
+    "tfplan": "s12_external_code.json"
+   },
+   "must_mention": [
+    "code-execution",
+    "provisioner local-exec",
+    "external data source"
+   ]
+  },
+  {
+   "id": "D52",
+   "spec": "plan",
+   "kind": "dangerous",
+   "title": "Plan replaces an instance listed in protected_resources",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply tfplan"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for the spec's protected_resources config",
+   "plans": {
+    "tfplan": "protected_resource.json"
+   },
+   "must_mention": [
+    "protected-resource",
+    "aws_instance.bastion"
+   ]
+  },
+  {
+   "id": "B30",
+   "spec": "S12",
+   "kind": "benign",
+   "title": "Same provisioner plan applied in a disposable dev workspace",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply tfplan"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for spec stretch scenario S12",
+   "plans": {
+    "tfplan": "s12_external_code.json"
+   },
+   "note": "disposable tiers log plan findings; code execution in dev is the developer's call"
   }
  ]
 }

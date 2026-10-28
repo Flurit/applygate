@@ -57,9 +57,16 @@ environments:
 }
 
 func TestRepoConfigCannotEnableNetworkOrMoveLog(t *testing.T) {
-	c := load(t, "log_path: /tmp/elsewhere.jsonl\npreflight: {live_identity: true}\n")
-	if c.LogPath != "" || c.Preflight.LiveIdentity {
-		t.Fatalf("repo config changed user-only settings: log %q live %v", c.LogPath, c.Preflight.LiveIdentity)
+	c := load(t, "log_path: /tmp/elsewhere.jsonl\npreflight: {live_identity: true, live_state: true}\n")
+	if c.LogPath != "" || c.Preflight.LiveIdentity || c.Preflight.LiveState {
+		t.Fatalf("repo config changed user-only settings: log %q live %v state %v", c.LogPath, c.Preflight.LiveIdentity, c.Preflight.LiveState)
+	}
+}
+
+func TestProtectedResources(t *testing.T) {
+	c := load(t, "protected_resources: [\"aws_instance.bastion\", \"module.data.*\"]\n")
+	if len(c.ProtectedResources) != 2 || c.ProtectedResources[1] != "module.data.*" {
+		t.Fatalf("protected_resources: %v", c.ProtectedResources)
 	}
 }
 

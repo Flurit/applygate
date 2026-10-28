@@ -126,7 +126,10 @@ type Deps struct {
 	// Account resolves the AWS account for a profile (live check); nil
 	// disables it.
 	Account func(profile string) (string, error)
-	Rules   *plangate.Rules
+	// StatePull returns the remote state ("<engine> state pull"); nil
+	// disables the opt-in lineage and serial comparison.
+	StatePull func(engine, dir string) ([]byte, error)
+	Rules     *plangate.Rules
 }
 
 // ActionResult is the decision for one classified action.
@@ -293,6 +296,11 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 			}
 			if f := preflight.StaleState(a.Dir, be); f != nil {
 				r.Findings = append(r.Findings, *f)
+				if deps.StatePull != nil && be.Remote() {
+					if lf := lineageCheck(a, be, *f, deps); lf != nil {
+						r.Findings = append(r.Findings, *lf)
+					}
+				}
 			}
 		}
 		if deps.Lockfile != nil && cfg.LockfileCheck() && (a.Class == classify.ApplySavedPlan || a.Class == classify.UnreviewedApply || a.Class == classify.Destroy) {
@@ -319,6 +327,25 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		}
 	}
 	return r
+}
+
+// lineageCheck runs the opt-in state pull and compares the local state files
+// named in the stale-state finding with the remote state.
+func lineageCheck(a classify.Action, be *preflight.Backend, stale preflight.Finding, deps Deps) *preflight.Finding {
+	var states []string
+	for _, e := range stale.Evidence {
+		if strings.HasSuffix(e, ".tfstate") || strings.HasSuffix(e, ".tfstate.backup") {
+			states = append(states, e)
+		}
+	}
+	if len(states) == 0 {
+		return nil
+	}
+	remote, err := deps.StatePull(a.Engine, a.Dir)
+	if err != nil {
+		return &preflight.Finding{Rule: "state-lineage", Severity: preflight.Info, Message: "live state check failed: " + err.Error()}
+	}
+	return preflight.LineageMismatch(a.Dir, states, remote)
 }
 
 // planGate runs the saved-plan checks and returns the effective class
@@ -374,7 +401,7 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 	if be == nil {
 		be = declared
 	}
-	gres, err := plangate.Evaluate(plangate.Input{PlanJSON: js, MaxDestroy: cfg.MaxDestroy(r.Tier), Scope: cfg.PlanGate.Scope, Backend: be}, deps.Rules)
+	gres, err := plangate.Evaluate(plangate.Input{PlanJSON: js, MaxDestroy: cfg.MaxDestroy(r.Tier), Scope: cfg.PlanGate.Scope, Protected: cfg.ProtectedResources, Backend: be}, deps.Rules)
 	if err != nil {
 		r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-unreadable", Severity: preflight.Critical, Message: err.Error()})
 		return classify.ApplySavedPlan

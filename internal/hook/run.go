@@ -96,6 +96,11 @@ func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
 	if cfg.Preflight.LiveIdentity {
 		d.Account = func(p string) (string, error) { return preflight.CallerAccount(p, 5*time.Second) }
 	}
+	if cfg.Preflight.LiveState {
+		d.StatePull = func(engine, dir string) ([]byte, error) {
+			return preflight.PullState(ctx, engine, dir, cfg.ShowTimeout())
+		}
+	}
 	return d
 }
 

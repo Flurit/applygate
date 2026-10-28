@@ -77,7 +77,10 @@ type Input struct {
 	PlanJSON   []byte
 	MaxDestroy int      // -1 unlimited
 	Scope      []string // address globs the agent declared; empty = no scope rule
-	Backend    *preflight.Backend
+	// Protected are resource address globs from config whose destroy or
+	// replace is critical regardless of type (protected_resources).
+	Protected []string
+	Backend   *preflight.Backend
 }
 
 // Result of evaluating a plan.
@@ -107,7 +110,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 		return nil, fmt.Errorf("plan JSON: %w", err)
 	}
 	res := &Result{}
-	var stateful, protection, exposure, stateInfra, outOfScope, unprotectedCreate, reducedCreate []string
+	var stateful, protection, exposure, stateInfra, outOfScope, unprotectedCreate, reducedCreate, protectedAddr []string
 	var crit = func(list *[]string, s string) { *list = append(*list, s) }
 
 	for _, rc := range p.ResourceChanges {
@@ -130,12 +133,17 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 		before, _ := rc.Change.Before.(map[string]any)
 		after, _ := rc.Change.After.(map[string]any)
 
-		if (del || repl) && rules.stateful[rc.Type] {
+		if del || repl {
 			verb := "destroyed"
 			if repl {
 				verb = "replaced"
 			}
-			crit(&stateful, rc.Address+" ("+rc.Type+") is "+verb)
+			if rules.stateful[rc.Type] {
+				crit(&stateful, rc.Address+" ("+rc.Type+") is "+verb)
+			}
+			if len(in.Protected) > 0 && inScope(rc.Address, in.Protected) {
+				crit(&protectedAddr, rc.Address+" is "+verb+" (listed in protected_resources)")
+			}
 		}
 		for _, pr := range rules.Protection {
 			if !contains(pr.Types, rc.Type) {
@@ -205,6 +213,8 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 	add("stateful-unprotected-create", preflight.High, "plan creates a database with no safety net (deletion protection off and final snapshot skipped)", unprotectedCreate)
 	add("stateful-create-note", preflight.Info, "database created with reduced protection (allowed; recorded)", reducedCreate)
 	add("stateful-destroyed", preflight.Critical, "plan destroys or replaces stateful resources", stateful)
+	add("protected-resource", preflight.Critical, "plan destroys or replaces resources listed in protected_resources", protectedAddr)
+	add("code-execution", preflight.High, "applying this plan runs code outside Terraform's own providers (provisioners or external data sources)", codeExecution(&p))
 	add("protection-removed", preflight.Critical, "plan removes data protection", protection)
 	add("exposure", preflight.High, "plan exposes resources", exposure)
 	add("state-infrastructure", preflight.Critical, "plan changes the Terraform state backend itself", stateInfra)
@@ -217,6 +227,60 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 		add("plan-errored", preflight.Critical, "the saved plan is marked as errored", []string{"errored: true"})
 	}
 	return res, nil
+}
+
+// codeExecution lists the places where applying the plan would run
+// arbitrary code with the user's credentials: provisioners (local-exec,
+// remote-exec) declared in the configuration, and "external" data sources,
+// which run a program during plan and apply. Spec scenario S12.
+func codeExecution(p *tfjson.Plan) []string {
+	seen := map[string]bool{}
+	var out []string
+	note := func(s string) {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	var walk func(prefix string, m *tfjson.ConfigModule)
+	walk = func(prefix string, m *tfjson.ConfigModule) {
+		if m == nil {
+			return
+		}
+		for _, r := range m.Resources {
+			if r == nil {
+				continue
+			}
+			for _, pv := range r.Provisioners {
+				if pv != nil && pv.Type != "" {
+					note(prefix + r.Address + ": provisioner " + pv.Type)
+				}
+			}
+			if r.Mode == tfjson.DataResourceMode && r.Type == "external" {
+				note(prefix + r.Address + ": external data source runs a program")
+			}
+		}
+		names := make([]string, 0, len(m.ModuleCalls))
+		for n := range m.ModuleCalls {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			if mc := m.ModuleCalls[n]; mc != nil {
+				walk(prefix+"module."+n+".", mc.Module)
+			}
+		}
+	}
+	if p.Config != nil {
+		walk("", p.Config.RootModule)
+	}
+	// A plan may carry data reads without configuration (hand-built JSON).
+	for _, rc := range p.ResourceChanges {
+		if rc != nil && rc.Mode == tfjson.DataResourceMode && rc.Type == "external" {
+			note(rc.Address + ": external data source runs a program")
+		}
+	}
+	return out
 }
 
 // exposed returns exposure findings for a resource's planned values.

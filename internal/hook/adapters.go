@@ -170,6 +170,13 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 			patch = commandField(ti["input"])
 		}
 		ev.Kind, ev.Paths = policy.KindWrite, classify.PatchPaths(patch)
+		// A Claude-style event shape (file_path) replayed in Codex format,
+		// or a future Codex edit tool that names the file directly.
+		for _, k := range []string{"file_path", "path"} {
+			if p := commandField(ti[k]); p != "" {
+				ev.Paths = append(ev.Paths, p)
+			}
+		}
 	default:
 		ev.Kind = policy.KindOther
 	}
