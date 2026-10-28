@@ -1,20 +1,30 @@
 #!/bin/sh
 # install.sh -- install the seatbelt binary from a GitHub release.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Flurit/seatbelt/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Flurit/seatbelt/<tag>/install.sh | sh
+#
+# Use a release tag, not main, in that URL, so the script you run is the
+# reviewed one for that release.
 #
 # Environment overrides:
 #   SEATBELT_VERSION      release tag to install, e.g. v0.3.0 (default: latest release)
 #   SEATBELT_INSTALL_DIR  directory to install into (default: $HOME/.local/bin, or
 #                         /usr/local/bin when it is writable and $HOME/.local/bin
 #                         is not on PATH)
+#   SEATBELT_VERIFY_SIGNATURE
+#                         auto (default): verify the cosign signature on
+#                         checksums.txt when cosign is installed, warn when it
+#                         is not; require: refuse to install without cosign
 #
-# The script downloads the release archive and checksums.txt from
-# https://github.com/Flurit/seatbelt/releases, verifies the archive's sha256
-# against checksums.txt, and refuses to install on a mismatch. Only the
-# `seatbelt` binary is extracted from the archive. checksums.txt itself is
-# signed with cosign on every release; to verify that signature as well, see
-# the Releases page or run `cosign verify-blob` on checksums.txt.
+# What is verified:
+#   1. checksums.txt is signed keylessly with cosign by this repository's
+#      release workflow for exactly this tag. With cosign installed the script
+#      checks that signature against the Sigstore bundle, the workflow
+#      identity and GitHub's OIDC issuer, and refuses to install on failure.
+#      This is what protects against a tampered release: a sha256 alone does
+#      not, because checksums.txt comes from the same place as the archive.
+#   2. The archive's sha256 must match checksums.txt.
+# Without cosign only step 2 runs, which catches corruption, not tampering.
 #
 # Works with curl or wget, POSIX sh only (no bash required).
 set -eu
@@ -80,12 +90,24 @@ resolve_latest() {
     printf '%s\n' "$v"
 }
 
+verify_mode=${SEATBELT_VERIFY_SIGNATURE:-auto}
+case "$verify_mode" in
+    auto | require) ;;
+    *) die "SEATBELT_VERIFY_SIGNATURE must be auto or require, not '${verify_mode}'" ;;
+esac
+if [ "$verify_mode" = require ] && ! need cosign; then
+    die "cosign is not installed and SEATBELT_VERIFY_SIGNATURE=require (https://docs.sigstore.dev/cosign/system_config/installation/)"
+fi
+
 if [ -n "${SEATBELT_VERSION:-}" ]; then
     tag=$SEATBELT_VERSION
     case "$tag" in v*) ;; *) tag="v$tag" ;; esac
 else
     tag=$(resolve_latest)
 fi
+case "$tag" in
+    *[!A-Za-z0-9._-]* | "" | v) die "invalid release tag '${tag}'" ;;
+esac
 version=${tag#v} # goreleaser names archives without the leading v
 
 archive="seatbelt_${version}_${os}_${arch}.tar.gz"
@@ -99,6 +121,31 @@ fetch "${download}/${archive}" "${tmp}/${archive}" ||
     die "download failed: ${download}/${archive}"
 fetch "${download}/checksums.txt" "${tmp}/checksums.txt" ||
     die "download failed: ${download}/checksums.txt"
+
+# --- verify the signature on checksums.txt ----------------------------------
+identity="${BASE_URL}/.github/workflows/release.yml@refs/tags/${tag}"
+issuer="https://token.actions.githubusercontent.com"
+bundle="checksums.txt.sigstore.json"
+if need cosign; then
+    fetch "${download}/${bundle}" "${tmp}/${bundle}" ||
+        die "download failed: ${download}/${bundle} (cannot verify the release signature)"
+    if cosign verify-blob \
+        --bundle "${tmp}/${bundle}" \
+        --certificate-identity "$identity" \
+        --certificate-oidc-issuer "$issuer" \
+        "${tmp}/checksums.txt" >/dev/null 2>"${tmp}/cosign.err"; then
+        log "signature verified: checksums.txt was signed by ${identity}"
+    else
+        sed 's/^/  cosign: /' "${tmp}/cosign.err" >&2
+        die "signature verification of checksums.txt failed; refusing to install"
+    fi
+elif [ "$verify_mode" = require ]; then
+    die "cosign is not installed and SEATBELT_VERIFY_SIGNATURE=require (https://docs.sigstore.dev/cosign/system_config/installation/)"
+else
+    log "WARNING: cosign is not installed, so the release signature is NOT verified."
+    log "  The sha256 check below catches a corrupted download, not a tampered release."
+    log "  Install cosign and rerun, or set SEATBELT_VERIFY_SIGNATURE=require to make this an error."
+fi
 
 # --- verify sha256 -----------------------------------------------------------
 if need sha256sum; then
