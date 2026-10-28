@@ -105,11 +105,11 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Failure behavior: crash, timeout, malformed event end in configured behavior | done | `hook_test.go`, `run.py --probes` |
 | Self-protection: config, hook entries, log | done | `guard-tampering` class, `DefaultProtectedPaths` |
 | Managed-settings deployment for organizations | done (documented) | `docs/threat-model.md` |
-| Supply chain: signed releases, provenance, trusted publishing, pinned dependencies | partial | `.goreleaser.yaml` + `release.yml` (cosign keyless, SBOM, build-provenance attestation), SHA-pinned actions, `go.sum`, `govulncheck` in CI. No tag has been released yet |
+| Supply chain: signed releases, provenance, trusted publishing, pinned dependencies | done | v0.1.0 released by `release.yml`: cosign keyless bundle on `checksums.txt`, SBOMs, SLSA v1 build-provenance attestations; SHA-pinned actions, `go.sum`, `govulncheck` in CI ([ACCEPTANCE.md](../ACCEPTANCE.md) item 7) |
 | Privacy: no telemetry, no network by default, redacted log outside the repo | done | `decisionlog` |
 | Honest limits in docs | done | `docs/limits.md` |
 | Language: Go with mvdan/sh and terraform-json | done | `go.mod` |
-| Distribution: install script, Homebrew, npm/pip wrapper, Claude Code plugin | partial | `install.sh` (checksum-verified) and `plugin/claude-code` exist; the Homebrew tap (`brews:` in `.goreleaser.yaml`) is commented out until a tap repository exists; npm and pip wrappers are not started |
+| Distribution: install script, Homebrew, npm/pip wrapper, Claude Code plugin | partial | `install.sh` installs the real v0.1.0 release in 3 s on Linux (checksum-verified); `plugin/claude-code` exists; the Homebrew tap (`brews:` in `.goreleaser.yaml`) is commented out until a tap repository exists; npm and pip wrappers are not started |
 | Five-minute quickstart, threat model, limits | done | `README.md`, `docs/threat-model.md`, `docs/limits.md` |
 | Apache-2.0 | done | `LICENSE` |
 
@@ -119,11 +119,11 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 |---|---|
 | Passes the v0 pack at the agreed threshold | partial: passes the reconstructed pack 82/82; no threshold agreed, original pack unavailable |
 | Observe-mode trial on 5 real repositories | open: needs real repositories |
-| Installs in under 5 minutes on macOS and Linux | open: install path exists, not timed, no release yet |
+| Installs in under 5 minutes on macOS and Linux | partial: 3 s on Linux against v0.1.0; not exercised on a Mac |
 | Works with Claude Code and one more agent | done: Claude Code and Codex, live-tested (T3) |
 | Fail-closed behavior verified by chaos tests | done |
 | Docs: quickstart, threat model, limits | done |
-| Signed release with provenance | open: pipeline ready, first tag pending |
+| Signed release with provenance | done: v0.1.0 |
 
 ## Open decisions from the spec
 
