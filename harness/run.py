@@ -13,7 +13,10 @@ Usage:
   python3 -I harness/run.py --guard bin/seatbelt --format codex --probes --md results.md
 
 Exit code is 0 only when every counted scenario matched its expectation
-(and, with --strict-probes, no fail-open probe would proceed).
+(and, with --strict-probes, no fail-open probe would proceed). For seatbelt
+(--guard) a scenario matches only with the expected verdict *and* every
+must_mention string in the message; seatbelt failing closed (exit 2 on an
+internal or config error) is reported as "fail-closed" and never matches.
 """
 
 import argparse
@@ -193,6 +196,33 @@ def guard_version(a, env, tmp):
 
 # ------------------------------------------------------------- scenarios
 
+FAIL_CLOSED = "fail-closed"
+
+
+def judge(s, verdict, msg, code, seatbelt):
+    """Final verdict and pass/fail for one scenario.
+
+    For seatbelt itself (--guard), exit 2 is never a policy decision: its
+    adapters return decisions as JSON and exit 2 only when seatbelt fails
+    closed on an internal or config error (for example a fixture config an
+    older release does not understand). Such a block proves nothing about
+    the scenario, so it is the error verdict "fail-closed" and never a pass.
+    seatbelt runs also require every must_mention string in the message, so
+    a right verdict for the wrong reason fails. Other guards (--guard-cmd)
+    are judged on the verdict alone: their exit 2 is a real block and their
+    messages differ.
+    Returns (verdict, passed, missing_mentions).
+    """
+    if verdict == "timeout":
+        verdict = "error"
+    if seatbelt and code == 2:
+        verdict = FAIL_CLOSED
+    if verdict not in s["expect"]:
+        return verdict, False, []
+    missing = [m for m in (s.get("must_mention") or []) if m not in (msg or "")] if seatbelt else []
+    return verdict, not missing, missing
+
+
 def replay(a, pack, tmp, repo, plans, home, env):
     build, parse = FORMAT_EVENT[a.format], FORMAT_PARSE[a.format]
     results = []
@@ -204,10 +234,9 @@ def replay(a, pack, tmp, repo, plans, home, env):
             results.append(dict(base, verdict="skipped", pass_=None, ms=None, message="not expressible in " + a.format))
             continue
         e = dict(env, **(s.get("env") or {}))
-        verdict, msg, _, ms = run_guard(guard_command(a, plans, s), json.dumps(ev), e, a.timeout, tmp, parse)
-        if verdict == "timeout":
-            verdict = "error"
-        results.append(dict(base, verdict=verdict, pass_=verdict in s["expect"], ms=ms, message=msg))
+        verdict, msg, code, ms = run_guard(guard_command(a, plans, s), json.dumps(ev), e, a.timeout, tmp, parse)
+        verdict, passed, missing = judge(s, verdict, msg, code, bool(a.guard))
+        results.append(dict(base, verdict=verdict, pass_=passed, ms=ms, message=msg, missing_mentions=missing))
     # keep the historical key name "pass" in the JSON output
     for r in results:
         r["pass"] = r.pop("pass_")
@@ -279,7 +308,7 @@ def bypass_by_class(results):
             continue
         c = out.setdefault(r["bypass_class"] or "unclassified", {"total": 0, "bypassed": 0})
         c["total"] += 1
-        c["bypassed"] += r["verdict"] in ("allow", "error")
+        c["bypassed"] += r["verdict"] in ("allow", "error", FAIL_CLOSED)
     return dict(sorted(out.items()))
 
 
@@ -290,7 +319,9 @@ def summarize(a, pack, results, probes, version):
     caught = sum(r["verdict"] in ("block", "ask") for r in dang)
     flagged = sum(r["verdict"] != "allow" for r in ben)
     false_pos = sum(r["verdict"] in ("block", "ask") for r in ben)
-    errors = sum(r["verdict"] == "error" for r in counted)
+    errors = sum(r["verdict"] in ("error", FAIL_CLOSED) for r in counted)
+    fail_closed = sum(r["verdict"] == FAIL_CLOSED for r in counted)
+    reason_mismatch = sum(1 for r in counted if r.get("missing_mentions"))
     ms = sorted(r["ms"] for r in counted)
     p = lambda q: ms[min(len(ms) - 1, int(len(ms) * q))] if ms else None
     classes = bypass_by_class(results)
@@ -301,7 +332,7 @@ def summarize(a, pack, results, probes, version):
         "dangerous_caught": caught, "dangerous": len(dang), "benign_flagged": flagged, "benign": len(ben),
         "benign_false_positives": false_pos,
         "catch_rate": rate(caught, len(dang)), "false_positive_rate": rate(false_pos, len(ben)),
-        "errors": errors, "exact": sum(bool(r["pass"]) for r in counted), "total": len(counted),
+        "errors": errors, "fail_closed": fail_closed, "reason_mismatch": reason_mismatch, "exact": sum(bool(r["pass"]) for r in counted), "total": len(counted),
         "skipped": len(results) - len(counted),
         "bypass_count": sum(c["bypassed"] for c in classes.values()), "bypass_by_class": classes,
         "fail_open_count": fail_open, "probes": probes,
@@ -343,13 +374,17 @@ def write_markdown(path, a, summary, results):
 
         f.write("## Scenarios\n\n")
         f.write(f"- dangerous caught (block or ask): {s['dangerous_caught']}/{s['dangerous']}\n- benign flagged: {s['benign_flagged']}/{s['benign']}\n")
-        f.write(f"- matched exact expectation: {s['exact']}/{s['total']}\n- errors: {s['errors']}\n")
+        f.write(f"- matched exact expectation: {s['exact']}/{s['total']}\n- errors: {s['errors']}"
+                f" (of which seatbelt failed closed: {s['fail_closed']})\n")
+        f.write(f"- right verdict, missing expected reason (must_mention): {s['reason_mismatch']}\n")
         if s["skipped"]:
             f.write(f"- skipped (not expressible in {s['agent_format']} format): {s['skipped']}\n")
         f.write(f"- latency per event, ms: p50 {s['latency_ms_p50']}, p95 {s['latency_ms_p95']}\n\n")
         f.write("| ID | Spec | Kind | Scenario | Expected | Got |\n|---|---|---|---|---|---|\n")
         for r in results:
             mark = "" if r["pass"] or r["verdict"] == "skipped" else " **(mismatch)**"
+            if r.get("missing_mentions"):
+                mark = " **(reason missing: " + "; ".join(r["missing_mentions"]) + ")**"
             f.write(f"| {r['id']} | {r['spec']} | {r['kind']} | {r['title']} | {'/'.join(r['expect'])} | {r['verdict']}{mark} |\n")
 
 
