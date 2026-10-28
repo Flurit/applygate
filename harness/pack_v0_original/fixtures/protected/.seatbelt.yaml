@@ -1,0 +1,10 @@
+# Review fixture (a): whole repository is the prod environment.
+version: 1
+mode: enforce
+strict: true
+environments:
+  - name: prod
+    tier: protected
+    match:
+      paths: ["**"]
+      workspaces: ["prod"]
