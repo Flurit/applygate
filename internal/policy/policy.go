@@ -454,10 +454,19 @@ func message(d Decision) string {
 			fmt.Fprintf(&b, "\n  plan sha256: %s", a.PlanSHA256)
 		}
 	}
-	for _, a := range rs {
-		if a.NextStep != "" && !steps[a.NextStep] {
-			steps[a.NextStep] = true
-			fmt.Fprintf(&b, "\nNext step: %s", a.NextStep)
+	// An enforced "ask" is shown to a human as a permission prompt, so the
+	// closing guidance is human-facing. A block is read by the agent (including
+	// when an ask was converted to a block because the agent cannot prompt), so
+	// it keeps the agent-facing "Next step" instructions. The verdict itself is
+	// unchanged either way; only the wording differs by audience.
+	if d.Enforced == Ask {
+		b.WriteString("\nThis needs your approval. Approve only if you asked for this and the effect above is what you intend; otherwise deny.")
+	} else {
+		for _, a := range rs {
+			if a.NextStep != "" && !steps[a.NextStep] {
+				steps[a.NextStep] = true
+				fmt.Fprintf(&b, "\nNext step: %s", a.NextStep)
+			}
 		}
 	}
 	for _, n := range d.Notes {
