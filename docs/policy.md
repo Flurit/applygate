@@ -42,7 +42,8 @@
 |---|---|---|
 | destroy-count (destroys + replaces > `max_destroy`; protected default 0) | high | plan |
 | stateful-destroyed (types in `rules/aws.json`) | critical | plan |
-| stateful-unprotected-create (a stateful resource created with a safeguard already disabled — e.g. deletion protection off, final snapshot skipped) | high | plan |
+| stateful-unprotected-create (a database created with no safety net: deletion protection off **and** final snapshot skipped) | high | plan |
+| stateful-create-note (a database created with only one safeguard off, e.g. protection off but a final snapshot kept) | info | plan |
 | protection-removed (deletion protection, final snapshot, retention 0, force_destroy, versioning, PITR, …) | critical | plan |
 | exposure (0.0.0.0/0 or ::/0 on admin/DB ports or all ports; public bucket ACL, policy or access block; IAM `*` or `svc:*` actions; admin policy attachments) | high | plan |
 | state-infrastructure (the backend bucket or lock table) | critical | plan |

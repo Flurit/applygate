@@ -40,6 +40,25 @@ type Protection struct {
 	When string `json:"when"`
 }
 
+// dbWithFinalSnapshot is the set of resource types that have both
+// deletion_protection and skip_final_snapshot, so the narrowed F11 create rule
+// (both safeguards off at once) applies to them.
+var dbWithFinalSnapshot = map[string]bool{
+	"aws_db_instance":     true,
+	"aws_rds_cluster":     true,
+	"aws_docdb_cluster":   true,
+	"aws_neptune_cluster": true,
+}
+
+// isBool reports whether m[k] is present and equals want.
+func isBool(m map[string]any, k string, want bool) bool {
+	if m == nil {
+		return false
+	}
+	b, ok := m[k].(bool)
+	return ok && b == want
+}
+
 // DefaultRules returns the embedded AWS rules.
 func DefaultRules() *Rules {
 	var r Rules
@@ -88,7 +107,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 		return nil, fmt.Errorf("plan JSON: %w", err)
 	}
 	res := &Result{}
-	var stateful, protection, exposure, stateInfra, outOfScope, unprotectedCreate []string
+	var stateful, protection, exposure, stateInfra, outOfScope, unprotectedCreate, reducedCreate []string
 	var crit = func(list *[]string, s string) { *list = append(*list, s) }
 
 	for _, rc := range p.ResourceChanges {
@@ -135,11 +154,24 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 				crit(&protection, rc.Address+": "+pr.What+" while it is being replaced")
 			case onChange && (acts.Update() || repl) && afterUnsafe && !beforeUnsafe:
 				crit(&protection, rc.Address+": "+pr.What)
-			case acts.Create() && afterUnsafe && rules.stateful[rc.Type]:
-				// F11: a core stateful resource created with a safeguard
-				// already disabled. This removes nothing today, so it is High
-				// (protected tiers ask) rather than Critical.
-				crit(&unprotectedCreate, rc.Address+": created with "+pr.What)
+			}
+		}
+		// F11 (narrowed): a database created with no safety net at all —
+		// deletion protection off AND the final snapshot skipped — is High, so
+		// a protected tier asks. A create with only one safeguard off (e.g.
+		// protection off but a final snapshot kept) is allowed and recorded as
+		// an Info note. A create removes nothing, and the replace/destroy rules
+		// already gate the actual loss, so this stays off the critical path.
+		if acts.Create() && dbWithFinalSnapshot[rc.Type] {
+			dpOff := isBool(after, "deletion_protection", false)
+			skip := isBool(after, "skip_final_snapshot", true)
+			switch {
+			case dpOff && skip:
+				crit(&unprotectedCreate, rc.Address+": created with deletion protection off and the final snapshot skipped")
+			case dpOff:
+				reducedCreate = append(reducedCreate, rc.Address+": created with deletion protection off (a final snapshot is still taken)")
+			case skip:
+				reducedCreate = append(reducedCreate, rc.Address+": created with the final snapshot skipped (deletion protection is on)")
 			}
 		}
 		if !del {
@@ -170,7 +202,8 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 		add("destroy-count", preflight.High, fmt.Sprintf("plan destroys or replaces %d resources; the limit for this tier is %d", n, in.MaxDestroy),
 			append(append([]string(nil), res.Deletes...), res.Replaces...))
 	}
-	add("stateful-unprotected-create", preflight.High, "plan creates stateful resources without data protection", unprotectedCreate)
+	add("stateful-unprotected-create", preflight.High, "plan creates a database with no safety net (deletion protection off and final snapshot skipped)", unprotectedCreate)
+	add("stateful-create-note", preflight.Info, "database created with reduced protection (allowed; recorded)", reducedCreate)
 	add("stateful-destroyed", preflight.Critical, "plan destroys or replaces stateful resources", stateful)
 	add("protection-removed", preflight.Critical, "plan removes data protection", protection)
 	add("exposure", preflight.High, "plan exposes resources", exposure)
