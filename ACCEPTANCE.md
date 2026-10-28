@@ -4,6 +4,31 @@ Date: 2026-10-28. Build: commit on `main` at the time of writing. Machine: Linux
 
 This report separates what was **measured**, what is **assumed**, and what is **untested**. Nothing here was run against a live agent, real cloud credentials or real infrastructure.
 
+## Independent review (post-v1)
+
+An independent review (see `REVIEW.md`) ran the original v0 pack, an adversarial pack
+of 51 dangerous + 18 benign cases authored without reading the analyzer, the hook
+format and install path, and robustness/pathological inputs. It found seven defects
+that are now **fixed** (merged):
+
+- **F1–F4 (critical, analyzer), fixed in #2:** a destroy was allowed in a protected
+  tier via an interpreter body with a concatenated binary name (`'ter'+'raform'`), and
+  via the `script -c`, `chroot` and GNU `parallel` wrappers, which were not unwrapped.
+- **F5–F7 (robustness), fixed in #3:** a deep pipeline could reach the 25 s deadline
+  (≈60k pipes 23 s → 70 ms), deeply nested braces blew up memory (5k braces
+  329 MB → ~0), and a large plan JSON parsed for seconds (20 MB 1.3 s → 30 ms, now a
+  critical `plan-too-large` finding at a 16 MB cap).
+- **F8 (hygiene), fixed in #1:** `govulncheck` was added to CI and caught a reachable
+  `golang.org/x/text` advisory (GO-2026-5970); the dependency was bumped.
+
+After these merges the adversarial pack catches **51/51** dangerous with 0 benign
+false positives. Three findings remain **open** by choice, not as bugs: **F9** (base32
+and gzip decoder chains are refused as `ask` rather than decoded to a hard block — a
+safe degradation), **F10** (`terraform apply <planfile>` with a missing planfile
+blocks, rather than asks, in a protected tier), and **F11** (creating an unprotected
+stateful prod resource is allowed, since the protection rules fire on removal). F10 and
+F11 are policy questions for the maintainer.
+
 ## Checklist (from the spec)
 
 | # | Item | Status | Evidence |
@@ -22,7 +47,7 @@ This report separates what was **measured**, what is **assumed**, and what is **
 - **Reason checks:** 50 dangerous scenarios assert substrings of the decision message, so a right verdict for the wrong reason fails. Mutating the policy so prod destroy is ask fails 14 scenarios. Disabling `eval` handling fails D07.
 - **Text mentions and cleanup** (task item 4): `grep -rn "terraform destroy"`, `echo "…terraform destroy…"`, `git commit -m "…terraform destroy -auto-approve"`, `rg 'apply -auto-approve'`, `printf … >> NOTES.md`, a here-document into a file, the Read tool on a runbook that mentions destroy, `rm -rf .terraform` in prod, and `rm -rf .terraform .terraform.lock.hcl && terraform init`. All are allowed (B10, B13–B17, B20, B24, B28).
 - **Obfuscation:** in the pack, D05–D15 and D45–D49. In unit tests, also `xxd -r -p`, `rev`, brace expansion, `find -exec`, `docker run hashicorp/terraform`, aliases, functions with `$1`, `env -C`, `watch`, and field splitting. A property test checks 2,000 random quotings (plain, '', "", \, $'\xNN') of four destructive argvs, optionally wrapped in `bash -c`, `eval` or `env`.
-- **Fuzzing** of the shell analyzer: about 6 minutes across three runs. One crash was found (anonymous function, nil name) and fixed; its input is kept in `testdata/fuzz` as a regression case. No input took longer than 2 s under a watchdog. Fuzz throughput sometimes dropped to 0/sec with no slow input detected; this was not investigated further.
+- **Fuzzing** of the shell analyzer: about 6 minutes across three runs. One crash was found (anonymous function, nil name) and fixed; its input is kept in `testdata/fuzz` as a regression case. No input took longer than 2 s under a watchdog. Fuzz throughput sometimes dropped to 0/sec with no slow input detected; the independent review traced this to slow, uncancellable analysis of deep pipelines (fixed as F5 in #3) leaking goroutines in the fuzz harness.
 - **Latency:**
   - Command-only decisions in process: p50 0.65 ms, p95 2.9 ms (n=1,300, `TestCommandLatency`).
   - Black-box, one process per event including start-up: p50 3.8 ms, p95 about 5 ms (`run.py`, 3 runs).
