@@ -188,8 +188,14 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 	}
 
 	d := Decision{Verdict: Allow, Mode: cfg.Mode}
-	selected := map[string]string{} // dir -> workspace selected earlier in this command
+	selected := map[string]string{}     // dir -> workspace selected earlier in this command
+	backendCfg := map[string][]string{} // dir -> -backend-config of an earlier init in this command
 	for _, a := range actions {
+		if len(a.BackendConfig) > 0 {
+			backendCfg[a.Dir] = a.BackendConfig
+		} else if bc, ok := backendCfg[a.Dir]; ok && isTerraform(a.Engine) {
+			a.BackendConfig = bc
+		}
 		if ws, ok := selected[a.Dir]; ok && a.Env["TF_WORKSPACE"] == "" {
 			env := map[string]string{"TF_WORKSPACE": ws}
 			for k, v := range a.Env {
@@ -252,6 +258,19 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		sig.Workspace = r.Workspace
 		recorded = preflight.InitBackend(a.Dir)
 		declared = preflight.DeclaredBackend(a.Dir)
+		if len(a.BackendConfig) > 0 {
+			// An init in this command re-points the directory: judge this
+			// command against the backend it will use, not the old one.
+			sig.BackendConfig = strings.Join(a.BackendConfig, " ")
+			target, err := preflight.BackendFromConfig(a.Dir, declared, recorded, a.BackendConfig, deps.ReadFile)
+			// The init itself changes no state; an unknown target only matters
+			// for commands that read or write state after it.
+			if err != nil && a.Class != classify.ReadOnly {
+				r.Findings = append(r.Findings, preflight.Finding{Rule: "backend-config-unreadable", Severity: preflight.High,
+					Message: "the -backend-config given to init cannot be read, so the backend this command uses is unknown: " + err.Error()})
+			}
+			recorded = target
+		}
 		be := recorded
 		if be == nil {
 			be = declared
@@ -285,7 +304,7 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 
 	if tf && a.Dir != "" {
 		if a.TouchesState && cfg.BackendCheck() {
-			if f := preflight.BackendChanged(declared, recorded); f != nil {
+			if f := preflight.BackendChanged(declared, recorded); f != nil && len(a.BackendConfig) == 0 {
 				r.Findings = append(r.Findings, *f)
 			}
 		}
@@ -545,4 +564,8 @@ func Run(timeout time.Duration, f func(context.Context) Decision) (d Decision, e
 	case <-ctx.Done():
 		return Decision{}, ErrTimeout
 	}
+}
+
+func isTerraform(engine string) bool {
+	return engine == "terraform" || engine == "tofu" || engine == "terragrunt"
 }

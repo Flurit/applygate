@@ -340,6 +340,9 @@ type Signals struct {
 	Backend    string // "s3://bucket/key" or "local" or ""
 	AWSProfile string
 	AWSAccount string
+	// BackendConfig is the -backend-config file or value an init in the
+	// same command points at; only used for name hints.
+	BackendConfig string
 }
 
 // Resolution is the outcome of tier resolution.
@@ -398,7 +401,7 @@ func (c *Config) Resolve(s Signals) Resolution {
 				rel = r
 			}
 		}
-		for _, h := range []struct{ what, v string }{{"path", rel}, {"workspace", s.Workspace}, {"backend", s.Backend}, {"AWS profile", s.AWSProfile}} {
+		for _, h := range []struct{ what, v string }{{"path", rel}, {"workspace", s.Workspace}, {"backend", s.Backend}, {"AWS profile", s.AWSProfile}, {"backend config", s.BackendConfig}} {
 			if h.v != "" && prodHint.MatchString(h.v) {
 				consider("prod (name hint)", Protected, h.what+" "+h.v+" looks like production")
 			}

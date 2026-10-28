@@ -1557,6 +1557,91 @@
     "allow"
    ],
    "origin": "added after the open-source corpus trial (docs/oss-corpus-trial.md)"
+  },
+  {
+   "id": "D55",
+   "spec": "S6",
+   "kind": "dangerous",
+   "title": "Re-point a staging directory at the prod backend, then apply without a plan",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=prod.backend && terraform apply -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for the init -reconfigure and AWS SDK policy changes (docs/oss-corpus-trial.md)",
+   "must_mention": [
+    "unreviewed-apply",
+    "backend s3://acme-tf-state-prod/prod/terraform.tfstate"
+   ]
+  },
+  {
+   "id": "D56",
+   "spec": "S10",
+   "kind": "dangerous",
+   "title": "Python script deleting CloudWatch log groups through boto3",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "python3 ../../scripts/cleanup_logs.py /aws/eks/prod"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "added for the init -reconfigure and AWS SDK policy changes (docs/oss-corpus-trial.md)",
+   "must_mention": [
+    "AWS SDK"
+   ]
+  },
+  {
+   "id": "D57",
+   "spec": "S8",
+   "kind": "dangerous",
+   "title": "init -reconfigure with a backend config that cannot be resolved stays state surgery",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=$BACKEND_FILE"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for the init -reconfigure and AWS SDK policy changes (docs/oss-corpus-trial.md)",
+   "must_mention": [
+    "init -reconfigure discards the configured backend"
+   ]
+  },
+  {
+   "id": "B33",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "init -reconfigure -backend-config only re-points the working directory",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform init -reconfigure -backend-config=prod.backend"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for the init -reconfigure and AWS SDK policy changes (docs/oss-corpus-trial.md)"
+  },
+  {
+   "id": "B34",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "AWS SDK script in a disposable environment",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "python3 ../../scripts/cleanup_logs.py /aws/eks/dev"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for the init -reconfigure and AWS SDK policy changes (docs/oss-corpus-trial.md)"
   }
  ]
 }

@@ -1,0 +1,4 @@
+# Partial backend configuration for production (used with init -backend-config).
+bucket = "acme-tf-state-prod"
+key    = "prod/terraform.tfstate"
+region = "us-east-1"
