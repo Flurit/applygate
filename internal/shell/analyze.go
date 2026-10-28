@@ -471,7 +471,39 @@ func (a *analyzer) words(w *syntax.Word, st *state, via []string, depth int) []W
 			return out
 		}
 	}
+	if ws, ok := a.allParams(w, st); ok {
+		return ws
+	}
 	return a.split(a.word(w, st, via, depth), st)
+}
+
+// allParams expands a word that is exactly "$@" or $@ into one word per
+// positional parameter, so a wrapper function like retry() { "$@"; } is
+// analyzed as the command it runs. ok is false outside a function or script,
+// or for any other word.
+func (a *analyzer) allParams(w *syntax.Word, st *state) ([]Word, bool) {
+	if st.params == nil || len(w.Parts) != 1 {
+		return nil, false
+	}
+	p := w.Parts[0]
+	if dq, isDq := p.(*syntax.DblQuoted); isDq {
+		if len(dq.Parts) != 1 {
+			return nil, false
+		}
+		p = dq.Parts[0]
+	}
+	pe, isPe := p.(*syntax.ParamExp)
+	if !isPe || pe.Param == nil || pe.Param.Value != "@" || pe.Index != nil || pe.Exp != nil || pe.Slice != nil || pe.Repl != nil || pe.Length || pe.Excl {
+		return nil, false
+	}
+	out := make([]Word, len(st.params))
+	for i, v := range st.params {
+		out[i] = Word{Text: v.text, Resolved: v.ok}
+		if v.ok {
+			out[i].Prefix = v.text
+		}
+	}
+	return out, true
 }
 
 // split applies field splitting to a word built from unquoted expansions:
@@ -573,11 +605,9 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 		if a.quiet == 0 {
 			a.stmts(x.Stmts, st.clone(), via, depth)
 		}
-		if len(x.Stmts) == 1 {
-			if out, ok := a.stdout(x.Stmts[0], st.clone(), stdin{}, 0); ok {
-				b.WriteString(strings.TrimRight(out, "\n"))
-				return
-			}
+		if out, ok := a.stdoutSeq(x.Stmts, st.clone()); ok {
+			b.WriteString(strings.TrimRight(out, "\n"))
+			return
 		}
 		mark()
 	case *syntax.ProcSubst:
@@ -596,6 +626,11 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 var safeEnv = map[string]bool{"HOME": true, "USER": true, "LOGNAME": true, "SHELL": true, "TMPDIR": true}
 
 func (a *analyzer) param(x *syntax.ParamExp, st *state) (string, bool) {
+	// ${BASH_SOURCE[0]} and $BASH_SOURCE are the running script's path.
+	if x.Param != nil && x.Param.Value == "BASH_SOURCE" && x.Exp == nil && x.Slice == nil && x.Repl == nil &&
+		!x.Length && !x.Excl && (x.Index == nil || nodeText(x.Index) == "0") {
+		return st.arg0.text, st.arg0.ok
+	}
 	if x.Param == nil || x.Excl || x.Length || x.Width || x.Index != nil ||
 		x.Slice != nil || x.Repl != nil || x.Exp != nil || x.Flags != nil || x.NestedParam != nil {
 		return "", false
@@ -609,6 +644,19 @@ func (a *analyzer) param(x *syntax.ParamExp, st *state) (string, bool) {
 	}
 	if name == "0" {
 		return st.arg0.text, st.arg0.ok
+	}
+	if (name == "@" || name == "*" || name == "#") && st.params != nil {
+		if name == "#" {
+			return fmt.Sprint(len(st.params)), true
+		}
+		parts := make([]string, len(st.params))
+		for i, v := range st.params {
+			if !v.ok {
+				return "", false
+			}
+			parts[i] = v.text
+		}
+		return strings.Join(parts, " "), true
 	}
 	if n := len(name); n == 1 && name[0] >= '1' && name[0] <= '9' {
 		i := int(name[0] - '1')

@@ -332,6 +332,9 @@ func awsArgs(base Action, args []shell.Word) (Action, bool) {
 		a.Class, a.Why = CloudDestructive, "suspends bucket versioning"
 	case strings.Contains(op, "delete") || hasAnyPrefix(op, "terminate", "remove-", "deregister", "purge", "schedule-key-deletion", "disable-key", "release-", "revoke-"):
 		a.Class, a.Why = CloudDestructive, "aws "+svc+" "+op+" deletes or terminates resources"
+	case op == "update-kubeconfig" || op == "login" || svc == "ecr" && op == "get-login-password":
+		// Write only local client configuration (kubeconfig, SSO token cache).
+		a.Class, a.Why = ReadOnly, "aws "+svc+" "+op+" only updates local client configuration"
 	case hasAnyPrefix(op, "describe", "list", "get", "head", "lookup", "search", "scan", "query", "batch-get", "select", "validate", "estimate", "wait", "help", "filter-", "test-", "simulate-", "decode-", "preview-"):
 		a.Class, a.Why = ReadOnly, "aws "+svc+" "+op+" is read-only"
 	default:
@@ -365,7 +368,10 @@ func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 	switch pos[0] {
 	case "delete", "drain":
 		a.Class, a.Why = CloudDestructive, "kubectl "+strings.Join(pos, " ")
-	case "get", "describe", "logs", "top", "explain", "api-resources", "api-versions", "version", "config", "auth", "diff", "events", "wait", "cluster-info":
+	case "get", "describe", "logs", "top", "explain", "api-resources", "api-versions", "version", "config", "auth", "diff", "events", "wait", "cluster-info",
+		"port-forward", "proxy", "relay", "completion", "kustomize", "options":
+		// port-forward, proxy and the relay plugin open local tunnels;
+		// kustomize renders manifests locally. None change cluster state.
 		a.Class, a.Why = ReadOnly, "kubectl "+pos[0]+" is read-only"
 	default:
 		a.Class, a.Why = CloudWrite, "kubectl "+pos[0]+" changes resources"

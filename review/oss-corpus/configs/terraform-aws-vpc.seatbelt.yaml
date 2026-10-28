@@ -1,0 +1,9 @@
+# Trial config: a module repository; examples are applied in a sandbox account.
+version: 1
+mode: enforce
+strict: false
+default_tier: standard   # everything outside examples/patterns
+environments:
+  - name: examples
+    tier: disposable
+    match: {paths: ["examples/**"]}

@@ -1,0 +1,14 @@
+# Trial config: S3 backend, one Terraform workspace per cluster.
+version: 1
+mode: enforce
+strict: true
+environments:
+  - name: live
+    tier: protected
+    match: {workspaces: ["live", "live-*", "manager"], aws_profiles: []}
+  - name: test-clusters
+    tier: disposable
+    match: {workspaces: ["cloud-platform-test-*", "cp-*"], paths: ["terraform/aws-accounts/cloud-platform-ephemeral-test/**"]}
+  - name: modules
+    tier: standard
+    match: {paths: ["terraform/modules/**"]}

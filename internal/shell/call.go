@@ -128,6 +128,20 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		}
 		a.call(skipFlags(rest, map[string]bool{"-a": true}), redirs, cmdSt, st, append(via, bn), depth+1, in)
 		return
+	case "aws-vault", "aws-okta", "gds", "saml2aws", "aws-sso", "doppler", "op", "chamber", "infisical", "envchain", "aws-runas":
+		if cmd, profile, ok := credentialWrapper(bn, rest); ok {
+			// The wrapped command runs with the wrapper's credentials; the
+			// profile or role it names is a tier signal like AWS_PROFILE.
+			ws := cmdSt.clone()
+			if profile.Resolved && profile.Text != "" {
+				ws.vars["AWS_PROFILE"] = value{text: profile.Text, ok: true}
+				ws.exported["AWS_PROFILE"] = true
+			}
+			a.call(cmd, redirs, ws, st, append(via, bn), depth+1, in)
+			return
+		}
+		record()
+		return
 	case "sudo", "doas":
 		a.call(skipFlags(rest, map[string]bool{"-u": true, "-g": true, "-C": true, "-D": true, "-h": true, "-p": true, "-r": true, "-t": true, "-U": true}), redirs, cmdSt, st, append(via, bn), depth+1, in)
 		return
@@ -586,4 +600,64 @@ func Mentions(text string) []string {
 		}
 	}
 	return out
+}
+
+// credentialWrapper finds the command that a credential or secrets runner
+// executes, and the AWS profile or role it runs it under:
+//
+//	aws-vault exec PROFILE [--] cmd     aws-okta exec PROFILE [--] cmd
+//	gds aws ROLE [--] cmd               aws-runas PROFILE cmd
+//	saml2aws exec [--exec-profile P] [--] cmd
+//	aws-sso exec [-p P] [--] cmd        envchain NAMESPACE cmd
+//	doppler run [flags] -- cmd          op run [flags] -- cmd
+//	chamber exec SERVICE... -- cmd      infisical run [flags] -- cmd
+//
+// ok is false when the arguments do not have that shape (for example
+// "aws-vault list" or "op read"), in which case nothing is executed.
+func credentialWrapper(bn string, rest []Word) (cmd []Word, profile Word, ok bool) {
+	sub := map[string]string{"aws-vault": "exec", "aws-okta": "exec", "gds": "aws", "saml2aws": "exec",
+		"aws-sso": "exec", "doppler": "run", "op": "run", "chamber": "exec", "infisical": "run"}
+	if want, has := sub[bn]; has {
+		if len(rest) == 0 || rest[0].Text != want {
+			return nil, Word{}, false
+		}
+		rest = rest[1:]
+	}
+	// Tools whose first positional argument names the profile or role.
+	positionalProfile := bn == "aws-vault" || bn == "aws-okta" || bn == "gds" || bn == "aws-runas" || bn == "envchain"
+	// Tools that only accept the command after "--".
+	needsDashDash := bn == "doppler" || bn == "op" || bn == "chamber" || bn == "infisical"
+	profileFlags := map[string]bool{"--exec-profile": true, "-p": true, "--profile": true}
+	valued := map[string]bool{"--duration": true, "-d": true, "--region": true, "--mfa-token": true, "-t": true,
+		"--prompt": true, "--exec-profile": true, "-p": true, "--profile": true, "-a": true, "--idp-account": true,
+		"--project": true, "--config": true, "-c": true, "--env-file": true, "--env": true, "--account": true,
+		"--role": true, "--session-ttl": true, "--assume-role-ttl": true}
+	for i := 0; i < len(rest); i++ {
+		w := rest[i]
+		t := w.Text
+		switch {
+		case t == "--":
+			return rest[i+1:], profile, i+1 < len(rest)
+		case needsDashDash:
+			continue
+		case strings.HasPrefix(t, "-") && w.Resolved:
+			name, val, eq := strings.Cut(t, "=")
+			if profileFlags[name] {
+				if eq {
+					profile = Word{Text: val, Resolved: true, Prefix: val}
+				} else if i+1 < len(rest) {
+					profile = rest[i+1]
+				}
+			}
+			if !eq && valued[name] {
+				i++
+			}
+		case positionalProfile:
+			profile = w
+			positionalProfile = false
+		default:
+			return rest[i:], profile, true
+		}
+	}
+	return nil, profile, false
 }

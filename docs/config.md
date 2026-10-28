@@ -39,6 +39,8 @@ protected_paths: []             # extra guard files the agent may not modify
 protected_resources: []         # address globs whose destroy/replace is critical, e.g. ["aws_instance.bastion", "module.data.*"]
 ```
 
+**Defaults.** Because the most protected matching environment wins, an environment that matches everything (`paths: ["**"]`) overrides every less protected one: `examples/**` → disposable plus `**` → standard makes the examples standard too. For a default, set `strict: false` and `default_tier` instead.
+
 `protected_resources` extends the plan gate's built-in stateful-type list with addresses that matter in *this* repository whatever their type: a bastion host, a module holding data, a specific bucket. Globs match the full Terraform address (`module.x.*`, `aws_instance.*`). A destroy or replace of a matching resource in a saved plan is a critical finding, so protected tiers block and standard tiers ask.
 
 `preflight.live_state` makes the only other network call besides `live_identity`. When local state files sit next to a remote backend (the `stale-state` finding), seatbelt runs `<engine> state pull` (read-only) and compares each local file's lineage and serial with the remote state. A local file from another lineage, behind the remote serial, or ahead of it becomes a high `state-lineage` finding with the serials in the evidence. Like `live_identity`, only the user config can turn it on; a repository config cannot.

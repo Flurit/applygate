@@ -1,0 +1,11 @@
+# Trial config: environment is the directory.
+version: 1
+mode: enforce
+strict: true
+environments:
+  - name: prod
+    tier: protected
+    match: {paths: ["prod/**"]}
+  - name: non-prod
+    tier: standard
+    match: {paths: ["non-prod/**"]}
