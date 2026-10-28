@@ -133,3 +133,58 @@ func TestPlanTooLarge(t *testing.T) {
 		t.Fatalf("want one critical plan-too-large finding, got %+v", res.Findings)
 	}
 }
+
+func TestUnprotectedStatefulCreate(t *testing.T) {
+	R := DefaultRules()
+
+	// Narrowed F11: ask (High) only when a DB is created with BOTH deletion
+	// protection off AND the final snapshot skipped — no safety net at all.
+	res, _ := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(
+		rc{"aws_db_instance.d", "aws_db_instance", []string{"create"}, nil,
+			map[string]any{"deletion_protection": false, "skip_final_snapshot": true}},
+	)}, R)
+	sev := rules(t, res)
+	if s, ok := sev["stateful-unprotected-create"]; !ok || s != preflight.High {
+		t.Fatalf("want High stateful-unprotected-create, got findings %+v", res.Findings)
+	}
+	if _, ok := sev["stateful-destroyed"]; ok {
+		t.Fatalf("create must not be a destroy: %+v", res.Findings)
+	}
+
+	// Protection off but a final snapshot kept: allowed, recorded as an Info
+	// note (not the High ask).
+	res2, _ := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(
+		rc{"aws_db_instance.d", "aws_db_instance", []string{"create"}, nil,
+			map[string]any{"deletion_protection": false, "skip_final_snapshot": false}},
+	)}, R)
+	sev2 := rules(t, res2)
+	if _, ok := sev2["stateful-unprotected-create"]; ok {
+		t.Fatalf("partial-protection create must not ask: %+v", res2.Findings)
+	}
+	if s, ok := sev2["stateful-create-note"]; !ok || s != preflight.Info {
+		t.Fatalf("want an Info stateful-create-note, got %+v", res2.Findings)
+	}
+
+	// Fully protected create: clean, no finding at all.
+	res3, _ := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(
+		rc{"aws_db_instance.d", "aws_db_instance", []string{"create"}, nil,
+			map[string]any{"deletion_protection": true, "skip_final_snapshot": false}},
+	)}, R)
+	sev3 := rules(t, res3)
+	if _, ok := sev3["stateful-unprotected-create"]; ok {
+		t.Fatalf("protected create should be clean: %+v", res3.Findings)
+	}
+	if _, ok := sev3["stateful-create-note"]; ok {
+		t.Fatalf("protected create should not be noted: %+v", res3.Findings)
+	}
+
+	// A non-database stateful resource (e.g. S3 with force_destroy) is no longer
+	// flagged on create under the narrowed rule.
+	res4, _ := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(
+		rc{"aws_s3_bucket.b", "aws_s3_bucket", []string{"create"}, nil,
+			map[string]any{"force_destroy": true}},
+	)}, R)
+	if _, ok := rules(t, res4)["stateful-unprotected-create"]; ok {
+		t.Fatalf("non-DB create should not fire the narrowed rule: %+v", res4.Findings)
+	}
+}

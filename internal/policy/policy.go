@@ -356,6 +356,16 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 	}
 	js, err := deps.PlanJSON(a.Engine, a.Dir, a.PlanFile)
 	if err != nil {
+		// F10: distinguish a plan file that simply does not exist from one that
+		// exists but cannot be read. A missing file means there is nothing to
+		// apply, so it is High (protected tier asks) rather than Critical
+		// (block). An existing-but-unreadable plan stays Critical: seatbelt
+		// cannot verify a real plan, so it must fail closed.
+		if _, serr := os.Stat(planPath); errors.Is(serr, os.ErrNotExist) {
+			r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-missing", Severity: preflight.High,
+				Message: "the saved plan file " + a.PlanFile + " does not exist, so there is nothing to apply; check the path"})
+			return classify.ApplySavedPlan
+		}
 		r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-unreadable", Severity: preflight.Critical,
 			Message: "could not read the saved plan with show -json: " + err.Error()})
 		return classify.ApplySavedPlan
