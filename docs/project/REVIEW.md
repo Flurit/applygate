@@ -1,5 +1,9 @@
 # Independent verification of seatbelt v1
 
+> The raw outputs this review cites (`review/results/*`, `review/results/fuzz.log`, `harness/pathological.py`) were removed from the tree to keep the repository small; they are in git history at commit `149ab67`, for example `git show 149ab67:review/results/adv_protected.md`.
+
+> "The spec" in this record is the project's internal planning document; its public summary is [docs/roadmap.md](../roadmap.md).
+
 Reviewer: independent session, 2026-10-28. Branch: `review/independent-tests`.
 Machine: Linux x86-64, Go 1.26.7, Terraform 1.16.1. No live agent, no real cloud
 credentials; no `terraform apply`/`destroy` was run. Every scenario command exists

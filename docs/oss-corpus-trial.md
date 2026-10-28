@@ -2,7 +2,7 @@
 
 Date: 2026-10-28. "Before" is v0.1.1 (`48a1d26`). "After" is v0.1.2: the fixes this trial prompted (PR #17) plus the three policy decisions taken on its findings (below).
 
-This is a **stand-in for the spec's observe-mode trial**, not the trial itself. The spec asks for seatbelt in observe mode on 5 real repositories while people and agents work in them. This trial replays the commands that 5 public Terraform repositories document or run (READMEs, CI workflows, Makefiles, scripts) through `seatbelt check`, and reviews every ask and block by hand. It measures false positives on realistic infrastructure commands. It does not measure what an agent would actually do, and it never exercises the plan gate (no command in the corpus applies a saved plan).
+This is a **stand-in for the roadmap's observe-mode trial**, not the trial itself. The [roadmap](roadmap.md) asks for seatbelt in observe mode on 5 real repositories while people and agents work in them. This trial replays the commands that 5 public Terraform repositories document or run (READMEs, CI workflows, Makefiles, scripts) through `seatbelt check`, and reviews every ask and block by hand. It measures false positives on realistic infrastructure commands. It does not measure what an agent would actually do, and it never exercises the plan gate (no command in the corpus applies a saved plan).
 
 Nothing was executed. The extractor only reads files; seatbelt ran with an empty `PATH` (so `terraform`, `aws` and `git` could not start), a fake `HOME` and no user config. Reproduce with `review/oss-corpus/run.sh <seatbelt binary> <workdir>`, which clones the repositories at the commits below. The rerun reproduces the recorded verdicts exactly.
 
@@ -25,7 +25,7 @@ The configs are in `review/oss-corpus/configs/`. They are what a careful user wo
 3. **Review** (`tools/label.py`): every ask and block was read by hand and labelled. The rules in `label.py` record those decisions so they can be checked:
    - **expected**: the verdict is what the policy should return for that command in that tier;
    - **false positive**: the command should have been allowed (`fp-policy`, `fp-analyzer`, `fp-environment` by cause);
-   - **debatable**: the spec's table asks, but the friction is arguable;
+   - **debatable**: the verdict table asks, but the friction is arguable;
    - **noise** / **placeholder**: not a runnable command as written (HCL, JSON, tree diagrams, `<clusterName>`), excluded from the rate.
 
    Allowed commands that look destructive (93) were also read, to look for misses.
@@ -43,7 +43,7 @@ False-positive rate = false positives / runnable commands (all commands minus no
 | terraform-aws-eks-blueprints | 726 | 697 | 630 | 54 | 3 | 10 | 0.4% |
 | **All** | **1,334** | **1,259** | **1,158** | **85** | **6** | **10** | **0.48%** (1.27% with debatable) |
 
-Every repository is under the spec's 5% bar. The expected asks and blocks are destroy and `-auto-approve` applies in standard tiers, state surgery in migration guides, cluster teardown scripts, CloudFormation or S3 writes and bare `terraform apply` in environments the config does not map (strict mode treats those as protected), and one AWS SDK script that deletes log groups.
+Every repository is under the roadmap's 5% bar. The expected asks and blocks are destroy and `-auto-approve` applies in standard tiers, state surgery in migration guides, cluster teardown scripts, CloudFormation or S3 writes and bare `terraform apply` in environments the config does not map (strict mode treats those as protected), and one AWS SDK script that deletes log groups.
 
 | Run | False positives | FP rate | Known misses |
 |---|---|---|---|
@@ -111,5 +111,5 @@ After v0.1.2, the unknown-wrapper backstop was checked against the same corpus: 
 - Documented and CI commands are not agent behavior. An agent may run commands no README shows, and skip ones that are shown.
 - The extractor guesses each command's directory from the file it came from and `cd` lines within the same block; a few commands ran from the wrong directory.
 - No saved plans exist in the corpus, so the plan gate, workspace-mismatch and stale-state checks were not exercised.
-- The labels are one reviewer's judgment. The rules in `label.py` and the per-command results in `review/oss-corpus/results/` make every decision checkable.
+- The labels are one reviewer's judgment. The rules in `review/oss-corpus/tools/label.py` record every decision, and `run.sh` regenerates the per-command results; the recorded ones are in git history at commit `149ab67`.
 - The trial configs are mine, written from each repository's README; the teams' own mappings may differ.

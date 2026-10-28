@@ -1,0 +1,26 @@
+name: Bug
+description: seatbelt crashes, errors, or behaves unlike its documentation (not a bypass; see SECURITY.md for those)
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes: {label: seatbelt version, description: Output of `seatbelt version`}
+    validations: {required: true}
+  - type: input
+    id: env
+    attributes:
+      label: "OS, architecture and agent"
+      placeholder: "Linux amd64, Claude Code 2.x"
+  - type: textarea
+    id: steps
+    attributes: {label: Steps to reproduce}
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes: {label: Expected and actual behavior}
+    validations: {required: true}
+  - type: textarea
+    id: doctor
+    attributes:
+      label: seatbelt doctor output
+      render: text

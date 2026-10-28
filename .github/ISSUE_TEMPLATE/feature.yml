@@ -1,0 +1,19 @@
+name: Feature or rule request
+description: A new rule, resource type, agent, or capability
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: {label: "What problem would this solve?"}
+    validations: {required: true}
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: For a rule, give a command or plan that should get a different verdict, and in which tier.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I checked docs/limits.md and docs/roadmap.md for this

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability or bypass
+    url: https://github.com/Flurit/seatbelt/security/advisories/new
+    about: A command seatbelt should block but allows is a security issue. Report it privately (see SECURITY.md), not as an issue.
