@@ -164,13 +164,31 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		a.reparse(r, st, via, "watch", depth)
 		return
 	case "script":
+		// script [-q] [-c command] file; -c takes the command. The short flag
+		// is often bundled into a cluster, e.g. "script -qc '<cmd>' out".
 		for i, w := range rest {
-			if (w.Text == "-c" || w.Text == "--command") && i+1 < len(rest) {
+			t := w.Text
+			cFlag := t == "-c" || t == "--command" ||
+				(len(t) >= 2 && t[0] == '-' && t[1] != '-' && strings.HasSuffix(t, "c"))
+			if cFlag && i+1 < len(rest) {
 				a.reparse(rest[i+1:i+2], st, via, "script -c", depth)
 				return
 			}
 		}
 		record()
+		return
+	case "chroot":
+		// chroot [options] newroot [command ...]; the trailing argv is a
+		// command that runs inside the new root. Skip options and newroot.
+		r := skipFlags(rest, map[string]bool{"--userspec": true, "--groups": true})
+		if len(r) > 1 {
+			a.call(r[1:], redirs, cmdSt, st, append(via, "chroot"), depth+1, in)
+			return
+		}
+		record()
+		return
+	case "parallel":
+		a.parallel(rest, redirs, cmdSt, st, via, depth)
 		return
 	case "ssh":
 		// ssh [opts] host [command...]: the remote command runs elsewhere,
@@ -379,10 +397,59 @@ func (a *analyzer) foreign(bn, flag string, args []Word, cmdSt, st *state, via [
 			code = string(b)
 		}
 	}
-	if Mentions(code) != nil {
+	// Interpreter code is opaque, so the only signal is a textual mention. A
+	// tool name split across string-literal concatenation (e.g. 'ter'+'raform',
+	// "terra"."form") hides from a plain scan, so also test a form with those
+	// joins collapsed.
+	if Mentions(code) != nil || Mentions(dejoinLiterals(code)) != nil {
 		a.problem(st, via, bn+" "+code, bn+" code mentions infrastructure tools or guard files; it cannot be analyzed")
 	}
 }
+
+// parallel handles GNU parallel: parallel [opts] [command...] [:::|:::: args].
+// The command template before the first ::: is reparsed with the substituted
+// arguments represented as one unresolved word; if the template is empty the
+// ::: entries are themselves the commands.
+func (a *analyzer) parallel(rest []Word, redirs []Redir, cmdSt, st *state, via []string, depth int) {
+	valued := map[string]bool{
+		"-j": true, "--jobs": true, "-N": true, "-n": true, "-L": true, "--max-lines": true,
+		"-P": true, "--delay": true, "--timeout": true, "-S": true, "--sshlogin": true,
+		"--colsep": true, "-d": true, "--delimiter": true, "-I": true, "--joblog": true, "--results": true,
+	}
+	r := skipFlags(rest, valued)
+	sep := -1
+	for i, w := range r {
+		if t := w.Text; t == ":::" || t == "::::" || t == ":::+" || t == "::::+" {
+			sep = i
+			break
+		}
+	}
+	tmpl := r
+	if sep >= 0 {
+		tmpl = r[:sep]
+	}
+	if len(tmpl) > 0 {
+		call := append(append([]Word(nil), tmpl...), Word{Resolved: false})
+		a.call(call, redirs, cmdSt, st, append(via, "parallel"), depth+1, stdin{})
+		return
+	}
+	if sep >= 0 {
+		for _, w := range r[sep+1:] {
+			if t := w.Text; t == ":::" || t == "::::" || t == ":::+" || t == "::::+" {
+				continue
+			}
+			a.reparse([]Word{w}, st, via, "parallel", depth)
+		}
+		return
+	}
+	a.res.Invocations = append(a.res.Invocations, Invocation{Args: rest, Dir: cmdSt.dir, Env: cmdSt.env(), Redirs: redirs, Via: append([]string(nil), via...)})
+}
+
+// concatRe matches a string-literal concatenation operator sitting between two
+// quotes, e.g. `'+'`, `" . "`, "`+`". Collapsing it rejoins split literals.
+var concatRe = regexp.MustCompile("['\"`]\\s*[+.]\\s*['\"`]")
+
+func dejoinLiterals(s string) string { return concatRe.ReplaceAllString(s, "") }
 
 func (a *analyzer) reparse(r []Word, st *state, via []string, label string, depth int) {
 	a.reparseIn(r, st.childState(), via, label, depth)
