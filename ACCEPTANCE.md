@@ -10,7 +10,7 @@ This report separates what was **measured**, what is **assumed**, and what is **
 |---|---|---|---|
 | 1 | Passes the v0 scenario pack at the agreed threshold | **Partly.** Passes the *reconstructed* pack. The original v0 pack was not available, and no threshold has been agreed. | `go test ./harness`, `seatbelt selftest`, `harness/run.py`: 50/50 dangerous caught (block or ask), 0/29 benign flagged, 79/79 exact expected verdict, and every `must_mention` reason string present. |
 | 2 | Observe-mode trial on 5 real repositories with a false-positive review | **Not done.** | Observe mode, the redacted 0600 JSONL log and `seatbelt report` exist and are unit-tested (`TestObserveModeLogsWouldBlock`). No real repository has been run. |
-| 3 | Installs in under 5 minutes on macOS and Linux | **Not measured.** | On Linux, `init` → `hook install --agent claude` → `hook install --agent codex` → `doctor` → `hook remove` were exercised in a temp directory and work. No timing was taken and there is no install script or release binary yet. macOS is only in the CI matrix. |
+| 3 | Installs in under 5 minutes on macOS and Linux | **Not measured.** | On Linux, `init` → `hook install --agent claude` → `hook install --agent codex` → `doctor` → `hook remove` were exercised in a temp directory and work. No timing was taken and there is no install script or release binary yet. On macOS, the unit tests, selftest and replay pass in CI (run 40625938359); install was not exercised there. |
 | 4 | Works with Claude Code and one more agent (Codex) | **Built, not verified live.** | Both adapters follow the hook docs as read on 2026-10-28. They are tested with synthetic events only: Claude through all 79 scenarios, Codex in `TestCodexAdapter` (deny on destroy, ask→deny, argv-form command, `apply_patch` on hook config). Never run inside Claude Code or Codex. |
 | 5 | Fail-closed behavior verified by chaos tests | **Partly.** | `TestFailureBehavior` and `TestBrokenRepoConfigFailsClosed` cover malformed JSON, a missing `tool_name`, an internal panic, the internal deadline (timeout), a config error, and `on_error` auto/block/allow plus observe. **Untested:** process kill, a missing binary, and the agent's own hook timeout. Those depend on the agent (Claude `onFailure: block`, which `hook install` sets; Codex undocumented). |
 | 6 | Docs: quickstart, threat model and limits | **Done (draft).** | `README.md` quickstart, `docs/threat-model.md`, `docs/limits.md`, `docs/policy.md`, `docs/config.md`. The quickstart has not been followed end to end on a clean machine. |
@@ -41,7 +41,7 @@ This report separates what was **measured**, what is **assumed**, and what is **
 
 ## Untested
 
-- Any live agent session; any real repository; macOS; Windows (not supported).
+- Any live agent session; any real repository; install on macOS (tests pass there in CI); Windows (not supported).
 - `terraform show -json` invoked by the hook on a real saved AWS plan (only fixture JSON is used in tests).
 - Optional live STS identity check (`preflight.live_identity`).
 - Terragrunt beyond argument classification (`run-all`, `run --all`).
