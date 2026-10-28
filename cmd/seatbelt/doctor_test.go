@@ -140,3 +140,68 @@ func TestCodexInstallPreservesEntries(t *testing.T) {
 		t.Fatal("unrelated hook entry was dropped by install")
 	}
 }
+
+func TestDetectAgents(t *testing.T) {
+	home := t.TempDir()
+	wd := t.TempDir()
+	none := func(string) (string, error) { return "", os.ErrNotExist }
+	if got := detectAgents(home, wd, none); len(got) != 0 {
+		t.Fatalf("nothing installed, got %v", got)
+	}
+	os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	if got := detectAgents(home, wd, none); len(got) != 1 || got[0] != "claude" {
+		t.Fatalf("user .claude dir should detect claude, got %v", got)
+	}
+	os.MkdirAll(filepath.Join(wd, ".codex"), 0o755)
+	if got := detectAgents(home, wd, none); len(got) != 2 || got[1] != "codex" {
+		t.Fatalf("project .codex dir should add codex, got %v", got)
+	}
+	onPath := func(bin string) (string, error) {
+		if bin == "codex" {
+			return "/usr/bin/codex", nil
+		}
+		return "", os.ErrNotExist
+	}
+	if got := detectAgents(t.TempDir(), t.TempDir(), onPath); len(got) != 1 || got[0] != "codex" {
+		t.Fatalf("codex on PATH should detect codex, got %v", got)
+	}
+}
+
+func TestInitInstallsHooksForDetectedAgents(t *testing.T) {
+	wd := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	os.MkdirAll(filepath.Join(wd, ".claude"), 0o755)
+	old, _ := os.Getwd()
+	if err := os.Chdir(wd); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	var out, errb bytes.Buffer
+	if rc := cmdInit(nil, &out, &errb); rc != 0 {
+		t.Fatalf("init rc %d: %s %s", rc, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "detected agents: claude") {
+		t.Fatalf("init should report the detected agent: %s", out.String())
+	}
+	b, err := os.ReadFile(filepath.Join(wd, ".claude", "settings.json"))
+	if err != nil || !settingsHasSeatbelt(b) {
+		t.Fatalf("init should install the claude project hook: %v %s", err, b)
+	}
+	var doc map[string]any
+	json.Unmarshal(b, &doc)
+	if _, err := os.Stat(filepath.Join(wd, ".seatbelt.yaml")); err != nil {
+		t.Fatal("config not written")
+	}
+	// --no-hooks writes the config only.
+	wd2 := t.TempDir()
+	os.MkdirAll(filepath.Join(wd2, ".claude"), 0o755)
+	os.Chdir(wd2)
+	out.Reset()
+	if rc := cmdInit([]string{"--no-hooks"}, &out, &errb); rc != 0 {
+		t.Fatalf("init --no-hooks rc %d", rc)
+	}
+	if _, err := os.Stat(filepath.Join(wd2, ".claude", "settings.json")); err == nil {
+		t.Fatal("--no-hooks must not install hooks")
+	}
+}

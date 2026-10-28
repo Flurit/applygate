@@ -13,21 +13,24 @@ Command-pattern matching is table stakes. In our v0 test slice, existing guards 
 seatbelt does two things a matcher cannot:
 
 1. **Shell-aware command analysis.** It parses commands the way bash does ([mvdan/sh](https://github.com/mvdan/sh)), tracks `cd`, variables, `export`, loops and functions, unwraps `bash -c`, `eval`, here-documents, `sudo`/`env`/`timeout`/`xargs`/`script`/`chroot`/`parallel`/`find -exec`, reads Makefile recipes and shell scripts, and decodes `echo … | base64 -d | sh`. It tells commands apart from text: `grep "terraform destroy"` is a grep. Anything it cannot resolve statically, such as fetched text piped into a shell, it **refuses** (ask) instead of guessing.
-2. **Preflight and plan-level checks.** It maps the working directory, workspace, backend and AWS profile to an environment tier. It flags a saved plan made in another workspace (read from the planfile itself), a backend block changed since `init`, stale or archived state files, and lock-file or module-source drift. For `apply <planfile>` it reads `show -json` and checks for destroyed or replaced stateful resources, removed protection (deletion protection, final snapshots, force-destroy, versioning), internet exposure, IAM wildcards, and changes to the state backend itself.
+2. **Preflight and plan-level checks.** It maps the working directory, workspace, backend and AWS profile to an environment tier. It flags a saved plan made in another workspace (read from the planfile itself), a backend block changed since `init`, stale or archived state files (optionally compared with the remote state's lineage and serial), and lock-file or module-source drift. For `apply <planfile>` it reads `show -json` and checks for destroyed or replaced stateful resources, removed protection (deletion protection, final snapshots, force-destroy, versioning), internet exposure, IAM wildcards, and changes to the state backend itself.
 
 It is not a sandbox and not an AI reviewer. No model is in the decision path, there is no telemetry, and it makes no network calls by default.
 
 ## Quickstart
 
 ```bash
-go install github.com/Flurit/seatbelt/cmd/seatbelt@latest   # or build: go build -o bin/seatbelt ./cmd/seatbelt
+curl -fsSL https://raw.githubusercontent.com/Flurit/seatbelt/main/install.sh | sh   # checks the sha256 of the release archive
+# or: go install github.com/Flurit/seatbelt/cmd/seatbelt@latest
+# or: go build -o bin/seatbelt ./cmd/seatbelt
 cd your-infra-repo
-seatbelt init                            # writes .seatbelt.yaml in observe mode
+seatbelt init                            # writes .seatbelt.yaml (observe mode), detects Claude Code / Codex, installs their hooks
 $EDITOR .seatbelt.yaml                   # map paths/workspaces/profiles to tiers
-seatbelt hook install --agent claude     # or --agent codex
 seatbelt doctor
 seatbelt check "terraform -chdir=envs/prod destroy"
 ```
+
+`seatbelt init --no-hooks` writes the config only; `seatbelt hook install --agent claude|codex [--scope user]` adds a hook by hand. Releases are built by `.github/workflows/release.yml`: tagged builds are reproducible, the checksum file is signed with cosign (keyless) and every archive carries a GitHub build-provenance attestation. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
 
 After a few days in observe mode, run `seatbelt report` to see what would have been blocked, review any likely false positives, then set `mode: enforce`.
 
@@ -46,7 +49,7 @@ After a few days in observe mode, run `seatbelt report` to see what would have b
 | Guard tampering | skip-permissions flags, edits to hook config, seatbelt config or log | block | block | block |
 | Dynamic / unresolvable | `eval "$(curl …)"`, `sh -c "$X"`, `curl … \| bash` | ask | ask | allow |
 
-Plan gate: in protected tiers critical findings block and high findings ask; in standard tiers critical findings ask; in disposable tiers findings are logged. Unknown environments count as protected in strict mode, which is the default. The full table, including the classes seatbelt adds beyond the spec, is in [docs/policy.md](docs/policy.md).
+Plan gate: in protected tiers critical findings block and high findings ask; in standard tiers critical findings ask; in disposable tiers findings are logged. Addresses listed in `protected_resources` are critical whatever their type, and a plan whose configuration runs code (provisioners, `external` data sources) is a high finding. Unknown environments count as protected in strict mode, which is the default. The full table, including the classes seatbelt adds beyond the spec, is in [docs/policy.md](docs/policy.md).
 
 ## Commands
 
@@ -58,7 +61,8 @@ Plan gate: in protected tiers critical findings block and high findings ask; in 
 | `seatbelt plan-check plan.json` | Evaluate `terraform show -json` output |
 | `seatbelt report` | Summarize the decision log |
 | `seatbelt selftest` | Run the embedded scenario pack against this binary |
-| `seatbelt init`, `doctor`, `hook install/remove` | Setup |
+| `seatbelt init [--no-hooks]` | Write a starter config, detect installed agents, install their hooks |
+| `seatbelt doctor`, `hook install/remove` | Setup checks and manual hook management |
 
 ## What happens when seatbelt fails
 
@@ -73,6 +77,10 @@ Hooks fail open by default in most agents, so this matters:
 
 See [docs/limits.md](docs/limits.md) and [docs/threat-model.md](docs/threat-model.md).
 
+## Status against the spec
+
+[docs/spec-alignment.md](docs/spec-alignment.md) maps every requirement of the roadmap and v0/v1 spec to where it is implemented, what deviates, and what is still open (a trial on real repositories, a first signed release, Homebrew and package-manager wrappers). [ACCEPTANCE.md](ACCEPTANCE.md) holds the measured results.
+
 ## Repository layout
 
 ```
@@ -86,6 +94,9 @@ internal/policy/      verdict table and Decide()
 internal/hook/        Claude Code and Codex adapters, error behavior
 internal/decisionlog/ JSONL log with redaction, report
 harness/              scenario pack, fixtures, Go regression test, run.py replay runner
+plugin/claude-code/   Claude Code plugin manifest (hooks only; the binary comes from a release)
+.goreleaser.yaml      release builds: reproducible archives, checksums, cosign signature, SBOMs
+install.sh            curl | sh installer that verifies the release checksum
 ```
 
 ## License

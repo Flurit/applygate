@@ -1,0 +1,132 @@
+# .goreleaser.yaml -- release pipeline for seatbelt (goreleaser v2).
+#
+# Run by .github/workflows/release.yml on every v* tag. It produces:
+#   - reproducible static binaries for linux/darwin on amd64/arm64
+#     (CGO off, -trimpath, timestamps pinned to the commit),
+#   - tar.gz archives with LICENSE, NOTICE and README.md,
+#   - checksums.txt (sha256) signed keylessly with cosign (Sigstore, using the
+#     workflow's GitHub OIDC identity; verify with `cosign verify-blob`),
+#   - a syft SBOM for every archive.
+# Build provenance attestations are produced by the workflow afterwards with
+# actions/attest-build-provenance, not here.
+#
+# Validate:  goreleaser check
+# Dry run:   goreleaser release --snapshot --clean
+version: 2
+
+project_name: seatbelt
+
+before:
+  hooks:
+    # Dependencies are pinned in go.mod/go.sum; verify them rather than tidy.
+    - go mod verify
+
+builds:
+  - id: seatbelt
+    main: ./cmd/seatbelt
+    binary: seatbelt
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/Flurit/seatbelt/internal/hook.Version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    # Reproducible builds: stamp the binary with the commit time, not the
+    # build machine's clock.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: tarballs
+    ids:
+      - seatbelt
+    formats:
+      - tar.gz
+    name_template: "seatbelt_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - NOTICE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+signs:
+  # Keyless signing of checksums.txt. The signature and certificate are
+  # uploaded next to it as checksums.txt.sig and checksums.txt.pem.
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    certificate: "${artifact}.pem"
+    signature: "${artifact}.sig"
+    output: true
+    args:
+      - sign-blob
+      - --yes
+      - --output-signature=${signature}
+      - --output-certificate=${certificate}
+      - ${artifact}
+
+sboms:
+  - id: archives
+    artifacts: archive
+
+release:
+  github:
+    owner: Flurit
+    name: seatbelt
+  draft: false
+  # Tags with a pre-release suffix (v1.2.3-rc1) are marked as pre-releases.
+  prerelease: auto
+  # Keep notes and assets a human added to an existing release.
+  mode: keep-existing
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^build:"
+      - "^style:"
+      - "^refactor:"
+      - "merge conflict"
+      - "Merge pull request"
+      - "Merge remote-tracking branch"
+      - "Merge branch"
+
+# Homebrew tap. Enable once the Flurit/homebrew-tap repository exists and the
+# release workflow has a token that can push to it (GITHUB_TOKEN cannot push
+# to another repository; use a fine-grained PAT or a GitHub App token exposed
+# as HOMEBREW_TAP_TOKEN).
+#
+# brews:
+#   - name: seatbelt
+#     ids:
+#       - tarballs
+#     repository:
+#       owner: Flurit
+#       name: homebrew-tap
+#       branch: main
+#       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+#     directory: Formula
+#     homepage: https://github.com/Flurit/seatbelt
+#     description: "Seatbelt: a guard hook for coding agents"
+#     license: Apache-2.0
+#     install: |
+#       bin.install "seatbelt"
+#     test: |
+#       system "#{bin}/seatbelt", "version"
+#     commit_author:
+#       name: flurit-pipeline
+#       email: noreply@flurit.ai
+#     commit_msg_template: "Brew formula update for {{ .ProjectName }} version {{ .Tag }}"

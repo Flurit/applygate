@@ -5,6 +5,7 @@ seatbelt reduces the chance that a mistaken or manipulated agent damages infrast
 ## What it cannot see
 
 - **Paths around the hook.** If the agent can reach cloud credentials and run code by any route the hook does not inspect, seatbelt does not see it. Examples: an MCP server with its own credentials, a tool the matcher does not cover, or a process started earlier in the background.
+- **MCP tools (spec stretch scenario S13).** A destructive call made through a Terraform or cloud MCP server arrives as an `mcp__…` tool call, not a shell command. seatbelt does not inspect MCP tool inputs in v1; such calls pass through unlogged. Restrict MCP servers with the agent's own permission rules, or give them plan-only credentials.
 - **Encoded payloads.** `base64 -d`, `base32 -d`, `gzip`/`gunzip`/`zcat`, `xxd -r -p`, `rev` and `tee` piped into a shell are decoded and the result is analyzed. Decoder output is capped (256 KB) to stop a decompression bomb. Encodings seatbelt does not implement, or payloads built from unresolved runtime values, still fall back to an ask.
 - **Code in other languages.** `python -c`, `node -e` and scripts with non-shell shebangs are not analyzed. If such code mentions terraform, tofu, kubectl, aws operations or guard files, seatbelt treats it as dynamic (ask) or as tampering. If it mentions none of them, it passes.
 - **Runtime values.** Environment variables seatbelt cannot see, files written earlier in the same command, `read` from stdin, and command substitutions other than echo/printf/cat/base64/xxd/rev/which/dirname are unresolved. In a command position they cause an ask. As plain arguments to non-infrastructure programs they do not.
@@ -16,7 +17,8 @@ seatbelt reduces the chance that a mistaken or manipulated agent damages infrast
 ## Plan gate
 
 - seatbelt never runs `plan`. For `apply <planfile>` it runs `<engine> show -json <planfile>` (read-only; it starts provider plugins to load schemas). If that fails, the plan counts as unreadable: a critical finding, so protected tiers block. Set `plan_gate.run_show: false` to skip running show. Applying saved plans in protected tiers is then blocked.
-- The rules are AWS-first. GCP and Azure resources are counted for destroy and replace, but their stateful types and protections are not known.
+- The rules are AWS-first. GCP and Azure resources are counted for destroy and replace, but their stateful types and protections are not known. `protected_resources` in config covers addresses of any type.
+- The `code-execution` finding reads provisioners and `external` data sources from the plan's `configuration` block. A plan produced without configuration (hand-built JSON) only reveals `external` data sources that appear in `resource_changes`. `http` data sources and provider-side code paths are not flagged.
 - The workspace check reads the workspace that Terraform 1.x and OpenTofu record in the planfile (protobuf field 13 → 3). This was verified on a Terraform 1.16.1 planfile only.
 
 ## Agents
@@ -29,4 +31,4 @@ seatbelt reduces the chance that a mistaken or manipulated agent damages infrast
 
 ## Not in v1
 
-Backup isolation checks, plan-hash approval, CI mode, receipts, GCP/Azure/Kubernetes/Pulumi rules, and live state lineage comparison. The only network call is the optional STS identity check (`preflight.live_identity`), which only the user config can enable.
+Backup isolation checks, plan-hash approval, CI mode, receipts, and GCP/Azure/Kubernetes/Pulumi rules. The only network calls are the optional STS identity check (`preflight.live_identity`) and the optional state pull for lineage comparison (`preflight.live_state`); only the user config can enable either.

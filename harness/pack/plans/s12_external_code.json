@@ -1,0 +1,86 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "aws_instance.app",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "app",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "instance_type": "t3.small",
+     "disable_api_termination": true
+    },
+    "after_unknown": {}
+   }
+  },
+  {
+   "address": "data.external.bootstrap",
+   "mode": "data",
+   "type": "external",
+   "name": "bootstrap",
+   "provider_name": "registry.terraform.io/hashicorp/external",
+   "change": {
+    "actions": [
+     "read"
+    ],
+    "before": null,
+    "after": {
+     "program": [
+      "bash",
+      "./scripts/bootstrap.sh"
+     ]
+    },
+    "after_unknown": {
+     "result": true
+    }
+   }
+  }
+ ],
+ "applyable": true,
+ "complete": true,
+ "errored": false,
+ "configuration": {
+  "provider_config": {
+   "aws": {
+    "name": "aws"
+   }
+  },
+  "root_module": {
+   "resources": [
+    {
+     "address": "aws_instance.app",
+     "mode": "managed",
+     "type": "aws_instance",
+     "name": "app",
+     "provider_config_key": "aws",
+     "provisioners": [
+      {
+       "type": "local-exec",
+       "expressions": {
+        "command": {
+         "constant_value": "./scripts/bootstrap.sh"
+        }
+       }
+      }
+     ],
+     "schema_version": 1
+    },
+    {
+     "address": "data.external.bootstrap",
+     "mode": "data",
+     "type": "external",
+     "name": "bootstrap",
+     "provider_config_key": "external",
+     "schema_version": 0
+    }
+   ]
+  }
+ }
+}

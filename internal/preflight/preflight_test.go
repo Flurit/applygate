@@ -4,8 +4,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 )
+
+func strconvItoa(i int) string    { return strconv.Itoa(i) }
+func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 // staging.tfplan was produced by Terraform 1.16.1 from a terraform_data-only
 // configuration with a local backend in workspace "staging".
@@ -78,3 +83,44 @@ func TestStaleStateAndBackend(t *testing.T) {
 		t.Fatal("key change not flagged")
 	}
 }
+
+func TestLineageMismatch(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, lineage string, serial int) {
+		s := `{"version":4,"lineage":"` + lineage + `","serial":` + itoa(serial) + `,"resources":[]}`
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("terraform.tfstate", "aaaaaaaa-1111", 3)        // stale: behind
+	write("terraform.tfstate.backup", "bbbbbbbb-2222", 9) // foreign lineage
+	write("ahead.tfstate", "aaaaaaaa-1111", 12)           // diverged
+	write("same.tfstate", "aaaaaaaa-1111", 9)             // identical: no evidence
+	remote := []byte(`{"version":4,"lineage":"aaaaaaaa-1111","serial":9}`)
+	f := LineageMismatch(dir, []string{"terraform.tfstate", "terraform.tfstate.backup", "ahead.tfstate", "same.tfstate"}, remote)
+	if f == nil || f.Rule != "state-lineage" || f.Severity != High {
+		t.Fatalf("want a High state-lineage finding, got %+v", f)
+	}
+	if len(f.Evidence) != 3 {
+		t.Fatalf("want 3 mismatches (stale, foreign, diverged), got %v", f.Evidence)
+	}
+	for _, want := range []string{"stale", "foreign state", "diverged"} {
+		found := false
+		for _, e := range f.Evidence {
+			if contains(e, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no evidence mentions %q: %v", want, f.Evidence)
+		}
+	}
+	if f := LineageMismatch(dir, []string{"same.tfstate"}, remote); f != nil {
+		t.Fatalf("identical local state should produce no finding, got %+v", f)
+	}
+	if f := LineageMismatch(dir, []string{"same.tfstate"}, []byte("not json")); f == nil || f.Severity != Info {
+		t.Fatalf("unparseable remote state should be an Info finding, got %+v", f)
+	}
+}
+
+func itoa(i int) string { return strconvItoa(i) }
