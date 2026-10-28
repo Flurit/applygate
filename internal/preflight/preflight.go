@@ -59,6 +59,10 @@ func (b *Backend) URL() string {
 		return "gcs://" + b.Config["bucket"] + "/" + b.Config["prefix"]
 	case "azurerm":
 		return "azurerm://" + b.Config["storage_account_name"] + "/" + b.Config["container_name"] + "/" + b.Config["key"]
+	case "http":
+		if a := b.Config["address"]; a != "" {
+			return a
+		}
 	case "remote", "cloud":
 		return b.Type + "://" + b.Config["organization"] + "/" + b.Config["workspaces"]
 	}

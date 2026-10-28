@@ -8,7 +8,7 @@ mode: observe            # observe | enforce
 strict: true             # unknown environment = protected
 default_tier: standard   # tier for unknown environments when strict is false
 on_error: auto           # auto (block in protected/unknown, allow elsewhere) | block | allow
-name_hints: true         # treat prod/production/prd/live in names as protected
+name_hints: true         # treat prod/production/prd/live in names (paths, workspaces, profiles, backend bucket/key/workspace_key_prefix/dynamodb_table/address) as protected
 log_path: ~/.local/state/seatbelt/decisions.jsonl   # user config only
 aliases: {tf: terraform}
 

@@ -118,7 +118,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 
 | Item | Status |
 |---|---|
-| Passes the v0 pack at the agreed threshold | partial: passes the reconstructed pack 106/106; no threshold agreed, original pack unavailable |
+| Passes the v0 pack at the agreed threshold | partial: passes the reconstructed pack 116/116; no threshold agreed, original pack unavailable |
 | Observe-mode trial on 5 real repositories | partial: static stand-in on 5 public repositories ([oss-corpus-trial.md](oss-corpus-trial.md)), 0.48% false positives on 1,259 runnable commands; no agent sessions yet |
 | Installs in under 5 minutes on macOS and Linux | partial: 3 s on Linux against v0.1.0; not exercised on a Mac |
 | Works with Claude Code and one more agent | done: Claude Code and Codex, live-tested (T3) |

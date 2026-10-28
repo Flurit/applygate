@@ -379,7 +379,15 @@ type Signals struct {
 	// BackendConfig is the -backend-config file or value an init in the
 	// same command points at; only used for name hints.
 	BackendConfig string
+	// BackendValues are the backend's configuration values (from the
+	// recorded backend or from -backend-config). The keys in
+	// BackendHintKeys get the same name hints as the backend URL.
+	BackendValues map[string]string
 }
+
+// BackendHintKeys are the backend settings whose values can name an
+// environment. bucket and key are also part of the backend URL.
+var BackendHintKeys = []string{"bucket", "key", "workspace_key_prefix", "dynamodb_table", "address"}
 
 // Resolution is the outcome of tier resolution.
 type Resolution struct {
@@ -437,7 +445,14 @@ func (c *Config) Resolve(s Signals) Resolution {
 				rel = r
 			}
 		}
-		for _, h := range []struct{ what, v string }{{"path", rel}, {"workspace", s.Workspace}, {"backend", s.Backend}, {"AWS profile", s.AWSProfile}, {"backend config", s.BackendConfig}} {
+		hints := []struct{ what, v string }{{"path", rel}, {"workspace", s.Workspace}, {"backend", s.Backend}, {"AWS profile", s.AWSProfile}, {"backend config", s.BackendConfig}}
+		for _, k := range BackendHintKeys {
+			// Values already in the backend URL were checked above.
+			if v := s.BackendValues[k]; v != "" && !strings.Contains(s.Backend, v) {
+				hints = append(hints, struct{ what, v string }{"backend " + k, v})
+			}
+		}
+		for _, h := range hints {
 			if h.v != "" && prodHint.MatchString(h.v) {
 				consider("prod (name hint)", Protected, h.what+" "+h.v+" looks like production")
 			}

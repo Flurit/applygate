@@ -272,12 +272,16 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 			recorded = target
 		}
 		be := recorded
-		if be == nil {
+		if be == nil && len(a.BackendConfig) == 0 {
+			// With -backend-config the declared block alone is not the
+			// backend in use; if the config could not be read the backend
+			// is unknown rather than the old declared one.
 			be = declared
 		}
 		if be != nil {
 			r.Backend = be.URL()
 			sig.Backend = r.Backend
+			sig.BackendValues = be.Config
 			if p := be.Config["profile"]; p != "" && env["AWS_PROFILE"] == "" {
 				sig.AWSProfile = p
 			}

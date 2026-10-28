@@ -92,3 +92,25 @@ func TestWrappersConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestBackendValueHints(t *testing.T) {
+	c := load(t, "strict: false\ndefault_tier: standard\n")
+	cases := []struct {
+		values map[string]string
+		want   Tier
+	}{
+		{map[string]string{"bucket": "acme-prod-tfstate"}, Protected},
+		{map[string]string{"bucket": "acme-shared", "workspace_key_prefix": "production"}, Protected},
+		{map[string]string{"bucket": "acme-shared", "dynamodb_table": "locks-prd"}, Protected},
+		{map[string]string{"address": "https://state.example.com/live/app"}, Protected},
+		{map[string]string{"bucket": "acme-products-tfstate", "key": "reproduce/terraform.tfstate"}, Standard},
+		{map[string]string{"bucket": "acme-staging-tfstate", "workspace_key_prefix": "qa"}, Standard},
+		// Keys outside the hint list are ignored.
+		{map[string]string{"bucket": "acme-shared", "region": "prod-region-1"}, Standard},
+	}
+	for _, x := range cases {
+		if r := c.Resolve(Signals{Dir: "/x/y", BackendValues: x.values}); r.Tier != x.want {
+			t.Errorf("%v: got %s, want %s (%v)", x.values, r.Tier, x.want, r.Matched)
+		}
+	}
+}
