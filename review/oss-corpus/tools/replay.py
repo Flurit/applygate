@@ -28,9 +28,11 @@ with open(corpus) as f, open(out, "w") as w:
             w.write(json.dumps(r) + "\n")
             continue
         acts = [a for a in d.get("actions") or [] if a.get("verdict") != "allow"]
+        # Keep results free of the local work directory: paths become repo-relative.
+        strip = lambda t: (t or "").replace(os.path.join(repos, ""), "")
         r.update(label=label, verdict=d["enforced"], actions=[{
             "class": a["class"], "tier": a.get("tier", ""), "env": a.get("environment", ""),
-            "why": a.get("why", ""), "command": a.get("command", ""),
+            "why": strip(a.get("why")), "command": strip(a.get("command")),
             "findings": [f["rule"] for f in a.get("findings") or [] if f.get("severity") != "info"],
         } for a in acts])
         w.write(json.dumps(r) + "\n")
