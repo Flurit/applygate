@@ -7,17 +7,18 @@ only as a string inside a synthetic Claude Code PreToolUse event or as an argume
 to `seatbelt check`/`plan-check`.
 
 **Rule I followed:** I did not tune the analyzer, policy or packs to make anything
-pass. Where I think a verdict is wrong I report it. The only source changes in this
-PR are the CI hardening of Task 5 and one dependency bump it forced (see §6); no
-policy or analyzer logic was changed. Fixes for the findings below are left for
-follow-up PRs after your review.
+pass. Where I think a verdict is wrong I report it. The original review PR changed
+only the CI hardening of Task 5 and one dependency bump it forced (see §6). The
+findings below have since been fixed in follow-up PRs, and the live-agent tests have
+been run — see **[Status of findings](#status-of-findings)** for the current state.
 
 ## Measured vs assumed
 
-Everything in §1–§4 and §6 is **measured** on this machine against the real binary.
-§3 chaos cases and all live-agent behavior are **assumed/unverified** and moved to
-`review/manual_agent_tests.md`. §5 (OpenTofu planfile) is **unverified** (tofu not
-installed).
+Everything in §1–§4 and §6 was **measured** on this machine against the real binary.
+At review time, §3 chaos cases and live-agent behavior were **assumed/unverified**;
+they have since been verified in the live **T3** run (Claude Code 2.1.312, Codex
+0.159.2/0.165.0) — the procedure is in `review/manual_agent_tests.md`. §5 (OpenTofu
+planfile) is still **unverified** (tofu not installed).
 
 ---
 
@@ -282,14 +283,54 @@ availability loss reaching the internal deadline.
 | F10 | info | policy | B13 blocks (not asks) when planfile missing in protected tier | `terraform apply tfplan`, no file |
 | F11 | info | policy | create of unprotected prod stateful resource is allowed | real `aws_db_instance` create |
 
-Nothing in this review changed policy or analyzer logic; F1–F7 and F9–F11 are left for
-follow-up PRs after your review. F8 is fixed here because adding govulncheck to CI
-would otherwise fail the build.
+## Status of findings
+
+All eleven findings have been addressed.
+
+| # | Status | Where |
+|---|---|---|
+| F1 | fixed | analyzer: interpreter body with concatenated binary name now flagged |
+| F2 | fixed | analyzer: `script -c`/`--command`/short-cluster unwrapped |
+| F3 | fixed | analyzer: `chroot` unwrapped |
+| F4 | fixed | analyzer: GNU `parallel` unwrapped |
+| F5 | fixed | robustness: analysis time bounded; pipelines don't reach the deadline |
+| F6 | fixed | robustness: brace expansion gated by a literal-length cap |
+| F7 | fixed | plan gate: 16 MB plan-JSON cap (`plan-too-large`, critical) |
+| F8 | fixed | CI: `x/text` bumped, `govulncheck` added |
+| F9 | fixed | analyzer: `base32`, `gzip`/`gunzip`/`zcat`, `tee` decoders followed → block |
+| F10 | fixed | plan gate: a *missing* plan file is High `plan-missing` (ask), not a Critical block |
+| F11 | fixed | plan gate: creating a stateful resource with a safeguard disabled is High `stateful-unprotected-create` (protected asks) |
+
+### Other changes since the review
+
+These came out of the live T3 run and the follow-up PRs; none changes the verdict
+table:
+
+- **`ask` in `bypassPermissions`.** T3.2 showed Claude Code 2.1.312 honours a hook
+  `ask` in `bypassPermissions` (a prompt is shown), so only `dontAsk` now converts
+  `ask` to block. This is observed, not documented — rerun T3.2 on new Claude Code
+  versions (`docs/limits.md`).
+- **Codex fail-open.** Codex has no `onFailure`; a missing, killed or crashed hook
+  fails open (T3: exit 127 and a no-status-code exit both ran the tool). seatbelt now
+  recovers in-process panics and blocks, so the only remaining fail-open case is the
+  binary not starting. Use Codex's sandbox and approval settings as the backstop.
+- **Internal deadline.** On the 25 s deadline seatbelt cancels in-flight work
+  (including the `show` subprocess) and now fails closed in **every** tier.
+- **Launch directory.** `doctor` warns when a project-scope hook is not in the
+  directory the agent is launched from (project settings are read only from there).
+- **Human-facing text.** An `ask` prompt now shows human-facing wording; the
+  agent-facing "Next step" text is kept for blocks.
+
+### Live T3 summary (Claude Code 2.1.312, Codex 0.159.2/0.165.0)
+
+The per-test procedure and recording template are in `review/manual_agent_tests.md`;
+the full per-test log is to be committed as `review/T3_RESULTS.md`. Key outcomes used
+above: Claude Code shows the `ask` prompt in `bypassPermissions`; Claude Code blocks
+missing-binary / timeout / signal-kill via `onFailure: block`; Codex converts `ask`
+to a block and otherwise fails open on a hook that does not start.
 
 ## Still unverified
 
-- Any live Claude Code or Codex session (output format, `ask` in bypass modes, the
-  chaos cases) — `review/manual_agent_tests.md`.
 - OpenTofu planfile workspace check (tofu not installed).
 - The published GuardFall corpus itself (no public download URL found; the classes
   were reproduced from the Adversa/CSA write-ups).
@@ -299,10 +340,10 @@ would otherwise fail the build.
 ## Open decisions to raise
 
 1. Adopt `harness/pack_v0_original` as the Gate 0 benchmark? It is the only set not
-   authored by the build session; seatbelt passes it in protected (17/17, B13 blocks
-   on a missing planfile).
+   authored by the build session; seatbelt passes it in protected (17/17; with F10,
+   B13 now *asks* on a missing planfile instead of blocking).
 2. Gate 1 observe-mode trial threshold — I agree with ≤5% benign flagged and zero
    critical misses; note F1–F4 are zero-rate on ordinary commands but 100% on their
    specific triggers, so the trial corpus should include wrapper/interpreter forms.
-3. Who runs the live Claude Code + Codex tests (T3.*) and on which version (needs
-   ≥ v2.1.295 for `onFailure`).
+3. ~~Who runs the live Claude Code + Codex tests~~ — done (T3 on Claude Code 2.1.312,
+   Codex 0.159.2/0.165.0).

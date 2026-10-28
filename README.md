@@ -2,7 +2,7 @@
 
 A deterministic, local pre-execution check for coding agents (Claude Code, Codex, and others with pre-tool hooks) that touch Terraform or OpenTofu infrastructure. Before the agent runs a tool call, seatbelt returns **allow**, **ask** or **block**, with a reason and a next step the agent can act on.
 
-> Working name. Status: v1 core, pre-release. Not yet tested with a live agent; see [ACCEPTANCE.md](ACCEPTANCE.md) for what has and has not been verified.
+> Working name. Status: v1 core, pre-release. Live-tested with Claude Code 2.1.312 and Codex 0.159.2/0.165.0 (the T3 suite); see [ACCEPTANCE.md](ACCEPTANCE.md) for what has and has not been verified.
 
 ## Why another guard
 
