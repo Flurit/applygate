@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Flurit/seatbelt/internal/classify"
-	"github.com/Flurit/seatbelt/internal/policy"
+	"github.com/Flurit/applygate/internal/classify"
+	"github.com/Flurit/applygate/internal/policy"
 )
 
 // Output is what the hook process writes and its exit code.
@@ -24,7 +24,7 @@ type Output struct {
 type Adapter interface {
 	Name() string
 	// Parse returns the event, or ok=false when the event is not one the
-	// seatbelt checks (for example another hook event); such events are
+	// applygate checks (for example another hook event); such events are
 	// allowed without output.
 	Parse(raw []byte) (ev policy.Event, ok bool, err error)
 	Render(d policy.Decision) Output

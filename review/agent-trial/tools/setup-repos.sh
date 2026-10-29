@@ -31,11 +31,11 @@ while read -r repo sha _license; do
     [ "$got" = "$sha" ] || { echo "$name: HEAD $got is not the pinned $sha" >&2; exit 1; }
     # Trial config, switched from enforce to observe. Every other line is kept
     # as written for the static corpus trial.
-    sed 's/^mode: enforce\b.*/mode: observe/' "$configs/$name.seatbelt.yaml" > "$dir/.seatbelt.yaml"
-    grep -q '^mode: observe$' "$dir/.seatbelt.yaml" || { echo "$name: config is not in observe mode" >&2; exit 1; }
-    (cd "$dir" && seatbelt hook install --agent claude --scope project >/dev/null \
-               && seatbelt hook install --agent codex --scope project >/dev/null)
+    sed 's/^mode: enforce\b.*/mode: observe/' "$configs/$name.applygate.yaml" > "$dir/.applygate.yaml"
+    grep -q '^mode: observe$' "$dir/.applygate.yaml" || { echo "$name: config is not in observe mode" >&2; exit 1; }
+    (cd "$dir" && applygate hook install --agent claude --scope project >/dev/null \
+               && applygate hook install --agent codex --scope project >/dev/null)
     # Keep the trial's additions out of the agent's diff view.
-    printf '.seatbelt.yaml\n.claude/settings.json\n.codex/hooks.json\n' >> "$dir/.git/info/exclude"
+    printf '.applygate.yaml\n.claude/settings.json\n.codex/hooks.json\n' >> "$dir/.git/info/exclude"
     echo "$name at $sha: observe mode, claude + codex hooks installed"
 done < "$repos"

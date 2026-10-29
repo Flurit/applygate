@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Flurit/seatbelt/internal/hook"
+	"github.com/Flurit/applygate/internal/hook"
 )
 
 // TestCommandLatency measures in-process decision time for command-only

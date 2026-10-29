@@ -12,8 +12,8 @@
 #   summary.md              the review template: counts, every ask and block
 #                           with a false-positive column to fill by hand
 #   decisions.jsonl         the observe-mode decision log (secrets already redacted)
-#   versions.txt            seatbelt, terraform, Claude Code, Codex, machine
-#   doctor-summary.txt      one line per clone from `seatbelt doctor`, plus the
+#   versions.txt            applygate, terraform, Claude Code, Codex, machine
+#   doctor-summary.txt      one line per clone from `applygate doctor`, plus the
 #                           launch-directory check from a subdirectory
 #   plangate/verdicts.md, verdicts.jsonl, meta.txt, decisions.jsonl
 #                           the plan-gate exercise, if it ran
@@ -33,12 +33,12 @@ docker compose -f "$here/compose.yaml" run --rm --no-deps -T trial sh -s <<'INSI
 set -eu
 c=$(mktemp -d)
 mkdir -p "$c/raw/doctor" "$c/raw/diff" "$c/plangate"
-log=/home/trial/.local/state/seatbelt/decisions.jsonl
+log=/home/trial/.local/state/applygate/decisions.jsonl
 if [ -f "$log" ]; then cp "$log" "$c/decisions.jsonl"; else : > "$c/decisions.jsonl"; fi
-seatbelt report --log "$c/decisions.jsonl" > "$c/raw/report.txt" 2>&1 || true
+applygate report --log "$c/decisions.jsonl" > "$c/raw/report.txt" 2>&1 || true
 {
     echo "collected: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "seatbelt: $(seatbelt version)"
+    echo "applygate: $(applygate version)"
     echo "terraform: $(terraform version | head -n 1)"
     echo "claude-code: $(claude --version 2>/dev/null | head -n 1 || echo 'not installed')"
     echo "codex: $(codex --version 2>/dev/null | head -n 1 || echo 'not installed')"
@@ -46,16 +46,16 @@ seatbelt report --log "$c/decisions.jsonl" > "$c/raw/report.txt" 2>&1 || true
     echo "localstack: $(curl -fsS "${LOCALSTACK_ENDPOINT:-http://localstack:4566}/_localstack/health" 2>/dev/null | head -c 200 || echo 'not running at collect time')"
 } > "$c/versions.txt"
 {
-    echo "seatbelt doctor per clone (full output in raw/doctor/): mode, hooks, warnings, exit code"
+    echo "applygate doctor per clone (full output in raw/doctor/): mode, hooks, warnings, exit code"
     echo
     for d in /work/*/; do
         name=$(basename "$d")
         [ -d "$d/.git" ] || continue
         set +e
-        (cd "$d" && seatbelt doctor > "$c/raw/doctor/$name.txt" 2>&1)
+        (cd "$d" && applygate doctor > "$c/raw/doctor/$name.txt" 2>&1)
         rc=$?
         set -e
-        mode=$(sed -n 's/^mode: *//p' "$d/.seatbelt.yaml" | head -n 1)
+        mode=$(sed -n 's/^mode: *//p' "$d/.applygate.yaml" | head -n 1)
         hooks=$(sed -n 's/^ok   hooks installed: //p' "$c/raw/doctor/$name.txt" | head -n 1)
         warns=$(grep -c '^WARN' "$c/raw/doctor/$name.txt" || true)
         echo "$name: mode $mode; hooks ${hooks:-(none)}; $warns warning(s); exit $rc"
@@ -64,7 +64,7 @@ seatbelt report --log "$c/decisions.jsonl" > "$c/raw/report.txt" 2>&1 || true
     echo
     echo "launch-directory check (docs/limits.md): doctor from /work/terraform-aws-vpc/examples/simple"
     set +e
-    (cd /work/terraform-aws-vpc/examples/simple && seatbelt doctor > "$c/raw/doctor/subdirectory-check.txt" 2>&1)
+    (cd /work/terraform-aws-vpc/examples/simple && applygate doctor > "$c/raw/doctor/subdirectory-check.txt" 2>&1)
     rc=$?
     set -e
     echo "  $(grep -c '^WARN' "$c/raw/doctor/subdirectory-check.txt" || true) warning(s); exit $rc (expected: warns that the project hook is in an ancestor, exit 1)"

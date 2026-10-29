@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Replay the scenario pack against a guard's agent hook.
 
-Throwaway v0-style runner, kept for comparing seatbelt with other guards.
+Throwaway v0-style runner, kept for comparing applygate with other guards.
 It builds synthetic hook events and pipes them to the guard's hook command.
 It NEVER executes the commands inside the scenarios, never uses a shell, and
 runs the guard with an empty PATH, a fake HOME and no cloud credentials.
 
 Usage:
-  python3 -I harness/run.py --guard bin/seatbelt              # seatbelt (default args)
+  python3 -I harness/run.py --guard bin/applygate              # applygate (default args)
   python3 -I harness/run.py --guard-cmd "/path/to/other-guard --hook" --name other
-  python3 -I harness/run.py --guard bin/seatbelt --json results.json --md results.md
-  python3 -I harness/run.py --guard bin/seatbelt --format codex --probes --md results.md
+  python3 -I harness/run.py --guard bin/applygate --json results.json --md results.md
+  python3 -I harness/run.py --guard bin/applygate --format codex --probes --md results.md
 
 Exit code is 0 only when every counted scenario matched its expectation
-(and, with --strict-probes, no fail-open probe would proceed). For seatbelt
+(and, with --strict-probes, no fail-open probe would proceed). For applygate
 (--guard) a scenario matches only with the expected verdict *and* every
-must_mention string in the message; seatbelt failing closed (exit 2 on an
+must_mention string in the message; applygate failing closed (exit 2 on an
 internal or config error) is reported as "fail-closed" and never matches.
 """
 
@@ -199,15 +199,15 @@ def guard_version(a, env, tmp):
 FAIL_CLOSED = "fail-closed"
 
 
-def judge(s, verdict, msg, code, seatbelt):
+def judge(s, verdict, msg, code, applygate):
     """Final verdict and pass/fail for one scenario.
 
-    For seatbelt itself (--guard), exit 2 is never a policy decision: its
-    adapters return decisions as JSON and exit 2 only when seatbelt fails
+    For applygate itself (--guard), exit 2 is never a policy decision: its
+    adapters return decisions as JSON and exit 2 only when applygate fails
     closed on an internal or config error (for example a fixture config an
     older release does not understand). Such a block proves nothing about
     the scenario, so it is the error verdict "fail-closed" and never a pass.
-    seatbelt runs also require every must_mention string in the message, so
+    applygate runs also require every must_mention string in the message, so
     a right verdict for the wrong reason fails. Other guards (--guard-cmd)
     are judged on the verdict alone: their exit 2 is a real block and their
     messages differ.
@@ -215,11 +215,11 @@ def judge(s, verdict, msg, code, seatbelt):
     """
     if verdict == "timeout":
         verdict = "error"
-    if seatbelt and code == 2:
+    if applygate and code == 2:
         verdict = FAIL_CLOSED
     if verdict not in s["expect"]:
         return verdict, False, []
-    missing = [m for m in (s.get("must_mention") or []) if m not in (msg or "")] if seatbelt else []
+    missing = [m for m in (s.get("must_mention") or []) if m not in (msg or "")] if applygate else []
     return verdict, not missing, missing
 
 
@@ -375,7 +375,7 @@ def write_markdown(path, a, summary, results):
         f.write("## Scenarios\n\n")
         f.write(f"- dangerous caught (block or ask): {s['dangerous_caught']}/{s['dangerous']}\n- benign flagged: {s['benign_flagged']}/{s['benign']}\n")
         f.write(f"- matched exact expectation: {s['exact']}/{s['total']}\n- errors: {s['errors']}"
-                f" (of which seatbelt failed closed: {s['fail_closed']})\n")
+                f" (of which applygate failed closed: {s['fail_closed']})\n")
         f.write(f"- right verdict, missing expected reason (must_mention): {s['reason_mismatch']}\n")
         if s["skipped"]:
             f.write(f"- skipped (not expressible in {s['agent_format']} format): {s['skipped']}\n")
@@ -393,9 +393,9 @@ def write_markdown(path, a, summary, results):
 def parse_args(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--guard", help="path to the seatbelt binary")
+    g.add_argument("--guard", help="path to the applygate binary")
     g.add_argument("--guard-cmd", help="any guard's hook command (string, split with shlex)")
-    ap.add_argument("--name", default="seatbelt")
+    ap.add_argument("--name", default="applygate")
     ap.add_argument("--json")
     ap.add_argument("--md")
     ap.add_argument("--timeout", type=float, default=30)
@@ -415,7 +415,7 @@ def main():
     a = parse_args()
     with open(os.path.join(PACK, "scenarios.json")) as f:
         pack = json.load(f)
-    tmp = tempfile.mkdtemp(prefix="seatbelt-replay-")
+    tmp = tempfile.mkdtemp(prefix="applygate-replay-")
     try:
         repo, plans, home = materialize(tmp)
         env = sandbox_env(tmp, home)

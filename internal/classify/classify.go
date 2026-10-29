@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/Flurit/seatbelt/internal/shell"
+	"github.com/Flurit/applygate/internal/shell"
 )
 
 // Class is a command class from the v1 verdict table.
@@ -54,7 +54,7 @@ type Action struct {
 
 // Options configure classification.
 type Options struct {
-	// ProtectedPaths are glob patterns for guard files (hook config, seatbelt
+	// ProtectedPaths are glob patterns for guard files (hook config, applygate
 	// config and log). Matching is on the cleaned absolute path.
 	ProtectedPaths []string
 	Home           string
@@ -84,7 +84,7 @@ func Invocations(res *shell.Result, opt Options) []Action {
 
 func isGuardMention(m string) bool {
 	return strings.Contains(m, ".claude/settings") || strings.Contains(m, "managed-settings") ||
-		strings.Contains(m, ".codex/") || strings.Contains(m, ".seatbelt.")
+		strings.Contains(m, ".codex/") || strings.Contains(m, ".applygate.") || strings.Contains(m, ".seatbelt.")
 }
 
 func words(inv shell.Invocation) []string {
@@ -161,11 +161,11 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 			out = append(out, a)
 		}
 		return out
-	case "seatbelt":
+	case "applygate":
 		if len(args) >= 2 && args[0].Text == "hook" && (args[1].Text == "remove" || args[1].Text == "uninstall") ||
 			len(args) >= 1 && (args[0].Text == "init" || args[0].Text == "disable") {
 			a := base
-			a.Class, a.Engine, a.Why = Tampering, "seatbelt", "changes seatbelt's own installation"
+			a.Class, a.Engine, a.Why = Tampering, "applygate", "changes applygate's own installation"
 			out = append(out, a)
 		}
 		return out

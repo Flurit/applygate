@@ -1,5 +1,7 @@
 # v1 acceptance report
 
+> The project was renamed from seatbelt to applygate on 2026-10-29; the records below predate the rename and keep the old name where they describe those builds.
+
 > "The spec" in this record is the project's internal planning document; its public summary is [docs/roadmap.md](../roadmap.md).
 
 Date: 2026-10-28. Build: commit on `main` at the time of writing. Machine: Linux x86-64, 8 cores, Go 1.26.7, Terraform 1.16.1 (used only to generate one fixture planfile; see below).

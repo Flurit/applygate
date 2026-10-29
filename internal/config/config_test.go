@@ -253,3 +253,39 @@ func TestUnknownDirMerge(t *testing.T) {
 		t.Fatalf("bad value should be rejected: %v", err)
 	}
 }
+
+// The project was renamed from seatbelt; a repository that still has
+// .seatbelt.yaml is read with a deprecation note, and .applygate.yaml wins
+// when both exist.
+func TestLegacyConfigFileName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, LegacyFileName), []byte("mode: observe\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load("", filepath.Join(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != "observe" || len(cfg.Sources) != 1 || filepath.Base(cfg.Sources[0]) != LegacyFileName {
+		t.Fatalf("legacy file not loaded: mode %s sources %v", cfg.Mode, cfg.Sources)
+	}
+	if len(cfg.Deprecations) != 1 || !strings.Contains(cfg.Deprecations[0], FileName) {
+		t.Fatalf("want one deprecation naming %s, got %v", FileName, cfg.Deprecations)
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte("mode: enforce\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load("", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Mode != "enforce" || len(cfg.Deprecations) != 0 || filepath.Base(cfg.Sources[0]) != FileName {
+		t.Fatalf("new file should win silently: mode %s sources %v deprecations %v", cfg.Mode, cfg.Sources, cfg.Deprecations)
+	}
+	for _, p := range DefaultProtectedPaths {
+		if p == "**/.seatbelt.yaml" {
+			return
+		}
+	}
+	t.Fatal("legacy config name is not in DefaultProtectedPaths")
+}

@@ -1,10 +1,10 @@
 {
-  "name": "seatbelt",
+  "name": "applygate",
   "owner": { "name": "Flurit" },
-  "description": "seatbelt: a deterministic pre-execution check for agent actions on Terraform and OpenTofu",
+  "description": "applygate: a deterministic pre-execution check for agent actions on Terraform and OpenTofu",
   "plugins": [
     {
-      "name": "seatbelt",
+      "name": "applygate",
       "source": "./plugin/claude-code",
       "description": "PreToolUse hook: allow / ask / block for Terraform, OpenTofu and cloud CLI actions"
     }

@@ -126,12 +126,12 @@ var (
 	// escaped characters, chr/fromhex, reversed slices, character maps.
 	obfuscated = regexp.MustCompile(`\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\U[0-9a-fA-F]{8}|\\N\{|\\[0-7]{3}|\bchr\s*\(|\bfromhex\s*\(|\[::-1\]|\bmaketrans\s*\(|\.translate\s*\(`)
 
-	// guardText matches guard, credential and seatbelt files wherever they
+	// guardText matches guard, credential and applygate files wherever they
 	// appear in a body (a body that names them is not a plain file edit).
 	// The directory names need a path boundary, so provider.aws and
-	// module.aws in HCL text are not credential files and seatbelt matches
+	// module.aws in HCL text are not credential files and applygate matches
 	// only as a path segment or the config file.
-	guardText = regexp.MustCompile(`(?i)\.seatbelt\.ya?ml|(?:^|` + pathEdge + `)seatbelt/|\.claude/settings[\w.]*|managed-settings[\w.]*|\.codex/(?:hooks\.json|config\.toml)|\.cursor/hooks\.json|(?:^|` + pathEdge + `|~)\.aws/(?:credentials|config)\b|~/\.aws\b|\.terraform\.d/credentials\.tfrc\.json|\.terraformrc\b|decisions\.jsonl|(?:^|` + pathEdge + `)\.(?:claude|codex|cursor|aws|terraform\.d)(?:$|` + pathEdge + `)|\.git/hooks`)
+	guardText = regexp.MustCompile(`(?i)\.applygate\.ya?ml|\.seatbelt\.ya?ml|(?:^|` + pathEdge + `)(?:applygate|seatbelt)/|\.claude/settings[\w.]*|managed-settings[\w.]*|\.codex/(?:hooks\.json|config\.toml)|\.cursor/hooks\.json|(?:^|` + pathEdge + `|~)\.aws/(?:credentials|config)\b|~/\.aws\b|\.terraform\.d/credentials\.tfrc\.json|\.terraformrc\b|decisions\.jsonl|(?:^|` + pathEdge + `)\.(?:claude|codex|cursor|aws|terraform\.d)(?:$|` + pathEdge + `)|\.git/hooks`)
 	// stateTarget matches state, lock and provider cache files: editing
 	// those is state surgery, not a file edit.
 	stateTarget = regexp.MustCompile(`\.tfstate|\.terraform/|\.terraform\.lock\.hcl`)

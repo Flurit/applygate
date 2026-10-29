@@ -34,13 +34,13 @@ jobs:
       - name: test
         run: go test -race -count=1 ./...
       - name: build
-        run: go build -trimpath -o bin/seatbelt ./cmd/seatbelt
+        run: go build -trimpath -o bin/applygate ./cmd/applygate
       - name: selftest (scenario pack through the binary)
-        run: bin/seatbelt selftest
+        run: bin/applygate selftest
       - name: replay runner unit tests
         run: python3 -I harness/test_run.py
       - name: black-box replay (never executes scenario commands)
-        run: python3 -I harness/run.py --guard bin/seatbelt --md replay.md && cat replay.md >> "$GITHUB_STEP_SUMMARY"
+        run: python3 -I harness/run.py --guard bin/applygate --md replay.md && cat replay.md >> "$GITHUB_STEP_SUMMARY"
       - name: fuzz shell analyzer (short)
         if: matrix.os == 'ubuntu-latest'
         run: go test -run XXX -fuzz FuzzAnalyze -fuzztime 30s ./internal/shell

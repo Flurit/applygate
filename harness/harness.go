@@ -1,5 +1,5 @@
 // Package harness holds the scenario pack and replays it through the
-// seatbelt's hook entry point. Replay builds synthetic hook events and never
+// applygate's hook entry point. Replay builds synthetic hook events and never
 // executes the commands in them.
 package harness
 
@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/Flurit/seatbelt/internal/hook"
-	"github.com/Flurit/seatbelt/internal/policy"
+	"github.com/Flurit/applygate/internal/hook"
+	"github.com/Flurit/applygate/internal/policy"
 )
 
 //go:embed all:pack

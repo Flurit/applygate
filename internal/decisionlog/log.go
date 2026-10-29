@@ -1,5 +1,5 @@
 // Package decisionlog appends decisions to a local JSON Lines file, with
-// secrets redacted, and summarizes it for "seatbelt report".
+// secrets redacted, and summarizes it for "applygate report".
 package decisionlog
 
 import (
@@ -14,13 +14,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Flurit/seatbelt/internal/policy"
+	"github.com/Flurit/applygate/internal/policy"
 )
 
 // Entry is one logged decision.
 type Entry struct {
 	Time       time.Time             `json:"time"`
-	Version    string                `json:"seatbelt_version"`
+	Version    string                `json:"applygate_version"`
 	Agent      string                `json:"agent"`
 	Session    string                `json:"session,omitempty"`
 	Tool       string                `json:"tool"`

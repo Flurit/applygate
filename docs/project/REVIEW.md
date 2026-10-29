@@ -1,5 +1,7 @@
 # Independent verification of seatbelt v1
 
+> The project was renamed from seatbelt to applygate on 2026-10-29; the records below predate the rename and keep the old name where they describe those builds.
+
 > The raw outputs this review cites (`review/results/*`, `review/results/fuzz.log`, `harness/pathological.py`) were removed from the tree to keep the repository small; they are in git history at commit `149ab67`, for example `git show 149ab67:review/results/adv_protected.md`.
 
 > "The spec" in this record is the project's internal planning document; its public summary is [docs/roadmap.md](../roadmap.md).

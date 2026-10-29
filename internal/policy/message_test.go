@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Flurit/seatbelt/internal/classify"
+	"github.com/Flurit/applygate/internal/classify"
 )
 
 func TestMessageAudienceSplit(t *testing.T) {

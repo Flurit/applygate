@@ -1,5 +1,5 @@
 {
-  "description": "seatbelt: allow / ask / block for Terraform, OpenTofu and cloud CLI actions. Needs `seatbelt` on PATH (install.sh or go install) and a .seatbelt.yaml in the repository (seatbelt init --no-hooks).",
+  "description": "applygate: allow / ask / block for Terraform, OpenTofu and cloud CLI actions. Needs `applygate` on PATH (install.sh or go install) and a .applygate.yaml in the repository (applygate init --no-hooks).",
   "hooks": {
     "PreToolUse": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "seatbelt hook claude",
+            "command": "applygate hook claude",
             "timeout": 30,
             "onFailure": "block"
           }

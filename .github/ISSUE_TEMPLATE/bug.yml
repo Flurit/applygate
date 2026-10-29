@@ -1,10 +1,10 @@
 name: Bug
-description: seatbelt crashes, errors, or behaves unlike its documentation (not a bypass; see SECURITY.md for those)
+description: applygate crashes, errors, or behaves unlike its documentation (not a bypass; see SECURITY.md for those)
 labels: [bug]
 body:
   - type: input
     id: version
-    attributes: {label: seatbelt version, description: Output of `seatbelt version`}
+    attributes: {label: applygate version, description: Output of `applygate version`}
     validations: {required: true}
   - type: input
     id: env
@@ -22,5 +22,5 @@ body:
   - type: textarea
     id: doctor
     attributes:
-      label: seatbelt doctor output
+      label: applygate doctor output
       render: text

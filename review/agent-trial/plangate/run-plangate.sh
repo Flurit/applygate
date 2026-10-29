@@ -1,5 +1,5 @@
 #!/bin/sh
-# Plan-gate exercise: saved plans against LocalStack through `seatbelt
+# Plan-gate exercise: saved plans against LocalStack through `applygate
 # plan-check` and through the real hook path for `terraform apply <planfile>`.
 # Needs no agent. See review/agent-trial/README.md, "Plan-gate exercise".
 #
@@ -19,7 +19,7 @@
 #
 # The hook path is exercised by piping a synthetic Claude Code / Codex
 # PreToolUse event for `terraform apply plans/<name>.tfplan` into
-# `seatbelt hook claude|codex`, exactly as the agent would; seatbelt then runs
+# `applygate hook claude|codex`, exactly as the agent would; applygate then runs
 # `terraform show -json` on the planfile itself. The decision log for the
 # exercise is isolated under OUTDIR/state via XDG_STATE_HOME.
 #
@@ -48,13 +48,13 @@ esac
 grep -q 'access_key = "test"' "$here/main.tf" || die "main.tf no longer pins the dummy access key"
 grep -q 'secret_key = "test"' "$here/main.tf" || die "main.tf no longer pins the dummy secret key"
 grep -q 'endpoints {' "$here/main.tf" || die "main.tf no longer has an endpoints block"
-for t in seatbelt terraform jq curl; do command -v "$t" >/dev/null 2>&1 || die "$t is required"; done
+for t in applygate terraform jq curl; do command -v "$t" >/dev/null 2>&1 || die "$t is required"; done
 curl -fsS "$ep/_localstack/health" >/dev/null 2>&1 || die "LocalStack is not reachable at $ep (docker compose up -d localstack)"
 
 raw="$out/raw"
 mkdir -p "$raw/plans" "$raw/hook" "$out/state" "$here/plans"
 export XDG_STATE_HOME="$out/state"
-log="$out/state/seatbelt/decisions.jsonl"
+log="$out/state/applygate/decisions.jsonl"
 rm -f "$log"
 export TF_VAR_endpoint="$ep"
 export TF_IN_AUTOMATION=1 TF_INPUT=0 CHECKPOINT_DISABLE=1
@@ -62,11 +62,11 @@ unset TF_WORKSPACE
 
 {
     echo "date: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "seatbelt: $(seatbelt version)"
+    echo "applygate: $(applygate version)"
     echo "terraform: $(terraform version | head -n 1)"
     echo "localstack: $(curl -fsS "$ep/_localstack/health" | jq -c '{version, s3: .services.s3, ec2: .services.ec2, dynamodb: .services.dynamodb}')"
     echo "machine: $(uname -srm)"
-    echo "config: $here/.seatbelt.yaml (enforce, strict; prod protected, staging standard)"
+    echo "config: $here/.applygate.yaml (enforce, strict; prod protected, staging standard)"
 } > "$out/meta.txt"
 cat "$out/meta.txt"
 
@@ -93,7 +93,7 @@ hook() {
     ev=$(jq -cn --arg cwd "$here" --arg cmd "$cmd" \
         '{session_id:"plangate-exercise", hook_event_name:"PreToolUse", tool_name:"Bash", permission_mode:"default", cwd:$cwd, tool_input:{command:$cmd}}')
     set +e
-    printf '%s' "$ev" | seatbelt hook "$agent" > "$raw/hook/$label.$agent.stdout" 2> "$raw/hook/$label.$agent.stderr"
+    printf '%s' "$ev" | applygate hook "$agent" > "$raw/hook/$label.$agent.stdout" 2> "$raw/hook/$label.$agent.stderr"
     rc=$?
     set -e
     if [ -s "$raw/hook/$label.$agent.stdout" ]; then
@@ -111,7 +111,7 @@ record() {
     label="$ws-$name"
     terraform show -json -no-color "$plan" > "$raw/plans/$label.json"
     set +e
-    pc=$(seatbelt plan-check --tier "$tier" --cwd "$here" "$raw/plans/$label.json" 2>&1)
+    pc=$(applygate plan-check --tier "$tier" --cwd "$here" "$raw/plans/$label.json" 2>&1)
     pcrc=$?
     set -e
     printf '%s\n' "$pc" > "$raw/plans/$label.plan-check.txt"

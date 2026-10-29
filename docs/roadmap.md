@@ -1,6 +1,6 @@
 # Roadmap
 
-seatbelt is a deterministic, local check that runs before a coding agent's infrastructure command executes and returns allow, ask or block. It is not a sandbox and not an AI reviewer. This page is the public summary of the project's planning document; "the spec" in older project notes refers to that document.
+applygate is a deterministic, local check that runs before a coding agent's infrastructure command executes and returns allow, ask or block. It is not a sandbox and not an AI reviewer. This page is the public summary of the project's planning document; "the spec" in older project notes refers to that document.
 
 ## Principles
 
@@ -12,7 +12,7 @@ seatbelt is a deterministic, local check that runs before a coding agent's infra
 - Stay local: no telemetry, no network calls by default, secrets redacted from logs.
 - State limits plainly. Never claim protection the design cannot give.
 
-**Not goals:** sandboxing, credential brokering or network isolation (pair seatbelt with plan-only credentials and an isolated runner); general MCP governance; drift detection, cost control or code review.
+**Not goals:** sandboxing, credential brokering or network isolation (pair applygate with plan-only credentials and an isolated runner); general MCP governance; drift detection, cost control or code review.
 
 ## Stages
 

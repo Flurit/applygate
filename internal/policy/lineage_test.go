@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/Flurit/seatbelt/internal/config"
+	"github.com/Flurit/applygate/internal/config"
 )
 
 // TestLineageCheckWired checks that the opt-in state pull runs when a local

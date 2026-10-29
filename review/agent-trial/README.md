@@ -40,14 +40,14 @@ These are hard rules for anyone running or changing this harness.
    lookup. Nothing from `~/.aws` is mounted. If you need a credential for
    something, this is the wrong harness.
 3. **The scenario packs under `harness/` are corpora of destructive
-   commands.** They are replayed as synthetic hook events only (`seatbelt
+   commands.** They are replayed as synthetic hook events only (`applygate
    selftest`, `harness/run.py`) and must never be executed. Nothing here
    reads them.
 4. Work lands through a pull request to `main`; nothing is pushed to `main`
    directly.
 
 The agents themselves run with their default permission settings inside the
-container, as a user would run them. Observe mode means seatbelt logs every
+container, as a user would run them. Observe mode means applygate logs every
 decision and enforces none, so the agent's own prompts are the only brake;
 that is why nothing in the container can reach a real cloud.
 
@@ -55,13 +55,13 @@ that is why nothing in the container can reach a real cloud.
 
 | File | Purpose |
 |---|---|
-| `Dockerfile` | The trial image: seatbelt v0.1.3 installed by the repository's `install.sh` with `SEATBELT_VERIFY_SIGNATURE=require` (cosign keyless signature on `checksums.txt`, then sha256); Terraform 1.16.1 and cosign checksummed against their published sums; Claude Code and Codex from npm, pinned; the five repositories at the commits in `review/oss-corpus/repos.txt`, each with its trial config as `.seatbelt.yaml` switched to `mode: observe` and both hooks installed by `seatbelt hook install`. |
+| `Dockerfile` | The trial image: applygate v0.1.3 installed by the repository's `install.sh` with `APPLYGATE_VERIFY_SIGNATURE=require` (cosign keyless signature on `checksums.txt`, then sha256); Terraform 1.16.1 and cosign checksummed against their published sums; Claude Code and Codex from npm, pinned; the five repositories at the commits in `review/oss-corpus/repos.txt`, each with its trial config as `.applygate.yaml` switched to `mode: observe` and both hooks installed by `applygate hook install`. |
 | `compose.yaml` | The trial container plus a LocalStack 4.14.0 sidecar (not published on the host). Named volumes keep the agents' sign-in state, the decision log, the provider cache and the clones between runs. |
 | `tools/reset-repos.sh` | Resets the five clones to their pinned commits between agents (keeps the harness files and the log). |
 | `tools/setup-repos.sh` | Runs at build time: clones at the pinned commits with git hooks disabled, verifies the commit, writes the observe-mode config, installs the hooks. Refuses to run with any AWS credential in the environment. |
 | `tasks.md` | The fixed task list per repository: a provider bump, a new module, a rename, "clean up the dev environment", a saved-plan apply, and two or three that should legitimately ask or block in a protected tier. |
-| `plangate/` | The plan-gate exercise: a small stack against LocalStack (S3 bucket with versioning, a security group, a DynamoDB table) and `run-plangate.sh`, which produces a create plan and then flipped delete, replace, protection-removal and exposure plans, and runs each through `seatbelt plan-check` and through the hook path for `terraform apply <planfile>`. Needs no agent. |
-| `collect.sh` | Gathers the decision log, `seatbelt report`, `seatbelt doctor` per clone, the agents' diffs, versions and the plan-gate output into `results/<date>/`, and writes `summary.md`, the hand-review template. |
+| `plangate/` | The plan-gate exercise: a small stack against LocalStack (S3 bucket with versioning, a security group, a DynamoDB table) and `run-plangate.sh`, which produces a create plan and then flipped delete, replace, protection-removal and exposure plans, and runs each through `applygate plan-check` and through the hook path for `terraform apply <planfile>`. Needs no agent. |
+| `collect.sh` | Gathers the decision log, `applygate report`, `applygate doctor` per clone, the agents' diffs, versions and the plan-gate output into `results/<date>/`, and writes `summary.md`, the hand-review template. |
 | `tools/summarize.py` | Builds `summary.md` from a collected directory. |
 | `results/<date>/` | One directory per collected run: the evidence only; `raw/` under it is gitignored. |
 
@@ -81,14 +81,14 @@ docker compose -f review/agent-trial/compose.yaml up -d localstack
 ```
 
 The build is the install check: `install.sh` must verify the release
-signature (the build fails otherwise), `seatbelt selftest` must pass on the
+signature (the build fails otherwise), `applygate selftest` must pass on the
 installed binary, and `setup-repos.sh` must reach the pinned commit of every
 repository.
 
 ### 2. Confirm install and doctor in each clone
 
 ```bash
-docker compose -f review/agent-trial/compose.yaml run --rm trial sh -c 'for d in /work/*/; do [ -d "$d/.git" ] || continue; echo "== $d"; (cd "$d" && grep ^mode: .seatbelt.yaml && seatbelt doctor); done'
+docker compose -f review/agent-trial/compose.yaml run --rm trial sh -c 'for d in /work/*/; do [ -d "$d/.git" ] || continue; echo "== $d"; (cd "$d" && grep ^mode: .applygate.yaml && applygate doctor); done'
 ```
 
 Each clone should show `mode: observe`, hooks installed for claude and codex
@@ -96,7 +96,7 @@ at project scope, and a passing selftest. The launch-directory caveat from
 [docs/limits.md](../../docs/limits.md) applies: Claude Code and Codex read
 project settings only from the directory they are launched in, so **launch
 the agent from the clone's root** (`/work/<repo>`), never from a
-subdirectory. `seatbelt doctor` run from a subdirectory warns about this;
+subdirectory. `applygate doctor` run from a subdirectory warns about this;
 run from the root it is clean.
 
 ### 3. Run the plan-gate exercise (no agent)
@@ -110,7 +110,7 @@ plans and applies a create to LocalStack in the `prod` (protected) and
 `staging` (standard) workspaces, then plans a no-op, a forced bucket replace,
 versioning suspended, `force_destroy` on, port 22 open to the world, and a
 full destroy, and sends each through `plan-check` and through
-`seatbelt hook claude` / `seatbelt hook codex` as a `terraform apply
+`applygate hook claude` / `applygate hook codex` as a `terraform apply
 <planfile>` event. It also sends a plan made in the other workspace
 (workspace mismatch), a missing planfile and a garbage planfile. Finally it
 applies the destroy plans to LocalStack so the sidecar is clean. The verdict
@@ -143,7 +143,7 @@ there, give it the prompt word for word, let it work, and note the task id
 and start time. For Codex, run `/hooks` once per clone to trust the hook
 (Codex refuses untrusted hooks; `docs/limits.md`). Do not steer beyond the
 prompt. Observe mode logs every decision to
-`~/.local/state/seatbelt/decisions.jsonl` in the container and enforces
+`~/.local/state/applygate/decisions.jsonl` in the container and enforces
 none.
 
 ### 5. Collect and review
@@ -174,7 +174,7 @@ review/agent-trial/tools/reset-repos.sh
 ```
 
 It resets every clone to the commit in `review/oss-corpus/repos.txt` and
-removes untracked files, keeping `.seatbelt.yaml`, the hook configs, the
+removes untracked files, keeping `.applygate.yaml`, the hook configs, the
 provider caches and the decision log. It does not clean LocalStack or state
 files an apply left behind; destroy those from inside the container if it
 matters.
@@ -190,12 +190,12 @@ decision log and the agents' edits. Collect first.
 Only evidence is committed. `collect.sh` writes `results/<date>/` with:
 
 - `summary.md`: the record of one run, in the style of
-  `review/T3_RESULTS.md`: seatbelt version, agent names and versions, date,
+  `review/T3_RESULTS.md`: applygate version, agent names and versions, date,
   machine, counts of allow/ask/block per repository, every ask and block
   listed for hand review with a false-positive verdict column, the task log,
-  `seatbelt report`, the doctor summary and the plan-gate verdicts.
+  `applygate report`, the doctor summary and the plan-gate verdicts.
 - `decisions.jsonl`: the observe-mode decision log (secrets already
-  redacted by seatbelt).
+  redacted by applygate).
 - `versions.txt` and `doctor-summary.txt` (one line per clone, plus the
   launch-directory check from a subdirectory).
 - `plangate/verdicts.md`, `verdicts.jsonl`, `meta.txt` and
@@ -225,7 +225,7 @@ requires interactive agent sign-in".
 ## What this trial does not show
 
 - How a team's own commands and habits interact with the policy. The task
-  list is fixed and written by the seatbelt authors.
+  list is fixed and written by the applygate authors.
 - Enforcement friction: observe mode never blocks, so the agents never had to
   recover from a block. T3 (`review/T3_RESULTS.md`) covers enforcement live.
 - Anything behind a real backend: the clones' Terraform Cloud and S3 backends
