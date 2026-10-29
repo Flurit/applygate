@@ -172,7 +172,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 	ev := policy.Event{Agent: "cli", Tool: "Bash", Kind: policy.KindShell, Command: fs.Arg(0), Cwd: dir, CanAsk: true}
 	deps := hook.Deps(context.Background(), cfg, opt)
 	if explain {
-		res := shell.Analyze(ev.Command, shell.Options{Dir: dir, Env: opt.Env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers()})
+		res := shell.Analyze(ev.Command, shell.Options{Dir: dir, Env: opt.Env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ProtectedPaths: cfg.GuardPaths(), ProtectedPath: func(p string) bool { return classify.IsProtectedPath(p, cfg.GuardPaths()) }})
 		fmt.Fprintf(stdout, "config: %s\n", orNone(strings.Join(cfg.Sources, ", ")))
 		fmt.Fprintf(stdout, "mode: %s, strict: %v\n\n1. parse: %d invocation(s), %d unresolved construct(s)\n", cfg.Mode, cfg.IsStrict(), len(res.Invocations), len(res.Problems))
 		for _, inv := range res.Invocations {
@@ -192,6 +192,9 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 		}
 		for _, p := range res.Problems {
 			fmt.Fprintf(stdout, "   - UNRESOLVED: %s: %s\n", p.Reason, p.Text)
+		}
+		for _, n := range res.Notes {
+			fmt.Fprintf(stdout, "   - NOTE: %s\n", n)
 		}
 		acts := classify.Invocations(res, classify.Options{ProtectedPaths: cfg.GuardPaths(), Home: opt.Env["HOME"]})
 		fmt.Fprintf(stdout, "\n2. classify: %d policy-relevant action(s)\n", len(acts))

@@ -173,10 +173,12 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 	}
 	copt := classify.Options{ProtectedPaths: cfg.GuardPaths(), Home: deps.Env["HOME"]}
 	var actions []classify.Action
+	var notes []string
 	switch ev.Kind {
 	case KindShell:
-		res := shell.Analyze(ev.Command, shell.Options{Dir: ev.Cwd, Env: deps.Env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ReadFile: deps.ReadFile})
+		res := shell.Analyze(ev.Command, shell.Options{Dir: ev.Cwd, Env: deps.Env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ReadFile: deps.ReadFile, ProtectedPaths: copt.ProtectedPaths, ProtectedPath: func(p string) bool { return classify.IsProtectedPath(p, copt.ProtectedPaths) }})
 		actions = classify.Invocations(res, copt)
+		notes = res.Notes
 	case KindWrite:
 		for _, p := range ev.Paths {
 			actions = append(actions, classify.FileWrite(ev.Tool, p, ev.Cwd, copt)...)
@@ -187,7 +189,7 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 		}
 	}
 
-	d := Decision{Verdict: Allow, Mode: cfg.Mode}
+	d := Decision{Verdict: Allow, Mode: cfg.Mode, Notes: notes}
 	selected := map[string]string{}     // dir -> workspace selected earlier in this command
 	backendCfg := map[string][]string{} // dir -> -backend-config of an earlier init in this command
 	for _, a := range actions {

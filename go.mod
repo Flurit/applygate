@@ -11,6 +11,6 @@ require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/zclconf/go-cty v1.16.4 // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/text v0.39.0
 	gopkg.in/yaml.v3 v3.0.1
 )
