@@ -1,0 +1,3 @@
+# Raw per-case output from collect.sh is never committed; only the
+# summary, verdict tables, decision logs and the doctor summary are.
+*/raw/

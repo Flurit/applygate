@@ -1,0 +1,10 @@
+# Build context for review/agent-trial/Dockerfile is the repository root.
+.git
+.claude/worktrees
+bin
+dist
+review/agent-trial/results
+review/agent-trial/plangate/out
+review/agent-trial/plangate/plans
+review/agent-trial/plangate/.terraform
+review/agent-trial/plangate/*.tfstate*
