@@ -145,7 +145,8 @@ func (Claude) Fail(block bool, msg string) Output {
 // but the hook input is built from the call as {"command": cmd} only
 // (core/src/tools/handlers/unified_exec/exec_command.rs, pre_tool_use_payload)
 // and the top-level cwd is the turn's directory (core/src/hook_runtime.rs,
-// tool_hook_cwd), so the workdir does not reach the hook. The adapter reads
+// tool_hook_cwd), so the workdir does not reach the hook; a captured input is
+// in review/agent-trial/results/2026-10-29-codex-hook-payload. The adapter reads
 // tool_input.workdir, working_directory or cwd when a Codex version sends one
 // and otherwise falls back to the top-level cwd; see docs/limits.md.
 // apply_patch paths are relative to the turn's cwd in Codex as well

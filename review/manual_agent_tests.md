@@ -122,7 +122,8 @@ subdirectory resolve to different tiers, for example a config with
 Expected: Claude Code passes (its hook `cwd` follows `cd`). Codex 0.165.0
 **fails**: its hook input carries no workdir and its `cwd` is the session
 root, so the entries show the root and its tier (`docs/limits.md`, "Codex
-working directory"). Rerun on each new Codex version; once the hook input
+working directory"; captured input in
+`review/agent-trial/results/2026-10-29-codex-hook-payload/`). Rerun on each new Codex version; once the hook input
 carries `tool_input.workdir`, `working_directory` or `cwd`, seatbelt uses it
 and this test should pass without changes. **Record the actual `dir`.**
 
