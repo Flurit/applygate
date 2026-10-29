@@ -338,9 +338,9 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		class = planGate(&r, a, cfg, deps, recorded, declared)
 	}
 	r.Class = class
-	v := Table[class][res.Tier]
+	v := Table[class][r.Tier]
 	for _, f := range r.Findings {
-		v = Max(v, FindingVerdict(f.Severity, res.Tier))
+		v = Max(v, FindingVerdict(f.Severity, r.Tier))
 	}
 	r.Verdict = v
 	if v != Allow {
