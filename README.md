@@ -72,6 +72,18 @@ After a few days in observe mode, run `applygate report` to see what would have 
 
 **Codex and the command directory.** Codex 0.165.0 does not tell the hook which directory a command runs in, only the session root. applygate then judges the command at the most protected tier it could be in under that root (so a destroy under a repository with a protected directory is blocked wherever Codex ran it), a `cd` in the command establishes the directory, and a relative planfile is looked up under the root. Details and the opt-out (`unknown_dir`) are in [docs/limits.md](docs/limits.md) and [docs/config.md](docs/config.md).
 
+
+### In CI and Terragrunt
+
+The same plan gate runs in a pipeline between `plan -out` and `apply`, as a GitHub Action or a shell step, and as a Terragrunt `before_hook`; exit codes 0/4/3 are allow/ask/block. See [docs/ci.md](docs/ci.md).
+
+```yaml
+- uses: Flurit/applygate@v0.2.0
+  with:
+    plan: tfplan
+    working-directory: envs/prod
+```
+
 ## Verdicts
 
 | Class | Examples | Protected | Standard | Disposable |

@@ -1,0 +1,80 @@
+name: applygate plan-check
+description: >-
+  Judge a saved Terraform or OpenTofu plan before it is applied: block or ask on destroyed or
+  replaced stateful resources, removed protection, internet exposure, IAM wildcards and changes
+  to the state backend, by environment tier. Deterministic, local to the runner, no network
+  calls beyond downloading the signed release.
+author: Flurit
+branding:
+  icon: shield
+  color: gray-dark
+inputs:
+  plan:
+    description: Path to a saved plan (terraform plan -out) or to its JSON (terraform show -json), relative to working-directory.
+    required: true
+  tier:
+    description: Tier to judge for (protected, standard, disposable). Default resolves from the repository's .applygate.yaml and working-directory.
+    required: false
+    default: ""
+  fail-on:
+    description: When to fail the job. block fails only on a block verdict; ask fails on ask or block; never only reports (errors always fail).
+    required: false
+    default: block
+  working-directory:
+    description: Directory the plan belongs to, for tier resolution and the backend check.
+    required: false
+    default: .
+  terraform:
+    description: Binary used for show -json when plan is a saved planfile (terraform or tofu).
+    required: false
+    default: terraform
+  version:
+    description: applygate release tag to install (ignored when binary is set).
+    required: false
+    default: v0.2.0
+  binary:
+    description: Path to an existing applygate binary. Skips the release download; for this repository's own CI.
+    required: false
+    default: ""
+outputs:
+  verdict:
+    description: allow, ask or block.
+    value: ${{ steps.check.outputs.verdict }}
+  exit-code:
+    description: plan-check exit code (0 allow, 4 ask, 3 block, 2 error).
+    value: ${{ steps.check.outputs.exit-code }}
+  summary:
+    description: The verdict line and findings, as plain text.
+    value: ${{ steps.check.outputs.summary }}
+runs:
+  using: composite
+  steps:
+    - name: Install cosign
+      if: inputs.binary == ''
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+    - name: Install applygate (signature required)
+      if: inputs.binary == ''
+      shell: bash
+      env:
+        APPLYGATE_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        dir="$RUNNER_TEMP/applygate-bin"
+        mkdir -p "$dir"
+        curl -fsSL "https://raw.githubusercontent.com/Flurit/applygate/${APPLYGATE_VERSION}/install.sh" -o "$RUNNER_TEMP/install.sh"
+        APPLYGATE_VERIFY_SIGNATURE=require APPLYGATE_INSTALL_DIR="$dir" sh "$RUNNER_TEMP/install.sh"
+        echo "APPLYGATE_BIN=$dir/applygate" >> "$GITHUB_ENV"
+    - name: Use the given binary
+      if: inputs.binary != ''
+      shell: bash
+      run: echo "APPLYGATE_BIN=$(cd "$(dirname "${{ inputs.binary }}")" && pwd)/$(basename "${{ inputs.binary }}")" >> "$GITHUB_ENV"
+    - name: plan-check
+      id: check
+      shell: bash
+      env:
+        PLAN: ${{ inputs.plan }}
+        TIER: ${{ inputs.tier }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        WORKDIR: ${{ inputs.working-directory }}
+        TF_BIN: ${{ inputs.terraform }}
+      run: "${{ github.action_path }}/scripts/ci-plan-check.sh"

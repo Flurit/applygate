@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The plan gate in CI: a composite GitHub Action (`Flurit/applygate@<tag>`, inputs `plan`, `tier`, `fail-on`, `working-directory`, `terraform`, `version`, `binary`), the portable `scripts/ci-plan-check.sh` it runs, and a Terragrunt `before_hook` recipe; documented in `docs/ci.md`. `action-check.yml` exercises the action against two real AWS-provider plans on every push.
+
 ## v0.2.0 (2026-10-29)
 
 - Renamed the project from seatbelt to applygate. Binary `applygate`, config `.applygate.yaml`, hook commands `applygate hook claude|codex`, user config `~/.config/applygate/config.yaml`, decision log `~/.local/state/applygate/decisions.jsonl`, installer variables `APPLYGATE_*`, Go module `github.com/Flurit/applygate`.

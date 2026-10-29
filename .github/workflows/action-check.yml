@@ -1,0 +1,62 @@
+name: action-check
+
+# Exercises action.yml against this commit's own binary with the two real
+# AWS-provider plans kept under review/real_plan, so a change to the action
+# or to plan-check shows up here.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go build -trimpath -o bin/applygate ./cmd/applygate
+      - name: destructive plan in a protected tier blocks
+        id: blocked
+        uses: ./
+        with:
+          plan: review/real_plan/delete_real_shape.show.json
+          tier: protected
+          fail-on: never
+          binary: bin/applygate
+      - name: destructive plan in a standard tier asks
+        id: asked
+        uses: ./
+        with:
+          plan: review/real_plan/delete_real_shape.show.json
+          tier: standard
+          fail-on: never
+          binary: bin/applygate
+      - name: create plan in a standard tier allows
+        id: allowed
+        uses: ./
+        with:
+          plan: review/real_plan/create.show.json
+          tier: standard
+          fail-on: block
+          binary: bin/applygate
+      - name: assert verdicts
+        run: |
+          test "${{ steps.blocked.outputs.verdict }}" = block
+          test "${{ steps.blocked.outputs.exit-code }}" = 3
+          test "${{ steps.asked.outputs.verdict }}" = ask
+          test "${{ steps.allowed.outputs.verdict }}" = allow
+      - name: fail-on block really fails
+        id: mustfail
+        continue-on-error: true
+        uses: ./
+        with:
+          plan: review/real_plan/delete_real_shape.show.json
+          tier: protected
+          binary: bin/applygate
+      - run: test "${{ steps.mustfail.outcome }}" = failure
