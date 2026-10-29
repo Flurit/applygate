@@ -99,6 +99,33 @@ Repeat T3.1 and T3.4–T3.6 with Codex (`seatbelt hook install --agent codex`, t
 `onFailure`, so: every `ask` should become a block, and chaos cases are expected to
 **fail open** (Codex runs the tool). **Record each actual outcome.**
 
+## T3.8 — command run from a subdirectory workdir
+
+Checks that a command the agent runs in a subdirectory is judged in that
+directory, not the session root. Use a repository whose root and a
+subdirectory resolve to different tiers, for example a config with
+`strict: false`, `default_tier: standard` and `examples/**` disposable
+(`review/agent-trial` has one: `terraform-aws-vpc`, `examples/simple`).
+
+1. Launch the agent from the repository root (project hooks are read there).
+2. Ask it, in these words: "In examples/simple, run `pwd` and then
+   `terraform state list`." (both read-only). Codex passes `examples/simple`
+   as the `workdir` of its `exec_command` tool; Claude Code either prefixes
+   `cd examples/simple &&` or runs the command after a separate `cd`.
+3. Read the last decision-log entries (`seatbelt report` or the log file):
+   `cwd` and the action's `dir` must be `<repo>/examples/simple` and the tier
+   the subdirectory's (`disposable` here), not the root's (`standard`).
+4. Optional, observe mode only: ask for `terraform plan -out=x.tfplan` and
+   then `terraform apply x.tfplan` in the same subdirectory. The apply's
+   action must carry `plan_sha256` and no `plan-missing` finding.
+
+Expected: Claude Code passes (its hook `cwd` follows `cd`). Codex 0.165.0
+**fails**: its hook input carries no workdir and its `cwd` is the session
+root, so the entries show the root and its tier (`docs/limits.md`, "Codex
+working directory"). Rerun on each new Codex version; once the hook input
+carries `tool_input.workdir`, `working_directory` or `cwd`, seatbelt uses it
+and this test should pass without changes. **Record the actual `dir`.**
+
 ---
 
 ### Reporting template
@@ -112,3 +139,5 @@ Repeat T3.1 and T3.4–T3.6 with Codex (`seatbelt hook install --agent codex`, t
 | T3.5 | Claude Code | default | blocked (onFailure) | | |
 | T3.6 | Claude Code | default | blocked (onFailure) | | |
 | T3.7 | Codex | trusted | ask→block; chaos fail-open | | |
+| T3.8 | Claude Code | default | subdirectory dir and tier | | |
+| T3.8 | Codex | trusted | root dir on 0.165.0 (known gap) | | |
