@@ -2,7 +2,7 @@
 
 A deterministic, local pre-execution check for coding agents (Claude Code, Codex, and others with pre-tool hooks) that touch Terraform or OpenTofu infrastructure. Before the agent runs a tool call, applygate returns **allow**, **ask** or **block**, with a reason and a next step the agent can act on.
 
-Status: pre-1.0 (v0.1.4), tested live with Claude Code and Codex. What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md).
+Status: pre-1.0 (v0.2.0), tested live with Claude Code and Codex. What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md).
 
 
 ## Renamed from seatbelt
@@ -31,10 +31,10 @@ It is not a sandbox and not an AI reviewer. No model is in the decision path, th
 
 ### Verify a download
 
-Download a release and check its signature before running anything. Replace `v0.1.4` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
+Download a release and check its signature before running anything. Replace `v0.2.0` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
 
 ```bash
-tag=v0.1.4
+tag=v0.2.0
 base=https://github.com/Flurit/applygate/releases/download/$tag
 curl -fsSLO "$base/checksums.txt" -O "$base/checksums.txt.sigstore.json" -O "$base/applygate_${tag#v}_linux_amd64.tar.gz"
 cosign verify-blob --bundle checksums.txt.sigstore.json \
@@ -52,8 +52,8 @@ The signature ties `checksums.txt` to this repository's release workflow for tha
 # Installer from a release tag, never from main. It verifies the cosign signature on checksums.txt
 # when cosign is installed and warns when it is not; APPLYGATE_VERIFY_SIGNATURE=require makes cosign
 # mandatory. Without cosign only the sha256 is checked, which does not detect a tampered release.
-curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.1.4/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
-# or: go install github.com/Flurit/applygate/cmd/applygate@v0.1.4
+curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.2.0/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
+# or: go install github.com/Flurit/applygate/cmd/applygate@v0.2.0
 # or: go build -o bin/applygate ./cmd/applygate
 cd your-infra-repo
 applygate init                            # writes .applygate.yaml (observe mode), detects Claude Code / Codex, installs their hooks at user scope
