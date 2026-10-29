@@ -30,19 +30,78 @@ func TestLaunchDirWarnings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Launched from the directory holding the hook: no warning.
-	if w := launchDirWarnings(root); len(w) != 0 {
-		t.Fatalf("expected no warning from the hook directory, got %v", w)
+	none := map[string]bool{}
+	// Launched from the directory holding the hook: nothing to report.
+	if c := launchDirChecks(root, none); len(c) != 0 {
+		t.Fatalf("expected nothing from the hook directory, got %v", c)
 	}
 
-	// Launched from a subdirectory: Claude Code would not load the ancestor
-	// project hook, so doctor must warn and name the hook directory.
-	w := launchDirWarnings(sub)
-	if len(w) != 1 {
-		t.Fatalf("expected one warning from a subdirectory, got %v", w)
+	// Launched from a subdirectory with no user-scope hook: Claude Code
+	// would not load the ancestor project hook, so doctor must fail, name
+	// the hook directory and give the exact fix.
+	c := launchDirChecks(sub, none)
+	if len(c) != 1 || !c[0].fail {
+		t.Fatalf("expected one failure from a subdirectory, got %v", c)
 	}
-	if !strings.Contains(w[0], "claude") || !strings.Contains(w[0], root) {
-		t.Fatalf("warning should name the agent and the hook directory: %q", w[0])
+	if !strings.Contains(c[0].msg, "claude") || !strings.Contains(c[0].msg, root) || !strings.Contains(c[0].msg, "seatbelt hook install --agent claude --scope user") {
+		t.Fatalf("failure should name the agent, the hook directory and the fix: %q", c[0].msg)
+	}
+
+	// With a user-scope hook the subdirectory is covered: ok, not a failure.
+	c = launchDirChecks(sub, map[string]bool{"claude": true})
+	if len(c) != 1 || c[0].fail || !strings.Contains(c[0].msg, "user-scope hook covers") {
+		t.Fatalf("user scope should cover the subdirectory: %v", c)
+	}
+
+	// Project hook here plus a user-scope hook: runs twice, a warning with
+	// the remove command.
+	c = launchDirChecks(root, map[string]bool{"claude": true})
+	if len(c) != 1 || c[0].fail || !strings.Contains(c[0].msg, "seatbelt hook remove --agent claude --scope project") {
+		t.Fatalf("double install should warn: %v", c)
+	}
+}
+
+func TestDoctorFailsFromSubdirectoryWithoutUserHook(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, ".claude"), 0o755)
+	os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(seatbeltSettings), 0o644)
+	os.WriteFile(filepath.Join(root, ".seatbelt.yaml"), []byte("version: 1\nmode: observe\nenvironments:\n  - {name: prod, tier: protected, match: {paths: [\"envs/prod/**\"]}}\n"), 0o644)
+	sub := filepath.Join(root, "envs", "prod")
+	os.MkdirAll(sub, 0o755)
+	t.Chdir(sub)
+	var out, errb bytes.Buffer
+	if rc := cmdDoctor(&out, &errb); rc != 1 || !strings.Contains(out.String(), "FAIL claude: the project hook is in "+root) {
+		t.Fatalf("doctor from a subdirectory without a user hook: rc %d\n%s", rc, out.String())
+	}
+	if !strings.Contains(out.String(), "Fix: seatbelt hook install --agent claude --scope user") {
+		t.Fatalf("doctor should print the fix:\n%s", out.String())
+	}
+	// Install the user-scope hook: the failure goes away.
+	var ib bytes.Buffer
+	if rc := cmdInstall("install", []string{"--agent", "claude", "--scope", "user"}, &ib, &errb); rc != 0 {
+		t.Fatalf("install: %d %s", rc, errb.String())
+	}
+	if b, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); err != nil || !settingsHasSeatbelt(b) {
+		t.Fatalf("user-scope install did not write ~/.claude/settings.json: %v", err)
+	}
+	out.Reset()
+	cmdDoctor(&out, &errb)
+	if strings.Contains(out.String(), "FAIL") {
+		t.Fatalf("doctor should not fail once a user-scope hook exists:\n%s", out.String())
+	}
+	// remove without --scope cleans both scopes.
+	var rb bytes.Buffer
+	if rc := cmdInstall("remove", []string{"--agent", "claude"}, &rb, &errb); rc != 0 {
+		t.Fatalf("remove: %d %s", rc, errb.String())
+	}
+	if b, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); settingsHasSeatbelt(b) {
+		t.Fatal("remove did not clean the user scope")
+	}
+	if !strings.Contains(rb.String(), "removed 1 seatbelt hook entry from "+filepath.Join(home, ".claude", "settings.json")) {
+		t.Fatalf("remove output: %s", rb.String())
 	}
 }
 
@@ -184,15 +243,32 @@ func TestInitInstallsHooksForDetectedAgents(t *testing.T) {
 	if !strings.Contains(out.String(), "detected agents: claude") {
 		t.Fatalf("init should report the detected agent: %s", out.String())
 	}
-	b, err := os.ReadFile(filepath.Join(wd, ".claude", "settings.json"))
+	// init installs at user scope, so the hook fires from any directory.
+	b, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
 	if err != nil || !settingsHasSeatbelt(b) {
-		t.Fatalf("init should install the claude project hook: %v %s", err, b)
+		t.Fatalf("init should install the claude user-scope hook: %v %s", err, b)
 	}
-	var doc map[string]any
-	json.Unmarshal(b, &doc)
+	if _, err := os.Stat(filepath.Join(wd, ".claude", "settings.json")); err == nil {
+		t.Fatal("init should not write a project-scope hook by default")
+	}
+	if !strings.Contains(out.String(), "user scope") {
+		t.Fatalf("init should explain the scope choice: %s", out.String())
+	}
 	if _, err := os.Stat(filepath.Join(wd, ".seatbelt.yaml")); err != nil {
 		t.Fatal("config not written")
 	}
+	// --scope project keeps the old behaviour.
+	wd3 := t.TempDir()
+	os.MkdirAll(filepath.Join(wd3, ".claude"), 0o755)
+	os.Chdir(wd3)
+	out.Reset()
+	if rc := cmdInit([]string{"--scope", "project"}, &out, &errb); rc != 0 {
+		t.Fatalf("init --scope project rc %d", rc)
+	}
+	if b, err := os.ReadFile(filepath.Join(wd3, ".claude", "settings.json")); err != nil || !settingsHasSeatbelt(b) {
+		t.Fatalf("init --scope project should write the project hook: %v", err)
+	}
+	os.Chdir(wd)
 	// --no-hooks writes the config only.
 	wd2 := t.TempDir()
 	os.MkdirAll(filepath.Join(wd2, ".claude"), 0o755)

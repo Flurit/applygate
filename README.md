@@ -44,19 +44,21 @@ curl -fsSL https://raw.githubusercontent.com/Flurit/seatbelt/v0.1.4/install.sh |
 # or: go install github.com/Flurit/seatbelt/cmd/seatbelt@v0.1.4
 # or: go build -o bin/seatbelt ./cmd/seatbelt
 cd your-infra-repo
-seatbelt init                            # writes .seatbelt.yaml (observe mode), detects Claude Code / Codex, installs their hooks
+seatbelt init                            # writes .seatbelt.yaml (observe mode), detects Claude Code / Codex, installs their hooks at user scope
 $EDITOR .seatbelt.yaml                   # map paths/workspaces/profiles to tiers
 seatbelt doctor
 seatbelt check "terraform -chdir=envs/prod destroy"
 ```
 
-`seatbelt init --no-hooks` writes the config only; `seatbelt hook install --agent claude|codex [--scope user]` adds a hook by hand. Releases are built by `.github/workflows/release.yml` from a tag: builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`), every archive carries a build-provenance attestation, and tags of published releases are never moved. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
+`seatbelt init --no-hooks` writes the config only; `seatbelt init --scope project` keeps the hook inside this repository; `seatbelt hook install --agent claude|codex [--scope user]` adds a hook by hand (project scope by default), and `seatbelt hook remove --agent claude|codex` cleans both scopes. What each host can and cannot do with the hook is in [docs/hosts.md](docs/hosts.md) (`seatbelt hosts`). Releases are built by `.github/workflows/release.yml` from a tag: builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`), every archive carries a build-provenance attestation, and tags of published releases are never moved. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
 
 Security issues: see [SECURITY.md](SECURITY.md).
 
 After a few days in observe mode, run `seatbelt report` to see what would have been blocked, review any likely false positives, then set `mode: enforce`.
 
-**Launch from the repo root.** With a project-scope install, Claude Code and Codex load project settings only from the directory the session starts in. A hook at `<repo>/.claude/settings.json` will not run if you launch the agent from a subdirectory. `seatbelt doctor` warns when this is the case; launch from the directory holding the hook, or install at user scope with `hook install --scope user`.
+**Launch directory.** Claude Code and Codex load project settings only from the directory the session starts in, so a hook at `<repo>/.claude/settings.json` does not run if you launch the agent from a subdirectory. `seatbelt init` therefore installs the hook at user scope (`~/.claude/settings.json`, `~/.codex/hooks.json`), where it fires from any directory of any repository; repositories without a `.seatbelt.yaml` are then judged by your user config or the defaults. If you keep a project-scope hook, `seatbelt doctor` fails with the fix when you run it from a subdirectory the hook does not cover.
+
+**Codex and the command directory.** Codex 0.165.0 does not tell the hook which directory a command runs in, only the session root. seatbelt then judges the command at the most protected tier it could be in under that root (so a destroy under a repository with a protected directory is blocked wherever Codex ran it), a `cd` in the command establishes the directory, and a relative planfile is looked up under the root. Details and the opt-out (`unknown_dir`) are in [docs/limits.md](docs/limits.md) and [docs/config.md](docs/config.md).
 
 ## Verdicts
 
@@ -83,8 +85,9 @@ Plan gate: in protected tiers critical findings block and high findings ask; in 
 | `seatbelt plan-check plan.json` | Evaluate `terraform show -json` output |
 | `seatbelt report` | Summarize the decision log |
 | `seatbelt selftest` | Run the embedded scenario pack against this binary |
-| `seatbelt init [--no-hooks]` | Write a starter config, detect installed agents, install their hooks |
-| `seatbelt doctor`, `hook install/remove` | Setup checks and manual hook management |
+| `seatbelt init [--no-hooks] [--scope user\|project]` | Write a starter config, detect installed agents, install their hooks (user scope by default) |
+| `seatbelt doctor`, `hook install/remove` | Setup checks (exit 1 on a problem) and manual hook management |
+| `seatbelt hosts` | What each agent host can do with the hook; the same table as [docs/hosts.md](docs/hosts.md) |
 
 ## What happens when seatbelt fails
 
@@ -97,7 +100,7 @@ Hooks fail open by default in most agents, so this matters:
   **Codex has no `onFailure` equivalent and fails open here.** A missing, killed or crashed Codex hook lets the tool call run (observed: exit 127 and a no-status-code exit both proceed). seatbelt now recovers panics inside its own process and turns them into a block, so the *only* remaining Codex fail-open case is the binary not starting at all. seatbelt cannot close that gap from inside the hook, so with Codex also rely on its sandbox and approval settings (`--sandbox workspace-write` or `read-only`, `approval_policy`/`--full-auto` off for infra work) as the backstop, keep plan-only credentials, and run `seatbelt doctor` to confirm the hook binary exists and is executable.
 - **Observe mode** never blocks, including on errors.
 
-See [docs/limits.md](docs/limits.md) and [docs/threat-model.md](docs/threat-model.md).
+See [docs/hosts.md](docs/hosts.md) for the per-host behaviour, [docs/limits.md](docs/limits.md) and [docs/threat-model.md](docs/threat-model.md).
 
 ## Roadmap
 
@@ -116,7 +119,7 @@ internal/policy/      verdict table and Decide()
 internal/hook/        Claude Code and Codex adapters, error behavior
 internal/decisionlog/ JSONL log with redaction, report
 harness/              scenario pack, fixtures, Go regression test, run.py replay runner
-docs/                 policy, config, limits, threat model, roadmap; docs/project/ for project records
+docs/                 policy, config, limits, hosts (generated), threat model, roadmap; docs/project/ for project records
 review/               live-agent test write-ups and the open-source corpus trial (tools, configs, summaries)
 plugin/claude-code/   Claude Code plugin manifest (hooks only; the binary comes from a release)
 .goreleaser.yaml      release builds: reproducible archives, checksums, cosign signature, SBOMs

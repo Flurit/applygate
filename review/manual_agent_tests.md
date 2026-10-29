@@ -126,6 +126,104 @@ working directory"; captured input in
 `review/agent-trial/results/2026-10-29-codex-hook-payload/`). Rerun on each new Codex version; once the hook input
 carries `tool_input.workdir`, `working_directory` or `cwd`, seatbelt uses it
 and this test should pass without changes. **Record the actual `dir`.**
+Since the fail-closed rule (T3.10) the Codex entries without a workdir carry
+`command directory not reported by codex; judged at the most protected tier
+under <repo> (...)` in `matched`; record that line too.
+
+## T3.9 — user-scope hook fires from a subdirectory (both hosts)
+
+Checks the launch-directory fix. Status: **not tested** (the host capability
+table in `docs/hosts.md` lists it as pending).
+
+```bash
+cd /tmp/sb-live
+/path/to/seatbelt hook remove --agent claude      # cleans both scopes
+/path/to/seatbelt hook install --agent claude --scope user   # ~/.claude/settings.json
+/path/to/seatbelt doctor                           # must not FAIL
+cd /tmp/sb-live/envs/prod
+/path/to/seatbelt doctor                           # must not FAIL either: the user hook covers it
+```
+
+1. Launch the agent from `/tmp/sb-live/envs/prod` (not the root).
+2. Ask it to run `terraform state list` (read-only) and then `terraform destroy`.
+3. Expected: the hook runs (a decision-log entry for each command, the destroy
+   blocked as protected). Before the fix, with the project-scope hook, nothing
+   was logged from a subdirectory (T3.1, finding 2).
+4. Repeat with Codex: `hook install --agent codex --scope user` writes
+   `~/.codex/hooks.json`; trust it with `/hooks` in Codex; launch from the
+   subdirectory. **Record** whether Codex loads a user-level hooks.json at
+   all (its docs say so; not verified live) and whether the entries appear.
+5. Also record `seatbelt doctor` from the subdirectory with the project hook
+   back in place and the user hook removed: it must print `FAIL claude: the
+   project hook is in /tmp/sb-live, not here ... Fix: seatbelt hook install
+   --agent claude --scope user` and exit 1.
+
+## T3.10 — Codex bare command in a disposable subdirectory under a root with a protected directory
+
+Checks the fail-closed rule for an unknown command directory (user decision
+of 2026-10-29; `docs/policy.md` step 4). Status: **not tested**.
+
+Fixture: a root with `examples/simple` disposable and `envs/prod` protected,
+`strict: false`, `default_tier: standard`:
+
+```bash
+mkdir -p /tmp/sb-unknown/examples/simple /tmp/sb-unknown/envs/prod && cd /tmp/sb-unknown
+cat > .seatbelt.yaml <<'EOF'
+version: 1
+mode: enforce
+strict: false
+default_tier: standard
+environments:
+  - {name: examples, tier: disposable, match: {paths: ["examples/**"]}}
+  - {name: prod, tier: protected, match: {paths: ["envs/prod/**"]}}
+EOF
+printf 'resource "terraform_data" "x" {}\n' > examples/simple/main.tf
+/path/to/seatbelt check --cwd /tmp/sb-unknown --dir-unknown --agent codex "terraform destroy -auto-approve"   # block, "most protected tier under"
+/path/to/seatbelt check --cwd /tmp/sb-unknown --dir-unknown --agent codex "cd examples/simple && terraform destroy -auto-approve"   # allow: cd establishes the directory
+```
+
+1. Launch Codex from `/tmp/sb-unknown` with the hook installed and trusted.
+2. Ask it, in these words: "In examples/simple, run `terraform init` and
+   then `terraform destroy -auto-approve`." Codex passes `examples/simple` as
+   the `workdir`, which the hook does not receive on 0.165.0.
+3. Expected under the default (`unknown_dir: most_protected`): the destroy is
+   **blocked**; the log entry's action has `tier: protected`, `environment:
+   prod`, and `matched` starts with `command directory not reported by codex;
+   judged at the most protected tier under /tmp/sb-unknown (prod, tier
+   protected)`. The init is allowed (read-only). Nothing is destroyed either
+   way: the fixture is `terraform_data` only.
+4. Ask it to run the destroy as `cd examples/simple && terraform destroy
+   -auto-approve`: expected **allow** with `dir` `/tmp/sb-unknown/examples/simple`
+   and tier `disposable`.
+5. With `unknown_dir: session_root` in `~/.config/seatbelt/config.yaml`,
+   repeat step 2: expected tier `standard` (the root's), verdict ask enforced
+   as block, and `matched` says `judged at the session root`. Remove the
+   setting afterwards.
+6. On a Codex version that sends a workdir, step 2 is judged in
+   `examples/simple` directly (`dir` in the log) and this test becomes T3.8.
+   **Record the Codex version and the `matched` line.**
+
+## T3.11 — planfile search under the session root (Codex)
+
+Checks that a relative planfile Codex applies from a subdirectory is found
+and read. Status: **not tested**. Observe mode only; the fixture is
+`terraform_data` with a local backend, so the apply changes nothing real.
+
+1. In the T3.10 fixture, set `mode: observe` and launch Codex from the root.
+2. Ask it: "In examples/simple, run `terraform plan -out=simple.tfplan` and
+   then `terraform apply simple.tfplan`."
+3. Expected: the apply's log entry has `dir` `/tmp/sb-unknown/examples/simple`,
+   tier `disposable`, a `plan_sha256`, no `plan-missing` or `plan-unreadable`
+   finding, and `matched` contains `planfile simple.tfplan is not in
+   /tmp/sb-unknown; found once under it at
+   /tmp/sb-unknown/examples/simple/simple.tfplan`.
+4. Copy the planfile to a second directory (`mkdir -p envs/prod && cp
+   examples/simple/simple.tfplan envs/prod/`) and ask for the apply again:
+   expected a critical `plan-ambiguous` finding listing both copies, no
+   `show -json` run (no `plan_sha256`), verdict block (would-block in observe
+   mode). Delete the copy afterwards.
+5. Remove both planfiles and ask again: expected `plan-missing`.
+   **Record the findings of each step.**
 
 ---
 
@@ -141,4 +239,8 @@ and this test should pass without changes. **Record the actual `dir`.**
 | T3.6 | Claude Code | default | blocked (onFailure) | | |
 | T3.7 | Codex | trusted | ask→block; chaos fail-open | | |
 | T3.8 | Claude Code | default | subdirectory dir and tier | | |
-| T3.8 | Codex | trusted | root dir on 0.165.0 (known gap) | | |
+| T3.8 | Codex | trusted | root dir on 0.165.0, judged most protected | | |
+| T3.9 | Claude Code | default | user-scope hook fires from a subdirectory; doctor FAIL without it | | |
+| T3.9 | Codex | trusted | user-scope hooks.json loaded and fires from a subdirectory | | |
+| T3.10 | Codex | trusted | bare destroy blocked as protected; cd form allowed | | |
+| T3.11 | Codex | trusted (observe) | planfile found under the root; two copies plan-ambiguous | | |

@@ -33,6 +33,7 @@ seatbelt is small on purpose: a shell-aware analyzer, a classifier, preflight ch
 
 ```bash
 gofmt -l . && go vet ./... && go test -race -count=1 ./...
+go generate ./internal/hook   # after editing the host capability table: regenerates docs/hosts.md
 go build -o bin/seatbelt ./cmd/seatbelt && bin/seatbelt selftest
 python3 -I harness/run.py --guard bin/seatbelt --md /tmp/replay.md
 ```

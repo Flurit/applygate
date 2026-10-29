@@ -40,16 +40,28 @@ func (t Tier) Rank() int {
 // FileName is the per-repository config file.
 const FileName = ".seatbelt.yaml"
 
+// Values of the unknown_dir setting.
+const (
+	UnknownDirMostProtected = "most_protected"
+	UnknownDirSessionRoot   = "session_root"
+)
+
 // Config is the merged configuration.
 type Config struct {
-	Version     int               `yaml:"version"`
-	Mode        string            `yaml:"mode"` // enforce | observe
-	Strict      *bool             `yaml:"strict"`
-	DefaultTier Tier              `yaml:"default_tier"`
-	OnError     string            `yaml:"on_error"` // auto | block | allow
-	LogPath     string            `yaml:"log_path"`
-	NameHints   *bool             `yaml:"name_hints"`
-	Aliases     map[string]string `yaml:"aliases"`
+	Version     int    `yaml:"version"`
+	Mode        string `yaml:"mode"` // enforce | observe
+	Strict      *bool  `yaml:"strict"`
+	DefaultTier Tier   `yaml:"default_tier"`
+	OnError     string `yaml:"on_error"` // auto | block | allow
+	LogPath     string `yaml:"log_path"`
+	NameHints   *bool  `yaml:"name_hints"`
+	// UnknownDir says how to judge a command whose directory the host did
+	// not report: "most_protected" (default) takes the most protected tier
+	// the command could be in under the session root; "session_root" judges
+	// it at the root as if the command ran there. A repository config may
+	// tighten this to most_protected but not loosen it.
+	UnknownDir string            `yaml:"unknown_dir"`
+	Aliases    map[string]string `yaml:"aliases"`
 
 	Environments   []Environment `yaml:"environments"`
 	PlanGate       PlanGate      `yaml:"plan_gate"`
@@ -126,7 +138,10 @@ func on(b *bool, def bool) bool {
 	return *b
 }
 
-func (c *Config) IsStrict() bool        { return on(c.Strict, true) }
+func (c *Config) IsStrict() bool { return on(c.Strict, true) }
+func (c *Config) UnknownDirMostProtected() bool {
+	return c.UnknownDir != UnknownDirSessionRoot
+}
 func (c *Config) UseNameHints() bool    { return on(c.NameHints, true) }
 func (c *Config) Observe() bool         { return c.Mode == "observe" }
 func (c *Config) StaleStateCheck() bool { return on(c.Preflight.StaleState, true) }
@@ -161,7 +176,7 @@ var DefaultProtectedPaths = []string{
 
 // Default returns the built-in configuration.
 func Default() *Config {
-	return &Config{Version: 1, Mode: "enforce", OnError: "auto", Aliases: map[string]string{"tf": "terraform"}}
+	return &Config{Version: 1, Mode: "enforce", OnError: "auto", UnknownDir: UnknownDirMostProtected, Aliases: map[string]string{"tf": "terraform"}}
 }
 
 // UserPath returns the user-level config path.
@@ -255,6 +270,17 @@ func merge(cfg *Config, path string, repo bool) error {
 	if c.NameHints != nil {
 		cfg.NameHints = c.NameHints
 	}
+	switch c.UnknownDir {
+	case "":
+	case UnknownDirMostProtected, UnknownDirSessionRoot:
+		// A repository cannot opt out of fail-closed directory handling;
+		// only the user config can. It may switch it back on.
+		if !repo || c.UnknownDir == UnknownDirMostProtected {
+			cfg.UnknownDir = c.UnknownDir
+		}
+	default:
+		return fmt.Errorf("%s: unknown_dir must be %s or %s, not %q", path, UnknownDirMostProtected, UnknownDirSessionRoot, c.UnknownDir)
+	}
 	for k, v := range c.Aliases {
 		cfg.Aliases[k] = v
 	}
@@ -336,6 +362,11 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("on_error must be auto, block or allow, not %q", c.OnError)
 	}
+	switch c.UnknownDir {
+	case "", UnknownDirMostProtected, UnknownDirSessionRoot:
+	default:
+		return fmt.Errorf("unknown_dir must be %s or %s, not %q", UnknownDirMostProtected, UnknownDirSessionRoot, c.UnknownDir)
+	}
 	for _, t := range append([]Tier{c.DefaultTier}, tiersOf(c.Environments)...) {
 		switch t {
 		case "", Protected, Standard, Disposable:
@@ -394,6 +425,10 @@ type Resolution struct {
 	Env     string   // environment name, or "unknown"
 	Matched []string // which signals matched, for messages
 	Unknown bool
+	// DirUnknown is set by ResolveUnknownDir: the tier is the most
+	// protected one the command could be in under the session root, not
+	// the tier of a known directory.
+	DirUnknown bool
 }
 
 // Name hints: prod, production, prd or live as a whole word between the
@@ -507,4 +542,130 @@ func globEq(pattern, v string) bool {
 		return true
 	}
 	return classify.MatchGlob(pattern, v)
+}
+
+// ResolveUnknownDir resolves the tier for a command whose directory the host
+// did not report, so it could run in root or in any directory under it. The
+// result is the most protected of: the root itself (with its signals, as
+// Resolve sees them), every environment whose path globs could match a
+// directory under root, every environment matched by workspace, backend,
+// AWS profile or account (a directory under root could carry any of those),
+// and the strict or default_tier rule for a directory under root that
+// matches no environment. Name hints on subdirectory names are not
+// considered: only the config decides what is under the root. agent names
+// the host for the message.
+func (c *Config) ResolveUnknownDir(agent, root string, s Signals) Resolution {
+	s.Dir = root
+	best := c.Resolve(s)
+	consider := func(env string, t Tier, why string) {
+		if t.Rank() > best.Tier.Rank() {
+			best = Resolution{Tier: t, Env: env, Matched: []string{why}}
+		} else if t == best.Tier && !slices.Contains(best.Matched, why) {
+			best.Matched = append(best.Matched, why)
+		}
+	}
+	covered := false
+	for _, e := range c.Environments {
+		m := e.Match
+		for _, p := range m.Paths {
+			if root != "" && globCouldMatchUnder(p, root) {
+				consider(e.Name, e.Tier, "path "+p+" could match a directory under the root")
+				if globCoversSubtree(p, root) {
+					covered = true
+				}
+			}
+		}
+		if len(m.Workspaces)+len(m.Backends)+len(m.AWSProfiles)+len(m.AWSAccounts) > 0 {
+			consider(e.Name, e.Tier, "environment "+e.Name+" matches by workspace, backend or profile, which a directory under the root could carry")
+		}
+	}
+	if !covered {
+		if c.IsStrict() {
+			consider("unknown", Protected, "a directory under the root that matches no environment is protected in strict mode")
+		} else {
+			t := c.DefaultTier
+			if t == "" {
+				t = Standard
+			}
+			consider("unknown", t, "a directory under the root that matches no environment uses default_tier "+string(t))
+		}
+	}
+	if agent == "" {
+		agent = "the host"
+	}
+	best.DirUnknown = true
+	best.Matched = append([]string{fmt.Sprintf("command directory not reported by %s; judged at the most protected tier under %s (%s, tier %s)", agent, root, best.Env, best.Tier)}, best.Matched...)
+	return best
+}
+
+// globCouldMatchUnder reports whether a path glob can match root or some
+// directory under it. Patterns are compared segment by segment, as
+// classify.MatchGlob does; a pattern starting with ** or without a leading
+// slash can anchor anywhere, so it is tried at every depth of root.
+func globCouldMatchUnder(pattern, root string) bool {
+	pattern = filepath.ToSlash(pattern)
+	pp := strings.Split(strings.Trim(pattern, "/"), "/")
+	rs := strings.Split(strings.Trim(filepath.ToSlash(root), "/"), "/")
+	if strings.HasPrefix(pattern, "/") {
+		return couldMatchSegs(pp, rs)
+	}
+	for i := 0; i <= len(rs); i++ {
+		if couldMatchSegs(pp, rs[i:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// couldMatchSegs is matchSegs with the root's segments allowed to run out:
+// whatever pattern remains can still match a deeper directory.
+func couldMatchSegs(pp, rs []string) bool {
+	if len(rs) == 0 {
+		return true
+	}
+	if len(pp) == 0 {
+		return false
+	}
+	if pp[0] == "**" {
+		for i := 0; i <= len(rs); i++ {
+			if couldMatchSegs(pp[1:], rs[i:]) {
+				return true
+			}
+		}
+		return false
+	}
+	ok, err := filepath.Match(pp[0], rs[0])
+	if err != nil || !ok {
+		return false
+	}
+	return couldMatchSegs(pp[1:], rs[1:])
+}
+
+// globCoversSubtree reports whether a glob ending in /** matches root and
+// everything under it, so no directory under root is left unmatched.
+func globCoversSubtree(pattern, root string) bool {
+	pattern = filepath.ToSlash(pattern)
+	if pattern == "**" {
+		return true
+	}
+	prefix, ok := strings.CutSuffix(pattern, "/**")
+	if !ok {
+		return false
+	}
+	for d := filepath.ToSlash(root); ; d = pathDir(d) {
+		if classify.MatchGlob(prefix, d) {
+			return true
+		}
+		if d == "/" || d == "." || d == "" {
+			return false
+		}
+	}
+}
+
+func pathDir(d string) string {
+	p := filepath.ToSlash(filepath.Dir(filepath.FromSlash(d)))
+	if p == d {
+		return "/"
+	}
+	return p
 }

@@ -12,7 +12,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 |---|---|---|
 | Single local binary with hook adapters, shell-aware analyzer, preflight, plan gate, local log | done | `cmd/seatbelt`, `internal/*` |
 | Engine-neutral (Terraform and OpenTofu share plan JSON) | done | `internal/classify/engines.go`; the planfile workspace parser was verified on Terraform 1.16.1 only ([limits](../limits.md)) |
-| Agent-neutral with per-agent limits documented | partial | Claude Code and Codex adapters (`internal/hook/adapters.go`); Cursor and others are v2. `harness/run.py --format cursor` can replay the pack against a Cursor-format guard |
+| Agent-neutral with per-agent limits documented | done for Claude Code and Codex | Claude Code and Codex adapters (`internal/hook/adapters.go`); per-host limits are the generated capability table [hosts.md](../hosts.md) (`seatbelt hosts`, `internal/hook/capabilities.go`, kept current by `TestHostsDocCurrent`), with "not tested" where nothing was verified; a host that does not report the command directory is judged fail-closed ([policy.md](../policy.md) step 4). Cursor, Copilot CLI and OpenCode are listed as not supported. `harness/run.py --format cursor` can replay the pack against a Cursor-format guard |
 | Deterministic rules, no model in the decision path | done | no model call anywhere; `docs/threat-model.md` |
 | Parse commands the way the shell does | done | `internal/shell` on mvdan/sh; property and fuzz tests |
 | Judge plans, not only commands | done | `internal/plangate` on `show -json` |
@@ -94,8 +94,8 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | `protected_resources` | done | address globs; `protected-resource` critical finding |
 | `wrappers` (commands that hide Terraform) | deviates | not a config key: Makefile recipes and readable scripts are analyzed, and an unreadable wrapper asks in protected tiers |
 | Messages carry reason, evidence and next step | done | `policy.message`; agent-facing text on block, human-facing text on ask |
-| `init`: starter config, detect installed agents, install hooks | done | `seatbelt init [--no-hooks]` |
-| `doctor`: hooks wired, config parses, versions | done | `seatbelt doctor` also runs the selftest and warns about launch-directory mismatches |
+| `init`: starter config, detect installed agents, install hooks | done | `seatbelt init [--no-hooks] [--scope user\|project]`; hooks go to user scope by default so they fire from any directory, and the output states the Codex fail-open path from the host table |
+| `doctor`: hooks wired, config parses, versions | done | `seatbelt doctor` also runs the selftest and **fails** (exit 1, with the fix command) from a subdirectory whose project-scope hook is not loaded and no user-scope hook covers the agent; warns when both scopes are installed |
 | `check`, `explain`, `plan-check`, `report`, `selftest`, `hook install/remove` | done | `cmd/seatbelt/main.go` |
 
 ### Quality bar, security, distribution

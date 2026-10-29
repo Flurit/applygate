@@ -84,7 +84,7 @@ func TestWorkspaceMismatchJudgedByPlanTier(t *testing.T) {
 				t.Fatal(err)
 			}
 			deps := Deps{Env: map[string]string{"PATH": "/nonexistent"}, PlanJSON: createOnlyPlan}
-			d := Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: "terraform apply tfplan", Cwd: dir, CanAsk: true}, cfg, deps)
+			d := Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: "terraform apply tfplan", Cwd: dir, CanAsk: true, DirKnown: true}, cfg, deps)
 			if len(d.Actions) != 1 {
 				t.Fatalf("got %d actions, want 1: %+v", len(d.Actions), d.Actions)
 			}

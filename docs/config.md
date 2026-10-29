@@ -9,6 +9,7 @@ strict: true             # unknown environment = protected
 default_tier: standard   # tier for unknown environments when strict is false
 on_error: auto           # auto (block in protected/unknown, allow elsewhere) | block | allow
 name_hints: true         # treat prod/production/prd/live as a whole word in names (paths, workspaces, profiles, backend bucket/key/workspace_key_prefix/dynamodb_table/address) as protected; non-/not-/no-/pre- before the word and -like/-test/-sandbox after it cancel the hint (docs/policy.md step 4)
+unknown_dir: most_protected   # most_protected | session_root: how a command is judged when the host does not report its directory (Codex 0.165.0); a repository config may set most_protected but not session_root
 log_path: ~/.local/state/seatbelt/decisions.jsonl   # user config only
 aliases: {tf: terraform}
 
@@ -44,6 +45,8 @@ protected_resources: []         # address globs whose destroy/replace is critica
 ```
 
 **Defaults.** Because the most protected matching environment wins, an environment that matches everything (`paths: ["**"]`) overrides every less protected one: `examples/**` → disposable plus `**` → standard makes the examples standard too. For a default, set `strict: false` and `default_tier` instead.
+
+`unknown_dir` applies when the host reports only the session root and not the directory a command runs in (Codex 0.165.0; see [hosts.md](hosts.md)). `most_protected` (the default) judges the command at the most protected tier it could be in under the root: every environment whose `paths` could match a directory under the root, every environment with `workspaces`, `backends`, `aws_profiles` or `aws_accounts` matchers, and `strict`/`default_tier` for an unmatched directory ([policy.md](policy.md) step 4). `session_root` judges it at the root as if it ran there, which is what seatbelt v0.1.4 and earlier did. Only the user config can set `session_root`; a repository config may set `most_protected` to switch it back on, and any other value in a repository config is ignored. A `cd` or `-chdir` inside the command always wins over this setting.
 
 `wrappers` lists a team's own runners that execute the command in their arguments, so seatbelt analyzes that command instead of the runner. The command starts after `--` when there is one, otherwise after `skip` positional arguments; `profile_arg` names the positional that is an AWS profile or role, which counts as a tier signal like `AWS_PROFILE`. Built-in runners (`aws-vault`, `gds aws`, `direnv`, `mise`, `nix-shell`, …) need no entry, and an unknown runner around `terraform`, `tofu` or `terragrunt` is caught by the backstop anyway; list a runner here when it wraps other tools such as `aws` or `kubectl`, or to get its profile argument used for the tier. Entries from the user and repository configs are combined.
 

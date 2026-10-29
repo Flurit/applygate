@@ -415,10 +415,15 @@ func TestCodexWorkdirDecidesTier(t *testing.T) {
 	if e.Cwd != filepath.Join(root, "dev") || len(e.Actions) != 1 || e.Actions[0].Dir != filepath.Join(root, "dev") || e.Actions[0].Tier != "disposable" {
 		t.Fatalf("log should record the workdir and the disposable tier: cwd %q actions %+v", e.Cwd, e.Actions)
 	}
-	// The same command without a workdir is judged by the root (standard:
-	// ask, enforced as deny for Codex).
-	if got, e := run(root, map[string]any{"command": "terraform destroy -auto-approve"}, nil); got != "deny" || e.Actions[0].Dir != root {
-		t.Fatalf("destroy at the root: got %s dir %q, want deny at %q", got, e.Actions[0].Dir, root)
+	// The same command without a workdir has an unknown directory: it is
+	// judged at the most protected tier under the root (prod/** is
+	// protected), so the destroy is denied and the reason says why.
+	got, e = run(root, map[string]any{"command": "terraform destroy -auto-approve"}, nil)
+	if got != "deny" || e.Actions[0].Dir != root || e.Actions[0].Tier != "protected" {
+		t.Fatalf("destroy without a workdir: got %s dir %q tier %q, want deny at %q as protected", got, e.Actions[0].Dir, e.Actions[0].Tier, root)
+	}
+	if !strings.Contains(strings.Join(e.Actions[0].Matched, "; "), "command directory not reported by codex") {
+		t.Fatalf("matched should say the directory was not reported: %v", e.Actions[0].Matched)
 	}
 
 	// A relative planfile resolves against the workdir, so the plan gate reads
@@ -454,14 +459,93 @@ func TestCodexWorkdirDecidesTier(t *testing.T) {
 			t.Fatalf("plan gate did not read the planfile: %+v", a.Findings)
 		}
 	}
-	// The same apply without the workdir looks in the root: plan-missing.
-	_, e = run(root, map[string]any{"command": "terraform apply simple.tfplan"}, show)
-	missing := false
-	for _, f := range e.Actions[0].Findings {
-		missing = missing || f.Rule == "plan-missing"
+	// The same apply without the workdir: the planfile is not in the root,
+	// but exactly one copy exists under it, so that copy's directory becomes
+	// the command directory and the plan gate reads it there.
+	got, e = run(root, map[string]any{"command": "terraform apply simple.tfplan"}, show)
+	if got != "allow" {
+		t.Fatalf("apply without a workdir, unique planfile under the root: got %s, want allow: %+v", got, e.Actions[0])
 	}
-	if !missing {
-		t.Fatalf("without a workdir the planfile should be missing at the root: %+v", e.Actions[0].Findings)
+	a = e.Actions[0]
+	if a.Dir != filepath.Join(root, "dev") || a.Tier != "disposable" || a.PlanSHA256 == "" || showDir != filepath.Join(root, "dev") {
+		t.Fatalf("planfile search should set the command directory: dir %q tier %q sha %q show in %q", a.Dir, a.Tier, a.PlanSHA256, showDir)
+	}
+	if !strings.Contains(strings.Join(a.Matched, "; "), "found once under it") {
+		t.Fatalf("matched should say how the planfile was found: %v", a.Matched)
+	}
+}
+
+func TestCodexDirKnown(t *testing.T) {
+	// A Codex shell event knows its directory only when the hook input
+	// names a workdir; file edits are resolved against the turn's cwd by
+	// Codex itself, so they are always known. Claude Code's cwd follows the
+	// shell, so it is always known.
+	cases := []struct {
+		name  string
+		tool  string
+		input map[string]any
+		want  bool
+	}{
+		{"bare command", "Bash", map[string]any{"command": "pwd"}, false},
+		{"empty workdir", "Bash", map[string]any{"command": "pwd", "workdir": ""}, false},
+		{"workdir", "Bash", map[string]any{"command": "pwd", "workdir": "examples/simple"}, true},
+		{"working_directory", "Bash", map[string]any{"command": "pwd", "working_directory": "/work/repo/x"}, true},
+		{"cwd in tool_input", "exec_command", map[string]any{"command": "pwd", "cwd": "x"}, true},
+		{"apply_patch", "apply_patch", map[string]any{"command": "*** Begin Patch\n*** Update File: x\n*** End Patch\n"}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ev, ok, err := Codex{}.Parse([]byte(event(c.tool, "/work/repo", c.input)))
+			if err != nil || !ok {
+				t.Fatalf("parse: ok=%v err=%v", ok, err)
+			}
+			if ev.DirKnown != c.want {
+				t.Fatalf("DirKnown=%v, want %v", ev.DirKnown, c.want)
+			}
+		})
+	}
+	ev, _, err := Claude{}.Parse([]byte(event("Bash", "/work/repo/examples", map[string]any{"command": "pwd"})))
+	if err != nil || !ev.DirKnown {
+		t.Fatalf("claude: DirKnown=%v err=%v", ev.DirKnown, err)
+	}
+}
+
+func TestCodexUnknownDirFailsClosed(t *testing.T) {
+	// The user decision: a Codex command without a workdir under a root that
+	// holds a protected directory is judged as protected, whatever the root
+	// itself would be; with unknown_dir: session_root in the USER config it
+	// is judged at the root; a repository config cannot loosen it.
+	root := setupRootStandard(t)
+	run := func(userCfg string, cwd string) (string, decisionlog.Entry) {
+		log := filepath.Join(t.TempDir(), "log.jsonl")
+		opt := Options{LogPath: log, NoGit: true, Env: map[string]string{}}
+		if userCfg != "" {
+			opt.UserConfig = filepath.Join(t.TempDir(), "config.yaml")
+			os.WriteFile(opt.UserConfig, []byte(userCfg), 0o644)
+		}
+		o := Run(Codex{}, strings.NewReader(event("Bash", cwd, map[string]any{"command": "terraform destroy -auto-approve"})), opt)
+		return decision(t, o), readLog(t, log)
+	}
+	if got, e := run("", root); got != "deny" || e.Actions[0].Tier != "protected" || e.Actions[0].Env != "prod" {
+		t.Fatalf("default: got %s tier %q env %q, want deny/protected/prod", got, e.Actions[0].Tier, e.Actions[0].Env)
+	}
+	// session_root from the user config: the root is standard, so a destroy
+	// asks, which Codex enforces as deny, but the tier is the root's.
+	if got, e := run("unknown_dir: session_root\n", root); got != "deny" || e.Actions[0].Tier != "standard" {
+		t.Fatalf("session_root: got %s tier %q, want deny/standard", got, e.Actions[0].Tier)
+	}
+	if got, e := run("unknown_dir: session_root\n", filepath.Join(root, "dev")); got != "allow" || e.Actions[0].Tier != "disposable" {
+		t.Fatalf("session_root in dev: got %s tier %q, want allow/disposable", got, e.Actions[0].Tier)
+	}
+	// A repository config that says session_root is ignored.
+	os.WriteFile(filepath.Join(root, ".seatbelt.yaml"), []byte(rootStandardConfig+"unknown_dir: session_root\n"), 0o644)
+	if got, e := run("", root); got != "deny" || e.Actions[0].Tier != "protected" {
+		t.Fatalf("repo config must not loosen unknown_dir: got %s tier %q", got, e.Actions[0].Tier)
+	}
+	// A cd inside the command establishes the directory.
+	o := Run(Codex{}, strings.NewReader(event("Bash", root, map[string]any{"command": "cd dev && terraform destroy -auto-approve"})), Options{NoLog: true, NoGit: true, Env: map[string]string{}})
+	if got := decision(t, o); got != "allow" {
+		t.Fatalf("cd inside the command should make the directory known: got %s (%s)", got, o.Stdout)
 	}
 }
 
