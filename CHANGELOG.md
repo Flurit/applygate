@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `applygate apply <planfile>`: the human door. Judges a saved plan exactly as the hooks judge `terraform apply <planfile>` (tier, preflight, plan gate), logs the decision with agent `human`, refuses a block, asks for the environment name to be typed back on an ask, and only then runs `terraform` or `tofu` (`--engine`). Outside a terminal an ask is refused unless `--yes`, which never applies in a protected tier.
+
 ## v0.2.0 (2026-10-29)
 
 - Renamed the project from seatbelt to applygate. Binary `applygate`, config `.applygate.yaml`, hook commands `applygate hook claude|codex`, user config `~/.config/applygate/config.yaml`, decision log `~/.local/state/applygate/decisions.jsonl`, installer variables `APPLYGATE_*`, Go module `github.com/Flurit/applygate`.

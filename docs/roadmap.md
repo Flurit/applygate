@@ -34,7 +34,8 @@ Done:
 - Claude Code and Codex adapters, tested live;
 - observe mode and the decision log;
 - signed releases with provenance (v0.1.0 to v0.1.4 as seatbelt, v0.2.0 as applygate);
-- a static false-positive trial on 5 public repositories: 0.48% ([oss-corpus-trial.md](oss-corpus-trial.md)).
+- a static false-positive trial on 5 public repositories: 0.48% ([oss-corpus-trial.md](oss-corpus-trial.md));
+- `applygate apply <planfile>`: the same verdict for a human at a terminal, with a typed confirmation on an ask.
 
 Open:
 - an observe-mode trial with real teams;
