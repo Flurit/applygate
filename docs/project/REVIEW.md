@@ -352,6 +352,49 @@ the merged-config explanation for the "a failed hook does not override seatbelt'
 block" observation is marked *likely* in the log (the hook file contents were not
 captured).
 
+## Fixed from the agent trial (2026-10-29)
+
+The agent-driven observe-mode trial (`review/agent-trial/`, Claude Code 2.1.312,
+seatbelt 0.1.3, decision log of 2026-10-29 with 76 decisions: 71 allow, 4 ask,
+1 block) had exactly two false-positive sources, both fixed in the PR that adds
+this section:
+
+1. **File-only interpreter bodies asked.** All four asks were `python3 -I -
+   <<'EOF'` scripts that only called `open(...).read()`, `re.sub`, string
+   operations and `open(...).write()` on a `.tf` or `.hcl` file, and mentioned
+   `terraform` or `terragrunt` only as text (`\$\{terraform\.workspace\}` in a
+   regex, `terraform {` as a search string, `terraform.tfstate` inside an HCL
+   block being inserted). Evidence: decisions at 08:24:36 and 08:24:43 UTC in
+   `cloud-platform-infrastructure` (`terraform/aws-accounts/cloud-platform-aws/vpc/eks`,
+   class `dynamic`, "python3 code mentions infrastructure tools, an AWS SDK or
+   guard files; it cannot be analyzed", tier protected) and at 08:29:54 and
+   08:33:45 UTC in `terragrunt-infrastructure-live-example` (`root.hcl` and
+   `non-prod/us-east-1/qa/mysql-replica/terragrunt.hcl`). The analyzer now
+   recognises a Python or Node body that cannot run anything (rules in
+   [docs/limits.md](../limits.md)) and allows it with a decision note; the same
+   bodies plus `subprocess.run`, an `os.system` built with `getattr` and split
+   literals (the F1 shape), a `boto3` import, or a `.seatbelt.yaml`/`.tfstate`
+   target still ask or block (`internal/shell/interp_test.go`, pack B43–B46
+   versus D96–D99).
+2. **The `prod` name hint matched `non-prod`.** Every command under
+   `non-prod/us-east-1/…` in `terragrunt-infrastructure-live-example` was tiered
+   protected with environment "prod (name hint)" ("path non-prod/us-east-1/qa
+   looks like production", decisions at 08:29:10, 08:29:15, 08:33:45 and
+   08:35:12 UTC) although the trial config maps `non-prod/**` to standard; the
+   hint outranked the config match. The hint now ignores `prod`, `production`,
+   `prd` and `live` when the word just before is `non`, `not`, `no` or `pre`, or
+   the word just after is `like`, `test` or `sandbox` (`config.LooksProd`,
+   `TestLooksProd`, pack D100). The same trial also matched `live` in the clone's
+   own name (`…/-work-terragrunt-infrastructure-live-example/…/live-copy/…`, a
+   scratch copy outside the config root, decisions at 08:28:47 and 08:29:54
+   UTC); that is a true whole-word `live` and is unchanged.
+
+Before and after on the trial commands (replayed through `seatbelt check` with
+the trial configs): the four edit scripts go ask → allow in the protected and
+non-prod directories; the `terragrunt plan` and `terragrunt run --all -- plan
+-destroy` commands under `non-prod/us-east-1/…` stay allow but are now tier
+standard, environment `non-prod`, instead of protected, "prod (name hint)".
+
 ## Still unverified
 
 - Codex timeout behavior (the missing-binary and signal-kill fail-open cases were

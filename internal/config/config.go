@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -397,7 +396,39 @@ type Resolution struct {
 	Unknown bool
 }
 
-var prodHint = regexp.MustCompile(`(?i)(^|[/_.:\-])(prod|production|prd|live)($|[/_.:\-])`)
+// Name hints: prod, production, prd or live as a whole word between the
+// separators / _ . : - or the ends of the value, so acme-prod-tfstate matches
+// and acme-products-tfstate does not. The word is ignored when the word just
+// before it negates it (non-prod, not_prod, pre-prod) or the word just after
+// it marks a stand-in (prod-like, prod-test, prod-sandbox). Only the adjacent
+// words count: non-prod/us-east-1/prod still names a prod directory. Glued
+// forms (nonprod, preprod) never matched, since prod is not a whole word
+// there.
+var (
+	prodWords      = map[string]bool{"prod": true, "production": true, "prd": true, "live": true}
+	prodNegPrefix  = map[string]bool{"non": true, "not": true, "no": true, "pre": true}
+	prodNegSuffix  = map[string]bool{"like": true, "test": true, "sandbox": true}
+	hintSeparators = "/_.:-"
+)
+
+// LooksProd reports whether a path, workspace, profile or backend value
+// names production under the name-hint rule.
+func LooksProd(v string) bool {
+	words := strings.FieldsFunc(strings.ToLower(v), func(r rune) bool { return strings.ContainsRune(hintSeparators, r) })
+	for i, w := range words {
+		if !prodWords[w] {
+			continue
+		}
+		if i > 0 && prodNegPrefix[words[i-1]] {
+			continue
+		}
+		if i+1 < len(words) && prodNegSuffix[words[i+1]] {
+			continue
+		}
+		return true
+	}
+	return false
+}
 
 // Resolve maps signals to a tier. When several environments match, the most
 // protected one wins.
@@ -453,7 +484,7 @@ func (c *Config) Resolve(s Signals) Resolution {
 			}
 		}
 		for _, h := range hints {
-			if h.v != "" && prodHint.MatchString(h.v) {
+			if h.v != "" && LooksProd(h.v) {
 				consider("prod (name hint)", Protected, h.what+" "+h.v+" looks like production")
 			}
 		}

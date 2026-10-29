@@ -3,6 +3,7 @@ package shell
 import (
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -425,27 +426,54 @@ func (a *analyzer) script(name string, rest []Word, cmdSt, st *state, via []stri
 
 func (a *analyzer) foreign(bn, flag string, args []Word, cmdSt, st *state, via []string, in stdin) {
 	var code string
+	// literal is true when the whole body is known: a resolved -c argument, a
+	// resolved here-document or here-string, or a file on disk. Text piped
+	// in from a decoder or built from variables is never a plain file edit.
+	literal := false
+	// rest holds the arguments the body receives as input (flags, the
+	// script's own arguments), without the code itself.
+	rest := args[1:]
 	for i, w := range args[1:] {
 		if w.Text == flag && i+2 < len(args) {
-			code = args[i+2].Text
+			code, literal = args[i+2].Text, args[i+2].Resolved
+			rest = append(append([]Word(nil), args[1:i+1]...), args[i+3:]...)
 			break
 		}
 	}
 	if code == "" && in.present {
-		code = in.text
+		code, literal = in.text, in.known && !strings.HasPrefix(in.desc, "output of")
 	}
 	if code == "" && len(args) > 1 && !strings.HasPrefix(args[1].Text, "-") && args[1].Resolved {
 		if b, err := a.opt.ReadFile(a.abs(st, args[1].Text)); err == nil {
-			code = string(b)
+			code, literal = string(b), true
+			rest = args[2:]
 		}
 	}
 	// Interpreter code is opaque, so the only signal is a textual mention. A
 	// tool name split across string-literal concatenation (e.g. 'ter'+'raform',
 	// "terra"."form") hides from a plain scan, so also test a form with those
 	// joins collapsed.
-	if Mentions(code) != nil || Mentions(dejoinLiterals(code)) != nil {
-		a.problem(st, via, bn+" "+code, bn+" code mentions infrastructure tools, an AWS SDK or guard files; it cannot be analyzed")
+	mentions := Mentions(code)
+	for _, m := range Mentions(dejoinLiterals(code)) {
+		if !slices.Contains(mentions, m) {
+			mentions = append(mentions, m)
+		}
 	}
+	if len(mentions) == 0 {
+		return
+	}
+	// A body that mentions a tool but cannot run anything is a file edit
+	// (interp.go): note it instead of asking.
+	if literal {
+		if why, ok := a.fileOnly(bn, code, rest, st.dir); ok {
+			a.note(bn + " code mentions " + strings.Join(mentions, ", ") + " but " + why + "; treated as a file edit")
+			return
+		} else if why != "" {
+			a.problem(st, via, bn+" "+code, bn+" code mentions infrastructure tools, an AWS SDK or guard files; it cannot be analyzed ("+why+")")
+			return
+		}
+	}
+	a.problem(st, via, bn+" "+code, bn+" code mentions infrastructure tools, an AWS SDK or guard files; it cannot be analyzed")
 }
 
 // parallel handles GNU parallel: parallel [opts] [command...] [:::|:::: args].
