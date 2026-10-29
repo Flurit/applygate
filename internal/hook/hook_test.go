@@ -308,3 +308,186 @@ func TestCodexAdapter(t *testing.T) {
 		t.Fatalf("Edit with file_path on hooks: %s", got)
 	}
 }
+
+// rootStandardConfig has a standard-tier root (strict off) with a protected
+// and a disposable subdirectory, so the tier of a command depends on whether
+// the adapter resolves it against the session root or the command's workdir.
+const rootStandardConfig = `version: 1
+mode: enforce
+strict: false
+default_tier: standard
+environments:
+  - name: prod
+    tier: protected
+    match: {paths: ["prod/**"]}
+  - name: dev
+    tier: disposable
+    match: {paths: ["dev/**"]}
+`
+
+func setupRootStandard(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".seatbelt.yaml"), []byte(rootStandardConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"prod", "dev"} {
+		os.MkdirAll(filepath.Join(root, d), 0o755)
+	}
+	return root
+}
+
+func TestCodexWorkdirField(t *testing.T) {
+	// The directory a Codex shell command runs in comes from tool_input
+	// (workdir, working_directory or cwd; relative values resolve against the
+	// top-level cwd) and falls back to the top-level cwd when none is sent,
+	// which is what Codex 0.165.0 does (see the Codex adapter comment).
+	cases := []struct {
+		name  string
+		tool  string
+		input map[string]any
+		want  string
+	}{
+		{"absolute workdir", "Bash", map[string]any{"command": "pwd", "workdir": "/work/repo/examples/simple"}, "/work/repo/examples/simple"},
+		{"relative workdir", "Bash", map[string]any{"command": "pwd", "workdir": "examples/simple"}, "/work/repo/examples/simple"},
+		{"relative workdir with dot segments", "Bash", map[string]any{"command": "pwd", "workdir": "./examples/../examples/simple/"}, "/work/repo/examples/simple"},
+		{"working_directory", "Bash", map[string]any{"command": "pwd", "working_directory": "/work/repo/envs/prod"}, "/work/repo/envs/prod"},
+		{"cwd inside tool_input", "Bash", map[string]any{"command": "pwd", "cwd": "envs/prod"}, "/work/repo/envs/prod"},
+		{"workdir wins over the others", "Bash", map[string]any{"command": "pwd", "workdir": "a", "working_directory": "b", "cwd": "c"}, "/work/repo/a"},
+		{"missing falls back to cwd", "Bash", map[string]any{"command": "pwd"}, "/work/repo"},
+		{"empty string falls back to cwd", "Bash", map[string]any{"command": "pwd", "workdir": ""}, "/work/repo"},
+		{"non-string is ignored", "Bash", map[string]any{"command": "pwd", "workdir": 7}, "/work/repo"},
+		{"exec_command tool name", "exec_command", map[string]any{"command": "pwd", "workdir": "examples/simple"}, "/work/repo/examples/simple"},
+		{"apply_patch keeps the top-level cwd", "apply_patch", map[string]any{"command": "*** Begin Patch\n*** Update File: x\n*** End Patch\n", "workdir": "examples/simple"}, "/work/repo"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ev, ok, err := Codex{}.Parse([]byte(event(c.tool, "/work/repo", c.input)))
+			if err != nil || !ok {
+				t.Fatalf("parse: ok=%v err=%v", ok, err)
+			}
+			if ev.Cwd != c.want {
+				t.Fatalf("cwd %q, want %q", ev.Cwd, c.want)
+			}
+		})
+	}
+	// Without a top-level cwd a relative workdir is kept as given.
+	raw, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Bash",
+		"tool_input": map[string]any{"command": "pwd", "workdir": "examples/simple"}})
+	ev, _, err := Codex{}.Parse(raw)
+	if err != nil || ev.Cwd != "examples/simple" {
+		t.Fatalf("no top-level cwd: got %q err %v", ev.Cwd, err)
+	}
+}
+
+// readLog returns the single decision-log entry written to path.
+func readLog(t *testing.T, path string) decisionlog.Entry {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	entries, bad := decisionlog.Read(f)
+	if bad != 0 || len(entries) != 1 {
+		t.Fatalf("entries %d bad %d", len(entries), bad)
+	}
+	return entries[0]
+}
+
+func TestCodexWorkdirDecidesTier(t *testing.T) {
+	// The trial case: a Codex session rooted in a standard-tier repository
+	// runs commands in a subdirectory. With the workdir in the event, the
+	// tier and the plan gate follow the subdirectory; without it, the root.
+	root := setupRootStandard(t)
+	run := func(cwd string, input map[string]any, plan func(string, string, string) ([]byte, error)) (string, decisionlog.Entry) {
+		log := filepath.Join(t.TempDir(), "log.jsonl")
+		o := Run(Codex{}, strings.NewReader(event("Bash", cwd, input)),
+			Options{LogPath: log, NoGit: true, Env: map[string]string{}, PlanJSON: plan})
+		return decision(t, o), readLog(t, log)
+	}
+
+	// Disposable workdir under the standard root: destroy is allowed there.
+	got, e := run(root, map[string]any{"command": "terraform destroy -auto-approve", "workdir": "dev"}, nil)
+	if got != "allow" {
+		t.Fatalf("destroy in disposable workdir: got %s, want allow", got)
+	}
+	if e.Cwd != filepath.Join(root, "dev") || len(e.Actions) != 1 || e.Actions[0].Dir != filepath.Join(root, "dev") || e.Actions[0].Tier != "disposable" {
+		t.Fatalf("log should record the workdir and the disposable tier: cwd %q actions %+v", e.Cwd, e.Actions)
+	}
+	// The same command without a workdir is judged by the root (standard:
+	// ask, enforced as deny for Codex).
+	if got, e := run(root, map[string]any{"command": "terraform destroy -auto-approve"}, nil); got != "deny" || e.Actions[0].Dir != root {
+		t.Fatalf("destroy at the root: got %s dir %q, want deny at %q", got, e.Actions[0].Dir, root)
+	}
+
+	// A relative planfile resolves against the workdir, so the plan gate reads
+	// the file Codex is about to apply instead of reporting it missing.
+	if err := os.WriteFile(filepath.Join(root, "dev", "simple.tfplan"), []byte("not a real planfile"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var showDir, showPlan string
+	show := func(engine, dir, planfile string) ([]byte, error) {
+		showDir, showPlan = dir, planfile
+		p := planfile
+		if !filepath.IsAbs(p) {
+			p = filepath.Join(dir, p)
+		}
+		if _, err := os.Stat(p); err != nil {
+			return nil, errors.New("terraform show failed: " + err.Error())
+		}
+		return []byte(`{"format_version":"1.2","terraform_version":"1.16.1","resource_changes":[]}`), nil
+	}
+	got, e = run(root, map[string]any{"command": "terraform apply simple.tfplan", "workdir": "dev"}, show)
+	if got != "allow" {
+		t.Fatalf("apply of a saved plan in the disposable workdir: got %s", got)
+	}
+	if showDir != filepath.Join(root, "dev") || showPlan != "simple.tfplan" {
+		t.Fatalf("show ran in %q on %q, want %q and simple.tfplan", showDir, showPlan, filepath.Join(root, "dev"))
+	}
+	a := e.Actions[0]
+	if a.PlanSHA256 == "" {
+		t.Fatalf("the planfile was not read: %+v", a)
+	}
+	for _, f := range a.Findings {
+		if f.Rule == "plan-missing" || f.Rule == "plan-unreadable" {
+			t.Fatalf("plan gate did not read the planfile: %+v", a.Findings)
+		}
+	}
+	// The same apply without the workdir looks in the root: plan-missing.
+	_, e = run(root, map[string]any{"command": "terraform apply simple.tfplan"}, show)
+	missing := false
+	for _, f := range e.Actions[0].Findings {
+		missing = missing || f.Rule == "plan-missing"
+	}
+	if !missing {
+		t.Fatalf("without a workdir the planfile should be missing at the root: %+v", e.Actions[0].Findings)
+	}
+}
+
+func TestCodexProtectedWorkdirUnderDisposableRoot(t *testing.T) {
+	// The reverse safety case: the session is rooted in a disposable
+	// directory but the command runs in a protected one. The workdir must
+	// win, so the destroy blocks.
+	root := setupRootStandard(t)
+	dev := filepath.Join(root, "dev")
+	for _, wd := range []string{filepath.Join(root, "prod"), "../prod"} {
+		log := filepath.Join(t.TempDir(), "log.jsonl")
+		o := Run(Codex{}, strings.NewReader(event("Bash", dev, map[string]any{"command": "terraform destroy -auto-approve", "workdir": wd})),
+			Options{LogPath: log, NoGit: true, Env: map[string]string{}})
+		if got := decision(t, o); got != "deny" {
+			t.Fatalf("workdir %q: destroy in a protected workdir must be denied, got %s", wd, got)
+		}
+		e := readLog(t, log)
+		if e.Cwd != filepath.Join(root, "prod") || e.Actions[0].Tier != "protected" {
+			t.Fatalf("workdir %q: log cwd %q tier %q", wd, e.Cwd, e.Actions[0].Tier)
+		}
+	}
+	// And without a workdir the disposable root allows it, which is what
+	// makes the workdir the safety-relevant signal.
+	o := Run(Codex{}, strings.NewReader(event("Bash", dev, map[string]any{"command": "terraform destroy -auto-approve"})),
+		Options{NoLog: true, NoGit: true, Env: map[string]string{}})
+	if got := decision(t, o); got != "allow" {
+		t.Fatalf("destroy at a disposable root: got %s", got)
+	}
+}

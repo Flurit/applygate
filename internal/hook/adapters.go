@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/Flurit/seatbelt/internal/classify"
@@ -58,6 +59,12 @@ type hookInput struct {
 // permission prompt; ask and block return hookSpecificOutput with
 // permissionDecision "ask" or "deny". Internal errors that must block exit 2
 // with the reason on stderr, which blocks regardless of JSON parsing.
+//
+// Working directory (same docs, read 2026-10-29): the Bash tool input carries
+// command, description, timeout and run_in_background only, no directory, and
+// the top-level cwd "follows Claude": it is the shell's directory at the time
+// of the call, after any earlier cd. So cwd is the directory the command runs
+// in and nothing else needs to be read.
 type Claude struct{}
 
 func (Claude) Name() string { return "claude" }
@@ -132,6 +139,18 @@ func (Claude) Fail(block bool, msg string) Output {
 // hookSpecificOutput.permissionDecision "deny" or exit 2. Codex parses but
 // does not support "ask" (it fails the hook and continues the tool call), so
 // CanAsk is false and every ask is enforced as a block.
+//
+// Working directory (openai/codex at rust-v0.165.0, read 2026-10-29): the
+// model's exec_command call takes a workdir and Codex runs the command there,
+// but the hook input is built from the call as {"command": cmd} only
+// (core/src/tools/handlers/unified_exec/exec_command.rs, pre_tool_use_payload)
+// and the top-level cwd is the turn's directory (core/src/hook_runtime.rs,
+// tool_hook_cwd), so the workdir does not reach the hook; a captured input is
+// in review/agent-trial/results/2026-10-29-codex-hook-payload. The adapter reads
+// tool_input.workdir, working_directory or cwd when a Codex version sends one
+// and otherwise falls back to the top-level cwd; see docs/limits.md.
+// apply_patch paths are relative to the turn's cwd in Codex as well
+// (handlers/apply_patch.rs), so only shell commands use the field.
 type Codex struct{}
 
 func (Codex) Name() string { return "codex" }
@@ -161,9 +180,7 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 	switch in.ToolName {
 	case "Bash", "shell", "local_shell", "exec_command", "unified_exec", "container.exec":
 		ev.Kind, ev.Command = policy.KindShell, cmd
-		if wd := commandField(ti["workdir"]); wd != "" {
-			ev.Cwd = wd
-		}
+		ev.Cwd = workDir(ti, in.Cwd)
 	case "apply_patch", "Edit", "Write":
 		patch := cmd
 		if patch == "" {
@@ -181,6 +198,34 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 		ev.Kind = policy.KindOther
 	}
 	return ev, true, nil
+}
+
+// workDir returns the directory a Codex shell command runs in: the first of
+// tool_input.workdir, working_directory and cwd that is a non-empty string,
+// resolved against the event's top-level cwd when relative, or that cwd when
+// none is present. The result is what the policy resolves the tier from and
+// what the decision log records as the action's dir.
+func workDir(ti map[string]json.RawMessage, cwd string) string {
+	for _, k := range []string{"workdir", "working_directory", "cwd"} {
+		wd := stringField(ti[k])
+		if wd == "" {
+			continue
+		}
+		if !filepath.IsAbs(wd) && cwd != "" {
+			wd = filepath.Join(cwd, wd)
+		}
+		return filepath.Clean(wd)
+	}
+	return cwd
+}
+
+// stringField accepts a JSON string only.
+func stringField(raw json.RawMessage) string {
+	var s string
+	if len(raw) == 0 || json.Unmarshal(raw, &s) != nil {
+		return ""
+	}
+	return s
 }
 
 // commandField accepts a string or an argv array.
