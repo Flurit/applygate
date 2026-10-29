@@ -115,9 +115,10 @@ terragrunt apply tfplan
 
 Notes. `terragrunt run --all apply` adds `-auto-approve` and still runs the
 hook in every unit, so a destructive plan in one unit stops that unit only.
-`applygate check` cannot ask on a terminal yet, so an ask verdict is an abort
-with the reason printed; the human verified-plan flow that can prompt is the
-next item on the roadmap. The hooks need `applygate` on PATH on the machine or
+`applygate check` cannot prompt, so an ask verdict is an abort with the reason
+printed. On a workstation, `applygate apply tfplan` is the flow that can ask:
+it judges the plan the same way and takes a typed confirmation before running
+the engine. The hooks need `applygate` on PATH on the machine or
 runner that runs Terragrunt; `applygate doctor` from the unit directory
 confirms the config it will use. Terragrunt's own `prevent_destroy = true`
 remains the right setting for units that must never be destroyed at all.

@@ -73,6 +73,17 @@ After a few days in observe mode, run `applygate report` to see what would have 
 **Codex and the command directory.** Codex 0.165.0 does not tell the hook which directory a command runs in, only the session root. applygate then judges the command at the most protected tier it could be in under that root (so a destroy under a repository with a protected directory is blocked wherever Codex ran it), a `cd` in the command establishes the directory, and a relative planfile is looked up under the root. Details and the opt-out (`unknown_dir`) are in [docs/limits.md](docs/limits.md) and [docs/config.md](docs/config.md).
 
 
+### Apply from your own terminal
+
+The same gate works without an agent. Make a plan, then apply it through applygate: it judges the saved plan for the directory's tier, refuses a block, asks you to type the environment's name on an ask, and only then runs the engine.
+
+```bash
+terraform plan -out=tfplan
+applygate apply tfplan            # add --engine tofu for OpenTofu; extra arguments go to the engine
+```
+
+Outside a terminal an ask is refused unless `--yes` is given, and `--yes` never approves an apply in a protected tier. Every decision lands in the decision log with agent `human`.
+
 ### In CI and Terragrunt
 
 The same plan gate runs in a pipeline between `plan -out` and `apply`, as a GitHub Action or a shell step, and as a Terragrunt `before_hook`; exit codes 0/4/3 are allow/ask/block. See [docs/ci.md](docs/ci.md).
@@ -107,6 +118,7 @@ Plan gate: in protected tiers critical findings block and high findings ask; in 
 | `applygate check "<cmd>"` | Dry-run a command (exit 0 allow, 4 ask, 3 block) |
 | `applygate explain "<cmd>"` | Parse → classify → decide trace |
 | `applygate plan-check plan.json` | Evaluate `terraform show -json` output |
+| `applygate apply tfplan [args]` | Judge a saved plan as the hooks would, confirm an ask by typing the environment name, then run the engine (`--engine tofu`; `--yes` outside protected tiers) |
 | `applygate report` | Summarize the decision log |
 | `applygate selftest` | Run the embedded scenario pack against this binary |
 | `applygate init [--no-hooks] [--scope user\|project]` | Write a starter config, detect installed agents, install their hooks (user scope by default) |

@@ -3,6 +3,7 @@
 ## Unreleased
 
 - The plan gate in CI: a composite GitHub Action (`Flurit/applygate@<tag>`, inputs `plan`, `tier`, `fail-on`, `working-directory`, `terraform`, `version`, `binary`), the portable `scripts/ci-plan-check.sh` it runs, and a Terragrunt `before_hook` recipe; documented in `docs/ci.md`. `action-check.yml` exercises the action against two real AWS-provider plans on every push.
+- `applygate apply <planfile>`: the human door. Judges a saved plan exactly as the hooks judge `terraform apply <planfile>` (tier, preflight, plan gate), logs the decision with agent `human`, refuses a block, asks for the environment name to be typed back on an ask, and only then runs `terraform` or `tofu` (`--engine`). Outside a terminal an ask is refused unless `--yes`, which never applies in a protected tier.
 
 ## v0.2.0 (2026-10-29)
 

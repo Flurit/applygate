@@ -38,6 +38,9 @@ Usage:
                                       show the parse, classification and decision trace
   applygate plan-check [--tier T] [--cwd DIR] <plan.json>
                                       evaluate "terraform show -json" output
+  applygate apply [--cwd DIR] [--engine terraform|tofu] [--yes] <planfile> [args]
+                                      judge a saved plan as the hooks would, confirm an ask by typing the
+                                      environment name, then run the engine's apply (the human door)
   applygate report [--log FILE]        summarize the decision log
   applygate selftest [-v]              run the scenario pack against this binary
   applygate init [--no-hooks] [--scope user|project]
@@ -70,6 +73,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdCheck(args[1:], stdout, stderr, true)
 	case "plan-check":
 		return cmdPlanCheck(args[1:], stdout, stderr)
+	case "apply":
+		return cmdApply(args[1:], os.Stdin, os.Stdout, os.Stderr)
 	case "report":
 		return cmdReport(args[1:], stdout, stderr)
 	case "selftest":
