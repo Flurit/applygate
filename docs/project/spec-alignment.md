@@ -121,7 +121,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Item | Status |
 |---|---|
 | Passes the v0 pack at the agreed threshold | partial: passes the reconstructed pack 122/122; no threshold agreed, original pack unavailable |
-| Observe-mode trial on 5 real repositories | partial: static stand-in on 5 public repositories ([oss-corpus-trial.md](../oss-corpus-trial.md)), 0.48% false positives on 1,259 runnable commands; no agent sessions yet |
+| Observe-mode trial on 5 real repositories | partial: a static stand-in on 5 public repositories ([oss-corpus-trial.md](../oss-corpus-trial.md), 0.48% on 1,259 commands), then an agent-driven trial on the same repositories (`review/agent-trial/`, 2026-10-29): Claude Code all 30 tasks and Codex 12, 169 decisions, 4 false positives (2.4%; Claude Code alone 4.1%, two repositories above 5%), plan gate exercised on an agent-made planfile. Not a team trial |
 | Installs in under 5 minutes on macOS and Linux | partial: 3 s on Linux against v0.1.0; not exercised on a Mac |
 | Works with Claude Code and one more agent | done: Claude Code and Codex, live-tested (T3) |
 | Fail-closed behavior verified by chaos tests | done |
