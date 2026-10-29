@@ -84,6 +84,17 @@ applygate apply tfplan            # add --engine tofu for OpenTofu; extra argume
 
 Outside a terminal an ask is refused unless `--yes` is given, and `--yes` never approves an apply in a protected tier. Every decision lands in the decision log with agent `human`.
 
+### In CI and Terragrunt
+
+The same plan gate runs in a pipeline between `plan -out` and `apply`, as a GitHub Action or a shell step, and as a Terragrunt `before_hook`; exit codes 0/4/3 are allow/ask/block. See [docs/ci.md](docs/ci.md).
+
+```yaml
+- uses: Flurit/applygate@v0.2.0
+  with:
+    plan: tfplan
+    working-directory: envs/prod
+```
+
 ## Verdicts
 
 | Class | Examples | Protected | Standard | Disposable |
