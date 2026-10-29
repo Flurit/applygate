@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/expand"
@@ -66,6 +67,9 @@ type Problem struct {
 type Result struct {
 	Invocations []Invocation
 	Problems    []Problem
+	// Notes explain constructs that were examined and found harmless, such
+	// as an interpreter body that mentions a tool but can only edit files.
+	Notes []string
 }
 
 // Options control resolution.
@@ -78,6 +82,13 @@ type Options struct {
 	Wrappers map[string]WrapperSpec
 	ReadFile func(path string) ([]byte, error)
 	MaxDepth int
+	// ProtectedPaths are the guard-file patterns from the config. An
+	// interpreter body that names one of them is never a plain file edit.
+	ProtectedPaths []string
+	// ProtectedPath reports whether an absolute path is a guard file (the
+	// classify package's matcher); the files an interpreter body writes are
+	// resolved against its directory and checked with it.
+	ProtectedPath func(string) bool
 }
 
 const maxFileSize = 512 << 10
@@ -220,6 +231,12 @@ func (a *analyzer) problem(st *state, via []string, text, reason string) {
 		Text: short(text), Reason: reason, Via: append([]string(nil), via...), Dir: st.dir,
 		Mentions: Mentions(text),
 	})
+}
+
+func (a *analyzer) note(text string) {
+	if !slices.Contains(a.res.Notes, text) {
+		a.res.Notes = append(a.res.Notes, text)
+	}
 }
 
 // source parses and walks a shell program.

@@ -21,6 +21,11 @@ environments:
     match:
       paths: ["envs/dev/**", "envs/sandbox/**"]
       aws_profiles: ["dev", "sandbox"]
+  # Terragrunt-style layout: the "prod" name hint must not match "non-prod".
+  - name: non-prod
+    tier: standard
+    match:
+      paths: ["non-prod/**"]
 # Addresses whose destroy or replace is critical whatever the type (spec: protected_resources).
 protected_resources: ["aws_instance.bastion"]
 # A team's own credential runner: company-run PROFILE COMMAND...

@@ -352,6 +352,68 @@ the merged-config explanation for the "a failed hook does not override seatbelt'
 block" observation is marked *likely* in the log (the hook file contents were not
 captured).
 
+## Fixed from the agent trial (2026-10-29)
+
+The agent-driven observe-mode trial (`review/agent-trial/`, Claude Code 2.1.312,
+seatbelt 0.1.3, decision log of 2026-10-29 with 76 decisions: 71 allow, 4 ask,
+1 block) had exactly two false-positive sources, both fixed in the PR that adds
+this section:
+
+1. **File-only interpreter bodies asked.** All four asks were `python3 -I -
+   <<'EOF'` scripts that only called `open(...).read()`, `re.sub`, string
+   operations and `open(...).write()` on a `.tf` or `.hcl` file, and mentioned
+   `terraform` or `terragrunt` only as text (`\$\{terraform\.workspace\}` in a
+   regex, `terraform {` as a search string, `terraform.tfstate` inside an HCL
+   block being inserted). Evidence: decisions at 08:24:36 and 08:24:43 UTC in
+   `cloud-platform-infrastructure` (`terraform/aws-accounts/cloud-platform-aws/vpc/eks`,
+   class `dynamic`, "python3 code mentions infrastructure tools, an AWS SDK or
+   guard files; it cannot be analyzed", tier protected) and at 08:29:54 and
+   08:33:45 UTC in `terragrunt-infrastructure-live-example` (`root.hcl` and
+   `non-prod/us-east-1/qa/mysql-replica/terragrunt.hcl`). The analyzer now
+   recognises a Python or Node body that cannot run anything (rules in
+   [docs/limits.md](../limits.md)) and allows it with a decision note; the same
+   bodies plus `subprocess.run`, an `os.system` built with `getattr` and split
+   literals (the F1 shape), a `boto3` import, or a `.seatbelt.yaml`/`.tfstate`
+   target still ask or block (`internal/shell/interp_test.go`, pack B43–B46
+   versus D96–D99). A code review of that PR found six ways past the first
+   version (a function passed by reference, `sys.call_tracing(os.system, …)`,
+   `map(os.system, …)`, `f=open`; a name rebound by a `for` loop, a `with … as`,
+   a parameter or destructuring after being bound once to a literal; an
+   `import` after `if …:` or `try:`; `../` traversal out of the working
+   directory; `io.FileIO`; writes to `.envrc`, `makefile`, `.ts`, `package.json`
+   or `.github/workflows`) and one false positive (`provider.aws` in HCL text
+   matched the `.aws` credential pattern). The check now splits Python code
+   from its strings and comments and denies the dangerous names wherever they
+   appear in code, marks every other binding form as unresolved, finds imports
+   anywhere, requires a path boundary around guard directory names, and
+   replaces the write-target denylist with a positive rule (a literal path
+   under the working directory, no hidden segment, no tool manifest, a
+   repository-configuration extension). Every string in the body is scanned
+   for state, guard, credential and start-up files, so trial edit 3 (root.hcl
+   gaining an HCL block that names `terraform.tfstate` as text, decision at
+   08:29:54 UTC) asks again; that is deliberate and B45 in the pack records it
+   as an expected ask. Pack D101–D102 hold the reference-passing and rebinding
+   forms.
+2. **The `prod` name hint matched `non-prod`.** Every command under
+   `non-prod/us-east-1/…` in `terragrunt-infrastructure-live-example` was tiered
+   protected with environment "prod (name hint)" ("path non-prod/us-east-1/qa
+   looks like production", decisions at 08:29:10, 08:29:15, 08:33:45 and
+   08:35:12 UTC) although the trial config maps `non-prod/**` to standard; the
+   hint outranked the config match. The hint now ignores `prod`, `production`,
+   `prd` and `live` when the word just before is `non`, `not`, `no` or `pre`, or
+   the word just after is `like`, `test` or `sandbox` (`config.LooksProd`,
+   `TestLooksProd`, pack D100). The same trial also matched `live` in the clone's
+   own name (`…/-work-terragrunt-infrastructure-live-example/…/live-copy/…`, a
+   scratch copy outside the config root, decisions at 08:28:47 and 08:29:54
+   UTC); that is a true whole-word `live` and is unchanged.
+
+Before and after on the trial commands (replayed through `seatbelt check` with
+the trial configs): three of the four edit scripts go ask → allow in the
+protected and non-prod directories (the root.hcl edit stays an ask because its
+text names `terraform.tfstate`); the `terragrunt plan` and `terragrunt run --all -- plan
+-destroy` commands under `non-prod/us-east-1/…` stay allow but are now tier
+standard, environment `non-prod`, instead of protected, "prod (name hint)".
+
 ## Still unverified
 
 - Codex timeout behavior (the missing-binary and signal-kill fail-open cases were
