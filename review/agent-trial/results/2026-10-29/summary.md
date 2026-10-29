@@ -12,7 +12,7 @@ endpoint and no cloud credentials.
 | Agents | none ran (pending interactive sign-in); installed: Claude Code 2.1.312, Codex 0.165.0 |
 | Terraform | Terraform v1.16.1 |
 | Machine | Linux 7.0.0-42-generic x86_64, Ubuntu 24.04.5 LTS (container); host: _fill in_ |
-| Collected | 2026-10-29T06:26:09Z |
+| Collected | 2026-10-29T06:45:28Z |
 | Decisions | 0 (malformed lines: 0) |
 
 ## Counts (policy verdicts; in observe mode every decision is enforced as allow)
@@ -44,86 +44,29 @@ whether the expected verdicts appeared in the log.
 ## `seatbelt report`
 
 ```
-log: /tmp/tmp.xIzJPnMKPx/decisions.jsonl
+log: /tmp/tmp.rjm0IMhDTf/decisions.jsonl
 decisions: 0 (malformed lines: 0, internal errors: 0)
 policy verdicts:   allow 0, ask 0, block 0
 enforced verdicts: allow 0, ask 0, block 0
 observe mode, would have asked or blocked: 0
 ```
 
-## `seatbelt doctor` per clone
-
-### cloud-platform-infrastructure (clean)
+## `seatbelt doctor` per clone (`doctor-summary.txt`)
 
 ```
-seatbelt 0.1.3 at /usr/local/bin/seatbelt
-ok   config loads (/work/cloud-platform-infrastructure/.seatbelt.yaml)
-ok   repository config found (/work/cloud-platform-infrastructure)
-ok   3 environment(s) configured
-     mode observe, strict true, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
-ok   claude hook command binary is executable: /usr/local/bin/seatbelt
-ok   codex hook command binary is executable: /usr/local/bin/seatbelt
-ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
-ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 64ms
+seatbelt doctor per clone (full output in raw/doctor/): mode, hooks, warnings, exit code
+
+cloud-platform-infrastructure: mode observe; hooks claude (.claude/settings.json), codex (.codex/hooks.json); 0 warning(s); exit 0
+govuk-infrastructure: mode observe; hooks claude (.claude/settings.json), codex (.codex/hooks.json); 0 warning(s); exit 0
+terraform-aws-eks-blueprints: mode observe; hooks claude (.claude/settings.json), codex (.codex/hooks.json); 0 warning(s); exit 0
+terraform-aws-vpc: mode observe; hooks claude (.claude/settings.json), codex (.codex/hooks.json); 0 warning(s); exit 0
+terragrunt-infrastructure-live-example: mode observe; hooks claude (.claude/settings.json), codex (.codex/hooks.json); 0 warning(s); exit 0
+
+launch-directory check (docs/limits.md): doctor from /work/terraform-aws-vpc/examples/simple
+  3 warning(s); exit 1 (expected: warns that the project hook is in an ancestor, exit 1)
 ```
 
-### govuk-infrastructure (clean)
-
-```
-seatbelt 0.1.3 at /usr/local/bin/seatbelt
-ok   config loads (/work/govuk-infrastructure/.seatbelt.yaml)
-ok   repository config found (/work/govuk-infrastructure)
-ok   4 environment(s) configured
-     mode observe, strict true, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
-ok   claude hook command binary is executable: /usr/local/bin/seatbelt
-ok   codex hook command binary is executable: /usr/local/bin/seatbelt
-ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
-ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 54ms
-```
-
-### terraform-aws-eks-blueprints (clean)
-
-```
-seatbelt 0.1.3 at /usr/local/bin/seatbelt
-ok   config loads (/work/terraform-aws-eks-blueprints/.seatbelt.yaml)
-ok   repository config found (/work/terraform-aws-eks-blueprints)
-ok   1 environment(s) configured
-     mode observe, strict false, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
-ok   claude hook command binary is executable: /usr/local/bin/seatbelt
-ok   codex hook command binary is executable: /usr/local/bin/seatbelt
-ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
-ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 76ms
-```
-
-### terraform-aws-vpc (clean)
-
-```
-seatbelt 0.1.3 at /usr/local/bin/seatbelt
-ok   config loads (/work/terraform-aws-vpc/.seatbelt.yaml)
-ok   repository config found (/work/terraform-aws-vpc)
-ok   1 environment(s) configured
-     mode observe, strict false, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
-ok   claude hook command binary is executable: /usr/local/bin/seatbelt
-ok   codex hook command binary is executable: /usr/local/bin/seatbelt
-ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
-ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 54ms
-```
-
-### terragrunt-infrastructure-live-example (clean)
-
-```
-seatbelt 0.1.3 at /usr/local/bin/seatbelt
-ok   config loads (/work/terragrunt-infrastructure-live-example/.seatbelt.yaml)
-ok   repository config found (/work/terragrunt-infrastructure-live-example)
-ok   2 environment(s) configured
-     mode observe, strict true, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
-ok   claude hook command binary is executable: /usr/local/bin/seatbelt
-ok   codex hook command binary is executable: /usr/local/bin/seatbelt
-ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
-ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 55ms
-```
-
-## Agent changes per clone (`git status --short`, line counts of the diff)
+## Agent changes per clone (from raw/diff/, not committed)
 
 | Clone | Changed files | Diff lines |
 |---|---|---|
@@ -136,7 +79,7 @@ ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, ex
 ## Plan-gate exercise (no agent; `plangate/verdicts.md`)
 
 
-    date: 2026-10-29T06:19:07Z
+    date: 2026-10-29T06:39:07Z
     seatbelt: seatbelt 0.1.3
     terraform: Terraform v1.16.1
     localstack: {"version":"4.14.0","s3":"running","ec2":"running","dynamodb":"running"}
@@ -168,8 +111,7 @@ plan-check is given the workspace's tier explicitly (--tier); the hook path reso
 | staging | standard | missing | `terraform apply plans/missing.tfplan` | n/a | allow | allow | allow | allow | apply-saved-plan | high plan-missing |
 | staging | standard | garbage | `terraform apply plans/garbage.tfplan` | n/a | ask | ask | ask | deny | apply-saved-plan | critical plan-unreadable |
 
-Decision log entries: 40 (two per plan: one Claude, one Codex event). Raw hook outputs are in hook/, plan JSON and plan-check output in plans/.
-
+Decision log entries: 40 (two per plan: one Claude, one Codex event). Raw per-case output (hook stdout/stderr, plan JSON, plan-check output, init and apply logs) is written to raw/ next to this file and is not committed; collect.sh copies it to results/<date>/raw/plangate/.
 
 ## Hand review of this run
 
@@ -180,13 +122,16 @@ did measure is the harness itself and the plan-gate exercise.
 
 ### Harness checks (pass)
 
+The top-level decision log was empty (no agent ran) and is not committed for
+this run; `plangate/decisions.jsonl` holds the 40 exercise entries.
+
 - Image build: `install.sh` with `SEATBELT_VERIFY_SIGNATURE=require` verified
   the cosign keyless signature on `checksums.txt` for
   `release.yml@refs/tags/v0.1.3`, then the sha256; `seatbelt selftest` on the
   installed binary: 80/80 dangerous caught, 0/42 benign flagged, 122/122.
 - All five clones at their pinned commits, `mode: observe`, Claude Code and
   Codex hooks installed at project scope; `seatbelt doctor` clean (exit 0) in
-  each clone root (`doctor-at-build.txt`, `doctor/`). From a subdirectory
+  each clone root (`doctor-summary.txt`). From a subdirectory
   doctor warns that the project hook is in an ancestor and exits 1, which is
   the launch-directory caveat from `docs/limits.md` working as documented.
 - Container environment: only LocalStack's dummy credentials and endpoint

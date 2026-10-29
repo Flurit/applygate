@@ -1,3 +1,0 @@
-tier protected: block (1 changes, 0 deletes, 0 replaces)
-- critical protection-removed: plan removes data protection
-    aws_s3_bucket.data: forced bucket destroy enabled

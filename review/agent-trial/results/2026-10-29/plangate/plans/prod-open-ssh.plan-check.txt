@@ -1,3 +1,0 @@
-tier protected: ask (1 changes, 0 deletes, 0 replaces)
-- high exposure: plan exposes resources
-    aws_security_group.web: ingress from the internet on port 22

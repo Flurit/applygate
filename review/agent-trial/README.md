@@ -62,7 +62,7 @@ that is why nothing in the container can reach a real cloud.
 | `plangate/` | The plan-gate exercise: a small stack against LocalStack (S3 bucket with versioning, a security group, a DynamoDB table) and `run-plangate.sh`, which produces a create plan and then flipped delete, replace, protection-removal and exposure plans, and runs each through `seatbelt plan-check` and through the hook path for `terraform apply <planfile>`. Needs no agent. |
 | `collect.sh` | Gathers the decision log, `seatbelt report`, `seatbelt doctor` per clone, the agents' diffs, versions and the plan-gate output into `results/<date>/`, and writes `summary.md`, the hand-review template. |
 | `tools/summarize.py` | Builds `summary.md` from a collected directory. |
-| `results/<date>/` | One directory per collected run. |
+| `results/<date>/` | One directory per collected run: the evidence only; `raw/` under it is gitignored. |
 
 ## How to run
 
@@ -113,7 +113,8 @@ full destroy, and sends each through `plan-check` and through
 <planfile>` event. It also sends a plan made in the other workspace
 (workspace mismatch), a missing planfile and a garbage planfile. Finally it
 applies the destroy plans to LocalStack so the sidecar is clean. The verdict
-table lands in `/work/plangate/out/verdicts.md`, which `collect.sh` copies.
+table lands in `/work/plangate/out/verdicts.md` and the per-case output in
+`/work/plangate/out/raw/`; `collect.sh` copies both (the latter to `raw/`).
 
 ### 4. Drive the agent sessions
 
@@ -152,9 +153,10 @@ From the host:
 review/agent-trial/collect.sh --agent "Claude Code 2.1.312" --agent "Codex 0.165.0"
 ```
 
-This writes `review/agent-trial/results/<date>/` with the raw decision log,
-`report.txt`, `doctor/`, `diff/`, `versions.txt`, `plangate/` and
-`summary.md`. Then review `summary.md` by hand: fill the "False positive?"
+This writes `review/agent-trial/results/<date>/` with the decision log,
+`versions.txt`, `doctor-summary.txt`, `plangate/` and `summary.md`, and the
+raw per-case output under `raw/` (not committed). Then review `summary.md`
+by hand: fill the "False positive?"
 column of every ask and block with `expected`, `fp-policy`, `fp-analyzer`,
 `fp-environment`, `debatable` or `miss` (the labels from the static trial's
 `label.py`), fill the task log, and compute the per-repository rate. Commit
@@ -168,17 +170,40 @@ decision log and the agents' edits. Collect first.
 
 ## How results are recorded
 
-- `results/<date>/summary.md` is the record of one run, in the style of
+Only evidence is committed. `collect.sh` writes `results/<date>/` with:
+
+- `summary.md`: the record of one run, in the style of
   `review/T3_RESULTS.md`: seatbelt version, agent names and versions, date,
   machine, counts of allow/ask/block per repository, every ask and block
   listed for hand review with a false-positive verdict column, the task log,
-  `seatbelt report`, `seatbelt doctor` per clone and the plan-gate verdicts.
-- `docs/project/ACCEPTANCE.md` gets a section "Agent-driven observe-mode
-  trial" that quotes the measured counts and rate per repository, names the
-  agent versions, and states in the first sentence that this is an
-  agent-driven trial, not a team trial. It must not claim numbers that were
-  not measured; agent runs that have not happened are marked "pending,
-  requires interactive agent sign-in".
+  `seatbelt report`, the doctor summary and the plan-gate verdicts.
+- `decisions.jsonl`: the observe-mode decision log (secrets already
+  redacted by seatbelt).
+- `versions.txt` and `doctor-summary.txt` (one line per clone, plus the
+  launch-directory check from a subdirectory).
+- `plangate/verdicts.md`, `verdicts.jsonl`, `meta.txt` and
+  `decisions.jsonl` from the plan-gate exercise.
+
+Everything per case goes to `results/<date>/raw/`, which `results/.gitignore`
+keeps out of git: `report.txt`, `doctor/<repo>.txt`, `diff/<repo>.patch`,
+and `plangate/` with every hook stdout/stderr, plan JSON, plan-check output
+and the init and apply logs. `run-plangate.sh` writes the same split inside
+the container (`out/` and `out/raw/`). The verdict tables summarise the raw
+files; regenerate them by rerunning the exercise.
+
+One exception, kept by hand: `results/2026-10-29/plangate/fixtures/` holds
+the `terraform show -json` output of the prod create and destroy plans from
+the first run. They are the only AWS-provider-generated plan JSON in the
+repository (the plan-gate tests use hand-written fixtures, which
+`docs/project/ACCEPTANCE.md` lists as an assumption), so they are worth
+keeping as reference shapes.
+
+`docs/project/ACCEPTANCE.md` gets a section "Agent-driven observe-mode
+trial" that quotes the measured counts and rate per repository, names the
+agent versions, and states in the first sentence that this is an
+agent-driven trial, not a team trial. It must not claim numbers that were
+not measured; agent runs that have not happened are marked "pending,
+requires interactive agent sign-in".
 
 ## What this trial does not show
 

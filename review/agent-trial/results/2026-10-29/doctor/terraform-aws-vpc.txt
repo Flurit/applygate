@@ -1,9 +1,0 @@
-seatbelt 0.1.3 at /usr/local/bin/seatbelt
-ok   config loads (/work/terraform-aws-vpc/.seatbelt.yaml)
-ok   repository config found (/work/terraform-aws-vpc)
-ok   1 environment(s) configured
-     mode observe, strict false, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
-ok   claude hook command binary is executable: /usr/local/bin/seatbelt
-ok   codex hook command binary is executable: /usr/local/bin/seatbelt
-ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
-ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 54ms

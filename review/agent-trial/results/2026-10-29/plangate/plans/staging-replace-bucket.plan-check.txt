@@ -1,3 +1,0 @@
-tier standard: ask (2 changes, 0 deletes, 2 replaces)
-- critical stateful-destroyed: plan destroys or replaces stateful resources
-    aws_s3_bucket.data (aws_s3_bucket) is replaced

@@ -1,0 +1,10 @@
+seatbelt doctor per clone (full output in raw/doctor/): mode, hooks, warnings, exit code
+
+cloud-platform-infrastructure: mode observe; hooks claude (.claude/settings.json), codex (.codex/hooks.json); 0 warning(s); exit 0
+govuk-infrastructure: mode observe; hooks claude (.claude/settings.json), codex (.codex/hooks.json); 0 warning(s); exit 0
+terraform-aws-eks-blueprints: mode observe; hooks claude (.claude/settings.json), codex (.codex/hooks.json); 0 warning(s); exit 0
+terraform-aws-vpc: mode observe; hooks claude (.claude/settings.json), codex (.codex/hooks.json); 0 warning(s); exit 0
+terragrunt-infrastructure-live-example: mode observe; hooks claude (.claude/settings.json), codex (.codex/hooks.json); 0 warning(s); exit 0
+
+launch-directory check (docs/limits.md): doctor from /work/terraform-aws-vpc/examples/simple
+  3 warning(s); exit 1 (expected: warns that the project hook is in an ancestor, exit 1)

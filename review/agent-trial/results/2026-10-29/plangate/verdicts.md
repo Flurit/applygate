@@ -1,6 +1,6 @@
 # Plan-gate exercise verdicts
 
-    date: 2026-10-29T06:19:07Z
+    date: 2026-10-29T06:39:07Z
     seatbelt: seatbelt 0.1.3
     terraform: Terraform v1.16.1
     localstack: {"version":"4.14.0","s3":"running","ec2":"running","dynamodb":"running"}
@@ -32,4 +32,4 @@ plan-check is given the workspace's tier explicitly (--tier); the hook path reso
 | staging | standard | missing | `terraform apply plans/missing.tfplan` | n/a | allow | allow | allow | allow | apply-saved-plan | high plan-missing |
 | staging | standard | garbage | `terraform apply plans/garbage.tfplan` | n/a | ask | ask | ask | deny | apply-saved-plan | critical plan-unreadable |
 
-Decision log entries: 40 (two per plan: one Claude, one Codex event). Raw hook outputs are in hook/, plan JSON and plan-check output in plans/.
+Decision log entries: 40 (two per plan: one Claude, one Codex event). Raw per-case output (hook stdout/stderr, plan JSON, plan-check output, init and apply logs) is written to raw/ next to this file and is not committed; collect.sh copies it to results/<date>/raw/plangate/.

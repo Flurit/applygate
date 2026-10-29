@@ -22,6 +22,11 @@
 # `seatbelt hook claude|codex`, exactly as the agent would; seatbelt then runs
 # `terraform show -json` on the planfile itself. The decision log for the
 # exercise is isolated under OUTDIR/state via XDG_STATE_HOME.
+#
+# OUTDIR gets the evidence (verdicts.md, verdicts.jsonl, meta.txt,
+# decisions.jsonl); everything per case (hook stdout/stderr, plan JSON,
+# plan-check output, init and apply logs) goes to OUTDIR/raw/, which is
+# never committed.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out=${1:-$here/out}
@@ -46,7 +51,8 @@ grep -q 'endpoints {' "$here/main.tf" || die "main.tf no longer has an endpoints
 for t in seatbelt terraform jq curl; do command -v "$t" >/dev/null 2>&1 || die "$t is required"; done
 curl -fsS "$ep/_localstack/health" >/dev/null 2>&1 || die "LocalStack is not reachable at $ep (docker compose up -d localstack)"
 
-mkdir -p "$out/plans" "$out/hook" "$out/state" "$here/plans"
+raw="$out/raw"
+mkdir -p "$raw/plans" "$raw/hook" "$out/state" "$here/plans"
 export XDG_STATE_HOME="$out/state"
 log="$out/state/seatbelt/decisions.jsonl"
 rm -f "$log"
@@ -65,7 +71,7 @@ unset TF_WORKSPACE
 cat "$out/meta.txt"
 
 cd "$here"
-terraform init -input=false -no-color > "$out/init.log" 2>&1 || { cat "$out/init.log"; die "terraform init failed"; }
+terraform init -input=false -no-color > "$raw/init.log" 2>&1 || { cat "$raw/init.log"; die "terraform init failed"; }
 
 verdicts="$out/verdicts.md"
 jsonl="$out/verdicts.jsonl"
@@ -87,11 +93,11 @@ hook() {
     ev=$(jq -cn --arg cwd "$here" --arg cmd "$cmd" \
         '{session_id:"plangate-exercise", hook_event_name:"PreToolUse", tool_name:"Bash", permission_mode:"default", cwd:$cwd, tool_input:{command:$cmd}}')
     set +e
-    printf '%s' "$ev" | seatbelt hook "$agent" > "$out/hook/$label.$agent.stdout" 2> "$out/hook/$label.$agent.stderr"
+    printf '%s' "$ev" | seatbelt hook "$agent" > "$raw/hook/$label.$agent.stdout" 2> "$raw/hook/$label.$agent.stderr"
     rc=$?
     set -e
-    if [ -s "$out/hook/$label.$agent.stdout" ]; then
-        d=$(jq -r '.hookSpecificOutput.permissionDecision // "unparsed"' "$out/hook/$label.$agent.stdout" 2>/dev/null || echo unparsed)
+    if [ -s "$raw/hook/$label.$agent.stdout" ]; then
+        d=$(jq -r '.hookSpecificOutput.permissionDecision // "unparsed"' "$raw/hook/$label.$agent.stdout" 2>/dev/null || echo unparsed)
     else
         d=allow
     fi
@@ -103,12 +109,12 @@ hook() {
 record() {
     ws=$1; tier=$2; name=$3; plan=$4
     label="$ws-$name"
-    terraform show -json -no-color "$plan" > "$out/plans/$label.json"
+    terraform show -json -no-color "$plan" > "$raw/plans/$label.json"
     set +e
-    pc=$(seatbelt plan-check --tier "$tier" --cwd "$here" "$out/plans/$label.json" 2>&1)
+    pc=$(seatbelt plan-check --tier "$tier" --cwd "$here" "$raw/plans/$label.json" 2>&1)
     pcrc=$?
     set -e
-    printf '%s\n' "$pc" > "$out/plans/$label.plan-check.txt"
+    printf '%s\n' "$pc" > "$raw/plans/$label.plan-check.txt"
     pcline=$(printf '%s\n' "$pc" | head -n 1 | sed 's/^tier [a-z]*: //')
     cmd="terraform apply $plan"
     cd_=$(hook claude "$cmd" "$label")
@@ -140,7 +146,7 @@ for ws in prod staging; do
     plan plans/$ws-create.tfplan
     record "$ws" "$tier" create plans/$ws-create.tfplan
     echo "  applying the create plan to LocalStack"
-    terraform apply -input=false -no-color plans/$ws-create.tfplan > "$out/$ws-apply-create.log" 2>&1 || { cat "$out/$ws-apply-create.log"; die "apply to LocalStack failed"; }
+    terraform apply -input=false -no-color plans/$ws-create.tfplan > "$raw/$ws-apply-create.log" 2>&1 || { cat "$raw/$ws-apply-create.log"; die "apply to LocalStack failed"; }
     plan plans/$ws-noop.tfplan
     record "$ws" "$tier" noop plans/$ws-noop.tfplan
     plan plans/$ws-replace-bucket.tfplan -replace=aws_s3_bucket.data
@@ -184,7 +190,7 @@ rm -f plans/garbage.tfplan
 echo "== cleanup: applying the destroy plans to LocalStack"
 for ws in prod staging; do
     terraform workspace select -no-color "$ws" >/dev/null
-    terraform apply -input=false -no-color plans/$ws-destroy.tfplan > "$out/$ws-apply-destroy.log" 2>&1 || { cat "$out/$ws-apply-destroy.log"; die "destroy apply to LocalStack failed"; }
+    terraform apply -input=false -no-color plans/$ws-destroy.tfplan > "$raw/$ws-apply-destroy.log" 2>&1 || { cat "$raw/$ws-apply-destroy.log"; die "destroy apply to LocalStack failed"; }
 done
 terraform workspace select -no-color default >/dev/null
 
@@ -192,7 +198,7 @@ cp "$log" "$out/decisions.jsonl"
 rm -rf "$out/state"
 {
     echo
-    echo "Decision log entries: $(wc -l < "$out/decisions.jsonl") (two per plan: one Claude, one Codex event). Raw hook outputs are in hook/, plan JSON and plan-check output in plans/."
+    echo "Decision log entries: $(wc -l < "$out/decisions.jsonl") (two per plan: one Claude, one Codex event). Raw per-case output (hook stdout/stderr, plan JSON, plan-check output, init and apply logs) is written to raw/ next to this file and is not committed; collect.sh copies it to results/<date>/raw/plangate/."
 } >> "$verdicts"
 echo
 echo "wrote $verdicts"

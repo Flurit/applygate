@@ -3,8 +3,8 @@
 
     summarize.py RESULTS_DIR [--agent "NAME VERSION"]... > summary.md
 
-Reads decisions.jsonl, versions.txt, report.txt, doctor/*.txt and, when the
-plan-gate exercise ran, plangate/verdicts.md. Writes Markdown: the run's
+Reads decisions.jsonl, versions.txt, doctor-summary.txt, raw/report.txt,
+raw/diff/*.patch and, when the plan-gate exercise ran, plangate/verdicts.md. Writes Markdown: the run's
 metadata, allow/ask/block counts per repository, every ask and block with an
 empty "False positive?" column for hand review, and the agent-task log to
 fill in. Reads files only; never runs anything.
@@ -154,7 +154,7 @@ def main():
     print("| | | | | | |")
     print()
 
-    rep = read("report.txt")
+    rep = read(os.path.join("raw", "report.txt"))
     if rep:
         print("## `seatbelt report`")
         print()
@@ -163,28 +163,23 @@ def main():
         print("```")
         print()
 
-    doctor_dir = os.path.join(out, "doctor")
-    if os.path.isdir(doctor_dir):
-        print("## `seatbelt doctor` per clone")
+    doc = read("doctor-summary.txt")
+    if doc:
+        print("## `seatbelt doctor` per clone (`doctor-summary.txt`)")
         print()
-        for name in sorted(os.listdir(doctor_dir)):
-            txt = read(os.path.join("doctor", name)).rstrip()
-            warns = sum(1 for l in txt.splitlines() if l.startswith("WARN"))
-            print(f"### {name[:-4]} ({'clean' if warns == 0 else str(warns) + ' warning(s)'})")
-            print()
-            print("```")
-            print(txt)
-            print("```")
-            print()
+        print("```")
+        print(doc.rstrip())
+        print("```")
+        print()
 
-    diff_dir = os.path.join(out, "diff")
+    diff_dir = os.path.join(out, "raw", "diff")
     if os.path.isdir(diff_dir):
-        print("## Agent changes per clone (`git status --short`, line counts of the diff)")
+        print("## Agent changes per clone (from raw/diff/, not committed)")
         print()
         print("| Clone | Changed files | Diff lines |")
         print("|---|---|---|")
         for name in sorted(os.listdir(diff_dir)):
-            txt = read(os.path.join("diff", name))
+            txt = read(os.path.join("raw", "diff", name))
             status, _, diff = txt.partition("\n\n")
             files = len([l for l in status.splitlines() if l.strip()])
             print(f"| {name[:-6]} | {files} | {len(diff.splitlines())} |")
