@@ -6,7 +6,7 @@ Status: pre-1.0 (v0.1.3), tested live with Claude Code and Codex. What is and is
 
 ## Why another guard
 
-Command-pattern matching is table stakes. In our v0 test slice, existing guards on default configs caught few Terraform scenarios: cc-safety-net 1 of 17 and Vectimus 5 of 17. A competent hand-written Rego/regex policy reached 14 of 17, but it still missed base64, variable and `eval` obfuscation, and it blocked harmless text such as `git commit -m "never run terraform destroy"`. A matcher cannot do better than that, because it reads text, not commands, and it cannot see what a change will do.
+Command-pattern matching is table stakes. In our v0 test slice, the existing open-source guards we tried, on default configs, caught at most 5 of 17 dangerous Terraform scenarios. A competent hand-written Rego/regex policy reached 14 of 17, but it still missed base64, variable and `eval` obfuscation, and it blocked harmless text such as `git commit -m "never run terraform destroy"`. A matcher cannot do better than that, because it reads text, not commands, and it cannot see what a change will do.
 
 seatbelt does two things a matcher cannot:
 
