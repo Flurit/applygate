@@ -43,7 +43,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Open source from day one, Apache-2.0 | done | `LICENSE`, `NOTICE` |
 | Monthly CI re-run | done | `.github/workflows/ci.yml` schedule |
 | Disclosure and ethics (private first, 30 days, hand-checked, scope-fair) | done | `CONTRIBUTING.md`, `harness/README.md` |
-| 5 or more guards tested; gate decision | open | only seatbelt has been run on the reconstructed pack; the original v0 figures (cc-safety-net 1/17, Vectimus 5/17, Rego 14/17) predate this repository |
+| 5 or more guards tested; gate decision | open | only seatbelt has been run on the reconstructed pack; the original v0 figures (existing guards at most 5/17, hand-written Rego 14/17) predate this repository; per-guard results are shared with each guard's maintainers privately first |
 
 ## v1: seatbelt core
 

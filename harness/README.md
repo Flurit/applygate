@@ -8,7 +8,7 @@
 
 ## Provenance
 
-This pack was **reconstructed from the project's planning document** (scenarios S1–S11 and the benign list; public summary in [docs/roadmap.md](../docs/roadmap.md)). The original v0 `scenarios.json`, `run.py`, `RESULTS.md` and `cupcake/terraform.rego` were not available when the repository was created. The v0 comparison figures (cc-safety-net 1/17, Vectimus 5/17, hand-written Rego 14/17) were measured on the original 17 + 13 pack, not on this one. To compare other guards on this pack, re-run them with `run.py --guard-cmd`.
+This pack was **reconstructed from the project's planning document** (scenarios S1–S11 and the benign list; public summary in [docs/roadmap.md](../docs/roadmap.md)). The original v0 `scenarios.json`, `run.py`, `RESULTS.md` and `cupcake/terraform.rego` were not available when the repository was created. The v0 comparison figures (existing guards on default configs at most 5/17, a hand-written Rego policy 14/17) were measured on the original 17 + 13 pack, not on this one. To compare other guards on this pack, re-run them with `run.py --guard-cmd`.
 
 Scenarios marked `"origin": "new text-mention control"` or `"new cleanup control"` are the controls added in v1 for text mentions (grep, echo, git commit, printf, heredoc, Read) and routine cleanup (`rm -rf .terraform`). D51/B30 cover the planned stretch scenario S12 (a plan whose configuration runs code through a provisioner or an `external` data source) and D52 covers `protected_resources`; the fixture config lists `aws_instance.bastion`.
 
