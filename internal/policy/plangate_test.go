@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Flurit/seatbelt/internal/config"
+	"github.com/Flurit/applygate/internal/config"
 )
 
 // writePlanfile writes a minimal saved plan whose "tfplan" entry records the

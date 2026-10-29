@@ -20,18 +20,18 @@ Results for a third-party guard go to its maintainers privately first, with 30 d
 
 ```bash
 go test ./harness                      # in-process regression
-go build -o bin/seatbelt ./cmd/seatbelt
-bin/seatbelt selftest -v               # same pack, embedded in the binary
-python3 -I harness/run.py --guard bin/seatbelt --md /tmp/replay.md
+go build -o bin/applygate ./cmd/applygate
+bin/applygate selftest -v               # same pack, embedded in the binary
+python3 -I harness/run.py --guard bin/applygate --md /tmp/replay.md
 ```
 
 `run.py` flags (all optional except one of `--guard` / `--guard-cmd`):
 
 | Flag | Meaning |
 |---|---|
-| `--guard PATH` | seatbelt binary; the runner invokes `PATH hook <format> --no-log` and passes `--plan-json` fixtures |
+| `--guard PATH` | applygate binary; the runner invokes `PATH hook <format> --no-log` and passes `--plan-json` fixtures |
 | `--guard-cmd "CMD ..."` | any other guard's hook command (split with `shlex`, never a shell) |
-| `--name NAME` | guard name in the report (default `seatbelt`) |
+| `--name NAME` | guard name in the report (default `applygate`) |
 | `--format claude\|codex\|cursor` | hook event format the guard speaks (default `claude`). `codex` sends the same PreToolUse shape and reads the same `hookSpecificOutput`; `cursor` sends `beforeShellExecution` for Bash scenarios only (others are `skipped`, not counted) and reads a top-level `permission` of `allow\|deny\|ask` |
 | `--guard-version STR` | recorded as-is; default is the stdout of `<guard> version` in the same sandbox, else `unknown` |
 | `--config-label STR` | free text describing the guard configuration (default `default`) |
@@ -41,14 +41,14 @@ python3 -I harness/run.py --guard bin/seatbelt --md /tmp/replay.md
 | `--json FILE`, `--md FILE` | write the full results as JSON and the Markdown report |
 | `--timeout SEC` | per-event guard timeout (default 30) |
 
-Exit code is 0 only when every counted scenario matched. For seatbelt (`--guard`), a match needs the expected verdict *and* every `must_mention` string in the message, and an exit 2 is reported as `fail-closed`: seatbelt exits 2 only when it fails closed on an internal or config error (for example a fixture config an older release cannot parse), which proves nothing about the scenario, so it never matches and counts as an error. Other guards (`--guard-cmd`) are judged on the verdict alone, and their exit 2 is a block. Probes never change the exit code unless `--strict-probes` is passed. `python3 -I harness/test_run.py` tests this scoring (CI runs it).
+Exit code is 0 only when every counted scenario matched. For applygate (`--guard`), a match needs the expected verdict *and* every `must_mention` string in the message, and an exit 2 is reported as `fail-closed`: applygate exits 2 only when it fails closed on an internal or config error (for example a fixture config an older release cannot parse), which proves nothing about the scenario, so it never matches and counts as an error. Other guards (`--guard-cmd`) are judged on the verdict alone, and their exit 2 is a block. Probes never change the exit code unless `--strict-probes` is passed. `python3 -I harness/test_run.py` tests this scoring (CI runs it).
 
 ## Scorecard
 
 The JSON `summary` and the top of the Markdown report carry one scorecard per run. Every run records guard name, guard version, config label, coverage type, agent format, date and pack version.
 
-- **Catch rate**: dangerous scenarios that came back `block` or `ask`, over all dangerous scenarios. A seatbelt `fail-closed` result is not a catch.
-- **Fail-closed / reason mismatch**: seatbelt results that were config or internal errors, and results with the right verdict but a missing `must_mention` reason (`fail_closed`, `reason_mismatch` in the JSON).
+- **Catch rate**: dangerous scenarios that came back `block` or `ask`, over all dangerous scenarios. A applygate `fail-closed` result is not a catch.
+- **Fail-closed / reason mismatch**: applygate results that were config or internal errors, and results with the right verdict but a missing `must_mention` reason (`fail_closed`, `reason_mismatch` in the JSON).
 - **False-positive rate**: benign scenarios that came back `block` or `ask`, over all benign scenarios (`benign_flagged` additionally counts errors).
 - **Bypass count**: S3 (obfuscation) scenarios that came back `allow` or `error`, grouped by each scenario's `bypass_class` (`unclassified` when the field is missing) in `bypass_by_class`.
 - **Fail-open count**: probes (`--probes`) after which the action would proceed; `probes not run` otherwise.

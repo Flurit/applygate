@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Flurit/seatbelt/internal/config"
-	"github.com/Flurit/seatbelt/internal/preflight"
+	"github.com/Flurit/applygate/internal/config"
+	"github.com/Flurit/applygate/internal/preflight"
 )
 
 // writeRepo writes a repository config and the directories it names.

@@ -2,8 +2,8 @@
 
 ## How it was tested
 - [ ] `go test ./...`
-- [ ] `go build -o bin/seatbelt ./cmd/seatbelt && bin/seatbelt selftest`
-- [ ] `python3 -I harness/run.py --guard bin/seatbelt` (verdict and reasons)
+- [ ] `go build -o bin/applygate ./cmd/applygate && bin/applygate selftest`
+- [ ] `python3 -I harness/run.py --guard bin/applygate` (verdict and reasons)
 - [ ] New or changed behavior has a scenario in `harness/pack/scenarios.json` that fails without this change
 
 ## Docs

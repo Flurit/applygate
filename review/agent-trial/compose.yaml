@@ -6,7 +6,7 @@
 # Terraform AWS provider at the sidecar. Nothing from the host's ~/.aws is
 # mounted, and the AWS config and credential files are pointed at /dev/null
 # so no profile can be picked up by accident.
-name: seatbelt-agent-trial
+name: applygate-agent-trial
 
 services:
   localstack:
@@ -25,7 +25,7 @@ services:
     build:
       context: ../..
       dockerfile: review/agent-trial/Dockerfile
-    image: seatbelt-agent-trial:local
+    image: applygate-agent-trial:local
     init: true
     stdin_open: true
     tty: true
@@ -51,8 +51,8 @@ services:
       # the host. Remove the volumes to forget it: docker compose down -v
       - claude-state:/home/trial/.claude
       - codex-state:/home/trial/.codex
-      # The seatbelt decision log (one file, entries carry their cwd).
-      - seatbelt-log:/home/trial/.local/state/seatbelt
+      # The applygate decision log (one file, entries carry their cwd).
+      - applygate-log:/home/trial/.local/state/applygate
       # Provider plugin cache and the clones, so agent edits survive restarts.
       - tf-plugin-cache:/home/trial/.terraform.d/plugin-cache
       - work:/work
@@ -61,6 +61,6 @@ services:
 volumes:
   claude-state:
   codex-state:
-  seatbelt-log:
+  applygate-log:
   tf-plugin-cache:
   work:

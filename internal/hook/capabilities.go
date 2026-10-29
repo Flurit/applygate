@@ -9,14 +9,14 @@ import (
 )
 
 // Host records what one agent host can and cannot do with a PreToolUse
-// hook, as verified live. It is the single source for `seatbelt hosts`,
+// hook, as verified live. It is the single source for `applygate hosts`,
 // docs/hosts.md (generated; TestHostsDocCurrent fails when it is stale) and
 // the lines `hook install` and `init` print. A cell that was not verified
 // says "not tested"; nothing here is a guess. Test numbers (T3.x) refer to
 // review/manual_agent_tests.md and the results in review/T3_RESULTS.md.
 type Host struct {
 	Name      string // display name
-	Agent     string // adapter name for `seatbelt hook <agent>`; "" when unsupported
+	Agent     string // adapter name for `applygate hook <agent>`; "" when unsupported
 	Supported bool
 
 	CanAsk     string // can the host show an approval prompt for "ask"
@@ -35,23 +35,23 @@ type Host struct {
 var Hosts = []Host{
 	{
 		Name: "Claude Code", Agent: "claude", Supported: true,
-		CanAsk:     `yes: a hook "ask" shows Claude Code's permission prompt with seatbelt's reason (T3.1)`,
+		CanAsk:     `yes: a hook "ask" shows Claude Code's permission prompt with applygate's reason (T3.1)`,
 		Failure:    `fails closed: the installed hook carries onFailure: "block", so a crashed, timed-out (30 s) or missing hook blocks the tool call (T3.4 missing binary, T3.5 timeout, T3.6 killed by a signal); needs Claude Code 2.1.295 or later, older versions fail open`,
 		Tools:      `shell: Bash; file writes: Write, Edit, MultiEdit, NotebookEdit; reads: Read, Grep; MCP calls: no (not in the matcher, not inspected)`,
 		CommandDir: `yes: the top-level cwd is the shell's directory at the time of the call and follows an earlier cd (hooks docs, read 2026-10-29); not tested live`,
 		Settings:   `project: <session cwd>/.claude/settings.json and settings.local.json, read from the launch directory only, not from ancestors (T3.1: launched from a subdirectory the hook never ran); user: ~/.claude/settings.json (hook install --scope user); managed: managed-settings.json (docs; not tested)`,
 		Trust:      `none observed for a project hook (T3.1); not tested further`,
-		AskModes:   `default: prompt shown (T3.1); bypassPermissions: prompt still shown on 2.1.312, which is undocumented (T3.2b); dontAsk: no prompt can be shown, so seatbelt enforces ask as block (T3.2c); acceptEdits, plan: not tested`,
+		AskModes:   `default: prompt shown (T3.1); bypassPermissions: prompt still shown on 2.1.312, which is undocumented (T3.2b); dontAsk: no prompt can be shown, so applygate enforces ask as block (T3.2c); acceptEdits, plan: not tested`,
 		Verified:   `Claude Code 2.1.312 on Linux, 2026-10-28`,
 		Evidence:   []string{"review/T3_RESULTS.md"},
 		Pending:    `T3.9 user-scope hook fires from a subdirectory: not tested; T3.11 planfile search: not tested`,
 	},
 	{
 		Name: "Codex", Agent: "codex", Supported: true,
-		CanAsk:     `no: Codex parses but does not support "ask" (it fails the hook and runs the tool), so seatbelt enforces every ask as a block (T3.7 on 0.159.2 and 0.165.0)`,
-		Failure:    `fails open: Codex has no onFailure setting; a missing hook binary (exit 127) and a hook killed by a signal both let the command run (T3.8 chaos on 0.165.0); timeout: not tested. seatbelt recovers panics inside its own process and blocks, so the remaining fail-open case is a hook that does not start; use Codex's sandbox and approval settings as the backstop and run seatbelt doctor`,
+		CanAsk:     `no: Codex parses but does not support "ask" (it fails the hook and runs the tool), so applygate enforces every ask as a block (T3.7 on 0.159.2 and 0.165.0)`,
+		Failure:    `fails open: Codex has no onFailure setting; a missing hook binary (exit 127) and a hook killed by a signal both let the command run (T3.8 chaos on 0.165.0); timeout: not tested. applygate recovers panics inside its own process and blocks, so the remaining fail-open case is a hook that does not start; use Codex's sandbox and approval settings as the backstop and run applygate doctor`,
 		Tools:      `matcher "*": shell: Bash with tool_input.command (captured); file writes: apply_patch with the patch text in tool_input.command (captured); reads: no separate read tool seen, Codex reads files through shell commands (not tested); MCP calls: mcp__<server>__<tool> with the raw arguments (from the source, not captured), not inspected`,
-		CommandDir: `no on 0.165.0: the top-level cwd is the session root and tool_input holds only command; the workdir the model passes to exec_command is dropped (captured 2026-10-29; source: exec_command.rs pre_tool_use_payload, hook_runtime.rs tool_hook_cwd). seatbelt reads tool_input.workdir, working_directory or cwd when a version sends one; otherwise it judges the command at the most protected tier under the session root (unknown_dir: most_protected, the default) and a cd or -chdir inside the command establishes the directory`,
+		CommandDir: `no on 0.165.0: the top-level cwd is the session root and tool_input holds only command; the workdir the model passes to exec_command is dropped (captured 2026-10-29; source: exec_command.rs pre_tool_use_payload, hook_runtime.rs tool_hook_cwd). applygate reads tool_input.workdir, working_directory or cwd when a version sends one; otherwise it judges the command at the most protected tier under the session root (unknown_dir: most_protected, the default) and a cd or -chdir inside the command establishes the directory`,
 		Settings:   `project: <session cwd>/.codex/hooks.json (hooks docs, read 2026-10-28; launching from a subdirectory not tested); user: ~/.codex/hooks.json (hook install --scope user; docs, not tested); managed: not tested`,
 		Trust:      `yes: hooks must be reviewed and trusted with /hooks in Codex before they run (T3.7); codex exec has --dangerously-bypass-hook-trust (source, not tested)`,
 		AskModes:   `no ask in any mode: every ask is enforced as a block (T3.7); permission_mode under codex exec arrives as bypassPermissions (captured)`,
@@ -119,7 +119,7 @@ func HostsText(w io.Writer) {
 		if !h.Supported {
 			continue
 		}
-		fmt.Fprintf(w, "%s (seatbelt hook %s)\n", h.Name, h.Agent)
+		fmt.Fprintf(w, "%s (applygate hook %s)\n", h.Name, h.Agent)
 		for _, c := range cells {
 			fmt.Fprintf(w, "  %-48s %s\n", c.label, wrap(c.get(h), 100, strings.Repeat(" ", 51)))
 		}
@@ -140,7 +140,7 @@ func HostsMarkdown() string {
 	var b strings.Builder
 	b.WriteString("# Host capabilities\n\n")
 	b.WriteString("<!-- Generated from internal/hook/capabilities.go by `go generate ./internal/hook`. Do not edit by hand; TestHostsDocCurrent fails when this file is stale. -->\n\n")
-	b.WriteString("What each agent host does with seatbelt's PreToolUse hook, as verified live. `seatbelt hosts` prints the same table. A cell that says \"not tested\" was not verified; nothing in this table is a guess. T3 numbers refer to the cases in [review/manual_agent_tests.md](../review/manual_agent_tests.md) and the results in [review/T3_RESULTS.md](../review/T3_RESULTS.md).\n\n")
+	b.WriteString("What each agent host does with applygate's PreToolUse hook, as verified live. `applygate hosts` prints the same table. A cell that says \"not tested\" was not verified; nothing in this table is a guess. T3 numbers refer to the cases in [review/manual_agent_tests.md](../review/manual_agent_tests.md) and the results in [review/T3_RESULTS.md](../review/T3_RESULTS.md).\n\n")
 	var sup []Host
 	for _, h := range Hosts {
 		if h.Supported {
@@ -149,7 +149,7 @@ func HostsMarkdown() string {
 	}
 	b.WriteString("| Capability |")
 	for _, h := range sup {
-		fmt.Fprintf(&b, " %s (`seatbelt hook %s`) |", h.Name, h.Agent)
+		fmt.Fprintf(&b, " %s (`applygate hook %s`) |", h.Name, h.Agent)
 	}
 	b.WriteString("\n|---|")
 	for range sup {
@@ -169,7 +169,7 @@ func HostsMarkdown() string {
 			fmt.Fprintf(&b, "| %s | %s |\n", h.Name, notSupported)
 		}
 	}
-	b.WriteString("\nHow seatbelt handles an unknown command directory is in [policy.md](policy.md) (step 4) and [config.md](config.md) (`unknown_dir`); the launch-directory and fail-open limits are in [limits.md](limits.md).\n")
+	b.WriteString("\nHow applygate handles an unknown command directory is in [policy.md](policy.md) (step 4) and [config.md](config.md) (`unknown_dir`); the launch-directory and fail-open limits are in [limits.md](limits.md).\n")
 	return b.String()
 }
 

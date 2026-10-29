@@ -1,7 +1,7 @@
 #!/bin/sh
 # Reset the five clones in the trial container to their pinned commits so the
 # next agent starts from the same tree as the last one. Keeps the harness
-# files (.seatbelt.yaml and the hook configs, which are git-ignored inside the
+# files (.applygate.yaml and the hook configs, which are git-ignored inside the
 # clones), the provider caches and the decision log. Agent edits are lost:
 # run collect.sh first, which saves them as raw/diff/<repo>.patch.
 #
@@ -24,7 +24,7 @@ for pin in $PINS; do
     git -C "$d" clean -qfd
     tracked=$(git -C "$d" status --porcelain --untracked-files=no | wc -l)
     untracked=$(git -C "$d" status --porcelain --untracked-files=all | grep -c '^??' || true)
-    cfg=$([ -f "$d/.seatbelt.yaml" ] && echo ok || echo MISSING)
+    cfg=$([ -f "$d/.applygate.yaml" ] && echo ok || echo MISSING)
     hooks=$([ -f "$d/.claude/settings.json" ] && [ -f "$d/.codex/hooks.json" ] && echo ok || echo MISSING)
     echo "$name: $(git -C "$d" rev-parse --short HEAD) tracked-changes=$tracked untracked=$untracked config=$cfg hooks=$hooks"
     [ "$cfg" = ok ] && [ "$hooks" = ok ] || status=1

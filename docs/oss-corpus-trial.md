@@ -1,5 +1,7 @@
 # Open-source corpus trial
 
+> The project was renamed from seatbelt to applygate on 2026-10-29; the records below predate the rename and keep the old name where they describe those builds.
+
 Date: 2026-10-28. "Before" is v0.1.1 (`48a1d26`). "After" is v0.1.2: the fixes this trial prompted (PR #17) plus the three policy decisions taken on its findings (below).
 
 This is a **stand-in for the roadmap's observe-mode trial**, not the trial itself. The [roadmap](roadmap.md) asks for seatbelt in observe mode on 5 real repositories while people and agents work in them. This trial replays the commands that 5 public Terraform repositories document or run (READMEs, CI workflows, Makefiles, scripts) through `seatbelt check`, and reviews every ask and block by hand. It measures false positives on realistic infrastructure commands. It does not measure what an agent would actually do, and it never exercises the plan gate (no command in the corpus applies a saved plan).

@@ -1,13 +1,13 @@
 #!/bin/sh
 # Reproduce the open-source corpus trial (docs/oss-corpus-trial.md).
 #
-#   review/oss-corpus/run.sh SEATBELT_BIN WORKDIR
+#   review/oss-corpus/run.sh APPLYGATE_BIN WORKDIR
 #
 # Clones the five repositories at the commits in repos.txt into WORKDIR
 # (shallow, no hooks, no submodules), extracts their commands, and replays
-# them through `seatbelt check` with and without the trial configs.
+# them through `applygate check` with and without the trial configs.
 # Nothing from the repositories is executed: extract.py only reads files,
-# and seatbelt runs with an empty PATH, a fake HOME and no user config.
+# and applygate runs with an empty PATH, a fake HOME and no user config.
 set -eu
 bin=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 work=$2
@@ -29,9 +29,9 @@ for dir in "$work"/repos/*; do
 done
 
 # With the trial configs, then with no config at all (strict defaults).
-for dir in "$work"/repos/*; do cp "$here/configs/$(basename "$dir").seatbelt.yaml" "$dir/.seatbelt.yaml"; done
+for dir in "$work"/repos/*; do cp "$here/configs/$(basename "$dir").applygate.yaml" "$dir/.applygate.yaml"; done
 python3 -I "$here/tools/replay.py" "$bin" "$work/repos" "$work/corpus.jsonl" "$work/config.jsonl" config
-for dir in "$work"/repos/*; do rm -f "$dir/.seatbelt.yaml"; done
+for dir in "$work"/repos/*; do rm -f "$dir/.applygate.yaml"; done
 python3 -I "$here/tools/replay.py" "$bin" "$work/repos" "$work/corpus.jsonl" "$work/default.jsonl" default
 
 for run in config default; do

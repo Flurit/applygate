@@ -1,4 +1,4 @@
-module github.com/Flurit/seatbelt
+module github.com/Flurit/applygate
 
 go 1.26.7
 

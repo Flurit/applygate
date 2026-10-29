@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Flurit/seatbelt/internal/config"
+	"github.com/Flurit/applygate/internal/config"
 )
 
 // The agent-driven trial of 2026-10-29 found two false-positive sources: a

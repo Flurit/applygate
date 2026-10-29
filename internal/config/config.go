@@ -1,4 +1,4 @@
-// Package config loads seatbelt configuration and resolves environment tiers.
+// Package config loads applygate configuration and resolves environment tiers.
 package config
 
 import (
@@ -13,8 +13,8 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/Flurit/seatbelt/internal/classify"
-	"github.com/Flurit/seatbelt/internal/shell"
+	"github.com/Flurit/applygate/internal/classify"
+	"github.com/Flurit/applygate/internal/shell"
 )
 
 // Tier is an environment tier.
@@ -38,7 +38,12 @@ func (t Tier) Rank() int {
 }
 
 // FileName is the per-repository config file.
-const FileName = ".seatbelt.yaml"
+const FileName = ".applygate.yaml"
+
+// LegacyFileName is the name the file had before the project was renamed from
+// seatbelt (2026-10-29). It is still read, with a deprecation note in
+// Config.Deprecations, and stays a protected guard file.
+const LegacyFileName = ".seatbelt.yaml"
 
 // Values of the unknown_dir setting.
 const (
@@ -68,7 +73,7 @@ type Config struct {
 	Preflight      Preflight     `yaml:"preflight"`
 	ProtectedPaths []string      `yaml:"protected_paths"`
 	// Wrappers are extra programs that run the command in their arguments
-	// (a team's own credential or environment runner), so seatbelt
+	// (a team's own credential or environment runner), so applygate
 	// analyzes that command. Built-in wrappers need no entry.
 	Wrappers []Wrapper `yaml:"wrappers"`
 	// ProtectedResources are resource address globs (for example
@@ -80,6 +85,9 @@ type Config struct {
 	Root string `yaml:"-"`
 	// Sources lists the files that were loaded.
 	Sources []string `yaml:"-"`
+	// Deprecations notes legacy names still in use (a .seatbelt.yaml config
+	// file); doctor and check print them.
+	Deprecations []string `yaml:"-"`
 }
 
 // Wrapper declares a program that runs another command: the command
@@ -170,6 +178,8 @@ func (c *Config) MaxDestroy(t Tier) int {
 var DefaultProtectedPaths = []string{
 	"**/.claude/settings.json", "**/.claude/settings.local.json", "**/managed-settings.json",
 	"**/managed-settings.d/**", "**/.codex/hooks.json", "**/.codex/config.toml",
+	"**/.applygate.yaml", "**/.applygate.yml", "**/.config/applygate/**", "**/.local/state/applygate/**",
+	// Names from before the rename stay guarded so an agent cannot edit a legacy file.
 	"**/.seatbelt.yaml", "**/.seatbelt.yml", "**/.config/seatbelt/**", "**/.local/state/seatbelt/**",
 	"**/.cursor/hooks.json",
 }
@@ -179,30 +189,57 @@ func Default() *Config {
 	return &Config{Version: 1, Mode: "enforce", OnError: "auto", UnknownDir: UnknownDirMostProtected, Aliases: map[string]string{"tf": "terraform"}}
 }
 
-// UserPath returns the user-level config path.
+// UserPath returns the user-level config path. A config left at the
+// pre-rename location (~/.config/seatbelt/config.yaml) is used when no file
+// exists at the new one.
 func UserPath() string {
+	return preferExisting(userPathFor("applygate"), userPathFor("seatbelt"))
+}
+
+func userPathFor(name string) string {
 	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
-		return filepath.Join(d, "seatbelt", "config.yaml")
+		return filepath.Join(d, name, "config.yaml")
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "seatbelt", "config.yaml")
+	return filepath.Join(home, ".config", name, "config.yaml")
 }
 
-// DefaultLogPath returns the decision log path, outside any repository.
+// DefaultLogPath returns the decision log path, outside any repository. A
+// log that an older seatbelt install kept writing at
+// ~/.local/state/seatbelt/decisions.jsonl is used when no log exists at the
+// new location, so "report" keeps seeing one history.
 func DefaultLogPath() string {
-	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
-		return filepath.Join(d, "seatbelt", "decisions.jsonl")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "state", "seatbelt", "decisions.jsonl")
+	return preferExisting(logPathFor("applygate"), logPathFor("seatbelt"))
 }
 
-// FindRepoConfig walks up from dir to find .seatbelt.yaml.
+func logPathFor(name string) string {
+	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
+		return filepath.Join(d, name, "decisions.jsonl")
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "state", name, "decisions.jsonl")
+}
+
+// preferExisting returns the new path unless only the legacy one exists.
+func preferExisting(newPath, legacy string) string {
+	if _, err := os.Stat(newPath); err == nil {
+		return newPath
+	}
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+	return newPath
+}
+
+// FindRepoConfig walks up from dir to find .applygate.yaml, accepting the
+// legacy .seatbelt.yaml in a directory that has no .applygate.yaml.
 func FindRepoConfig(dir string) string {
 	for d := dir; d != "" && d != "/" && d != "."; d = filepath.Dir(d) {
-		p := filepath.Join(d, FileName)
-		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
-			return p
+		for _, name := range []string{FileName, LegacyFileName} {
+			p := filepath.Join(d, name)
+			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+				return p
+			}
 		}
 	}
 	return ""
@@ -248,6 +285,9 @@ func merge(cfg *Config, path string, repo bool) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	cfg.Sources = append(cfg.Sources, path)
+	if filepath.Base(path) == LegacyFileName {
+		cfg.Deprecations = append(cfg.Deprecations, path+" uses the pre-rename file name; rename it to "+FileName+" (the old name keeps working for one release)")
+	}
 	if repo {
 		cfg.Root = filepath.Dir(path)
 	}

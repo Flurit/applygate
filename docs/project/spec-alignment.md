@@ -2,7 +2,7 @@
 
 > "The spec" in this record is the project's internal planning document; its public summary is [docs/roadmap.md](../roadmap.md).
 
-Source: the plan document "Infra Agent Seatbelt: Roadmap and v0/v1 Spec" (2026-10-27). This page maps each requirement to the repository as of 2026-10-28. Status words: **done** (implemented and tested), **partial** (implemented with a stated gap), **deviates** (implemented differently, on purpose), **open** (not done; needs something outside the repository or a decision).
+Source: the plan document "Infra Agent Applygate: Roadmap and v0/v1 Spec" (2026-10-27). This page maps each requirement to the repository as of 2026-10-28. Status words: **done** (implemented and tested), **partial** (implemented with a stated gap), **deviates** (implemented differently, on purpose), **open** (not done; needs something outside the repository or a decision).
 
 The spec's own gate thresholds (catch rate, false-positive budget, install time) are proposals that were never formally agreed; measured numbers are in [ACCEPTANCE.md](ACCEPTANCE.md).
 
@@ -10,14 +10,14 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 
 | Spec | Status | Where |
 |---|---|---|
-| Single local binary with hook adapters, shell-aware analyzer, preflight, plan gate, local log | done | `cmd/seatbelt`, `internal/*` |
+| Single local binary with hook adapters, shell-aware analyzer, preflight, plan gate, local log | done | `cmd/applygate`, `internal/*` |
 | Engine-neutral (Terraform and OpenTofu share plan JSON) | done | `internal/classify/engines.go`; the planfile workspace parser was verified on Terraform 1.16.1 only ([limits](../limits.md)) |
-| Agent-neutral with per-agent limits documented | done for Claude Code and Codex | Claude Code and Codex adapters (`internal/hook/adapters.go`); per-host limits are the generated capability table [hosts.md](../hosts.md) (`seatbelt hosts`, `internal/hook/capabilities.go`, kept current by `TestHostsDocCurrent`), with "not tested" where nothing was verified; a host that does not report the command directory is judged fail-closed ([policy.md](../policy.md) step 4). Cursor, Copilot CLI and OpenCode are listed as not supported. `harness/run.py --format cursor` can replay the pack against a Cursor-format guard |
+| Agent-neutral with per-agent limits documented | done for Claude Code and Codex | Claude Code and Codex adapters (`internal/hook/adapters.go`); per-host limits are the generated capability table [hosts.md](../hosts.md) (`applygate hosts`, `internal/hook/capabilities.go`, kept current by `TestHostsDocCurrent`), with "not tested" where nothing was verified; a host that does not report the command directory is judged fail-closed ([policy.md](../policy.md) step 4). Cursor, Copilot CLI and OpenCode are listed as not supported. `harness/run.py --format cursor` can replay the pack against a Cursor-format guard |
 | Deterministic rules, no model in the decision path | done | no model call anywhere; `docs/threat-model.md` |
 | Parse commands the way the shell does | done | `internal/shell` on mvdan/sh; property and fuzz tests |
 | Judge plans, not only commands | done | `internal/plangate` on `show -json` |
 | Fail closed in protected environments, explicit fail-open | done | `on_error` (`docs/config.md`), deadline fails closed in every tier, `onFailure: block` for Claude Code; Codex fail-open on a non-starting binary is documented ([limits](../limits.md)) |
-| Observe mode first, count would-have-blocked | done | `mode: observe`, `seatbelt report` |
+| Observe mode first, count would-have-blocked | done | `mode: observe`, `applygate report` |
 | Local only: no telemetry, no network by default, redacted log | done | `internal/decisionlog`; the two network checks are opt-in and user-config-only |
 | State limits plainly | done | `docs/limits.md`, `docs/threat-model.md` |
 | Non-goals: sandboxing, MCP governance, Kubernetes, Pulumi, GCP/Azure, drift, cost, review | done | not built; `kubectl delete` is classified as cloud-destructive as a courtesy, nothing more |
@@ -38,14 +38,14 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Break each guard: malformed event, slow response, crash | partial | `run.py --probes` sends malformed JSON, empty input, missing tool name, missing cwd and a 2 MB command and records whether the action would proceed; Go chaos tests cover timeout, panic and config errors. A deliberately slow guard is not simulated |
 | v0.1: confirm wiring with a real agent in a throwaway VM | done | T3 suite on Claude Code 2.1.312 and Codex 0.159.2/0.165.0 (`review/T3_RESULTS.md`) |
 | Scoring: catch rate, false-positive rate, bypass count by class, fail-open count, coverage type, latency p50/p95 | done | `run.py` scorecard; S3 scenarios carry `bypass_class` |
-| Every result records guard version, configuration, agent format, date; one-command reproduction | done | `run.py` summary; `python3 -I harness/run.py --guard bin/seatbelt` |
+| Every result records guard version, configuration, agent format, date; one-command reproduction | done | `run.py` summary; `python3 -I harness/run.py --guard bin/applygate` |
 | Versioned pack, runner, raw JSON, Markdown report | done | `pack_version` in the pack, `--json`, `--md` |
 | Open source from day one, Apache-2.0 | done | `LICENSE`, `NOTICE` |
 | Monthly CI re-run | done | `.github/workflows/ci.yml` schedule |
 | Disclosure and ethics (private first, 30 days, hand-checked, scope-fair) | done | `CONTRIBUTING.md`, `harness/README.md` |
-| 5 or more guards tested; gate decision | open | only seatbelt has been run on the reconstructed pack; the original v0 figures (existing guards at most 5/17, hand-written Rego 14/17) predate this repository; per-guard results are shared with each guard's maintainers privately first |
+| 5 or more guards tested; gate decision | open | only applygate has been run on the reconstructed pack; the original v0 figures (existing guards at most 5/17, hand-written Rego 14/17) predate this repository; per-guard results are shared with each guard's maintainers privately first |
 
-## v1: seatbelt core
+## v1: applygate core
 
 ### Scope and decision flow
 
@@ -55,7 +55,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Shell-aware analyzer and classifier | done | `internal/shell`, `internal/classify` |
 | Preflight: environment identity, workspace/backend consistency, stale state, lockfile | done | `internal/preflight`; optional STS identity and state pull are opt-in |
 | Plan gate for saved plans, AWS-first | done | `internal/plangate`, rules in `rules/aws.json` |
-| Observe and enforce modes, local log, selftest | done | `mode`, `decisionlog`, `seatbelt selftest` |
+| Observe and enforce modes, local log, selftest | done | `mode`, `decisionlog`, `applygate selftest` |
 | Decision flow (normalize, parse, classify, preflight, plan gate, policy, log, error behavior) | done | `docs/policy.md` "Decision flow" |
 | Where a host cannot ask, fall back to block with guidance | done | `CanAsk` on the event; Codex and Claude `dontAsk` |
 
@@ -88,15 +88,15 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 
 | Spec | Status | Where |
 |---|---|---|
-| One small file per repository plus a user-level file | done | `.seatbelt.yaml`, `~/.config/seatbelt/config.yaml` |
+| One small file per repository plus a user-level file | done | `.applygate.yaml`, `~/.config/applygate/config.yaml` |
 | `environments` with tier and match (dirs, workspaces, aws_profiles) | deviates | key is `paths` (globs relative to the config file) and environments are a list, not a map; `backends` and `aws_accounts` added |
 | `max_destroy` | done | `plan_gate.max_destroy` per tier |
 | `protected_resources` | done | address globs; `protected-resource` critical finding |
 | `wrappers` (commands that hide Terraform) | deviates | not a config key: Makefile recipes and readable scripts are analyzed, and an unreadable wrapper asks in protected tiers |
 | Messages carry reason, evidence and next step | done | `policy.message`; agent-facing text on block, human-facing text on ask |
-| `init`: starter config, detect installed agents, install hooks | done | `seatbelt init [--no-hooks] [--scope user\|project]`; hooks go to user scope by default so they fire from any directory, and the output states the Codex fail-open path from the host table |
-| `doctor`: hooks wired, config parses, versions | done | `seatbelt doctor` also runs the selftest and **fails** (exit 1, with the fix command) from a subdirectory whose project-scope hook is not loaded and no user-scope hook covers the agent; warns when both scopes are installed |
-| `check`, `explain`, `plan-check`, `report`, `selftest`, `hook install/remove` | done | `cmd/seatbelt/main.go` |
+| `init`: starter config, detect installed agents, install hooks | done | `applygate init [--no-hooks] [--scope user\|project]`; hooks go to user scope by default so they fire from any directory, and the output states the Codex fail-open path from the host table |
+| `doctor`: hooks wired, config parses, versions | done | `applygate doctor` also runs the selftest and **fails** (exit 1, with the fix command) from a subdirectory whose project-scope hook is not loaded and no user-scope hook covers the agent; warns when both scopes are installed |
+| `check`, `explain`, `plan-check`, `report`, `selftest`, `hook install/remove` | done | `cmd/applygate/main.go` |
 
 ### Quality bar, security, distribution
 
@@ -112,7 +112,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Privacy: no telemetry, no network by default, redacted log outside the repo | done | `decisionlog` |
 | Honest limits in docs | done | `docs/limits.md` |
 | Language: Go with mvdan/sh and terraform-json | done | `go.mod` |
-| Distribution: install script, Homebrew, npm/pip wrapper, Claude Code plugin | partial | `install.sh` installs the real v0.1.0 release in 3 s on Linux; after v0.1.0 it also verifies the cosign signature on `checksums.txt` when cosign is installed (`SEATBELT_VERIFY_SIGNATURE=require` makes it mandatory), and the README pins the installer URL to a tag; `plugin/claude-code` exists; the Homebrew tap (`brews:` in `.goreleaser.yaml`) is commented out until a tap repository exists; npm and pip wrappers are not started |
+| Distribution: install script, Homebrew, npm/pip wrapper, Claude Code plugin | partial | `install.sh` installs the real v0.1.0 release in 3 s on Linux; after v0.1.0 it also verifies the cosign signature on `checksums.txt` when cosign is installed (`APPLYGATE_VERIFY_SIGNATURE=require` makes it mandatory), and the README pins the installer URL to a tag; `plugin/claude-code` exists; the Homebrew tap (`brews:` in `.goreleaser.yaml`) is commented out until a tap repository exists; npm and pip wrappers are not started |
 | Five-minute quickstart, threat model, limits | done | `README.md`, `docs/threat-model.md`, `docs/limits.md` |
 | Apache-2.0 | done | `LICENSE` |
 
@@ -135,7 +135,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | License | Apache-2.0 | Apache-2.0 |
 | Language | Go | Go |
 | Who builds and maintains | undecided | Flurit (NOTICE); contributor rules in `CONTRIBUTING.md` |
-| Name | placeholder; check trademarks | still "seatbelt (working name)"; not checked |
+| Name | placeholder; check trademarks | still "applygate (working name)"; not checked |
 | Second agent for v1 | from v0 results and demand | Codex |
 | Telemetry | none by default | none at all |
 | Unknown wrapper commands | ask in protected tiers | ask in protected tiers |
@@ -144,4 +144,4 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 
 ## Not in scope of this alignment (v2 and v3)
 
-Backup-isolation checks, plan-hash approval with typed confirmation, more agents (Cursor, Copilot CLI, OpenCode), CI mode as a GitHub Action, signed receipts, session capture, CloudTrail stamping and `seatbelt who`. The plan SHA-256 in every plan-gate message is the hook for v2 approval.
+Backup-isolation checks, plan-hash approval with typed confirmation, more agents (Cursor, Copilot CLI, OpenCode), CI mode as a GitHub Action, signed receipts, session capture, CloudTrail stamping and `applygate who`. The plan SHA-256 in every plan-gate message is the hook for v2 approval.

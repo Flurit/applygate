@@ -11,7 +11,7 @@ must_mention, permission_mode, env, files (relative path -> content, written
 into the fixture copy before the event is sent).
 
 Usage:
-  python3 -I harness/replay_pack.py --guard bin/seatbelt \
+  python3 -I harness/replay_pack.py --guard bin/applygate \
       --pack harness/pack_v0_original/scenarios.json \
       --fixture harness/pack_v0_original/fixtures/protected --label protected \
       --json out.json --md out.md
@@ -47,7 +47,7 @@ def parse_output(proc):
 def main():
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--guard", help="path to the seatbelt binary")
+    g.add_argument("--guard", help="path to the applygate binary")
     g.add_argument("--guard-cmd", help="any guard's hook command (string, split with shlex)")
     ap.add_argument("--pack", required=True)
     ap.add_argument("--fixture", required=True, help="directory copied to a temp repo for each run")

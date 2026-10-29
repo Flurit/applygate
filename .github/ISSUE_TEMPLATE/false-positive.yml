@@ -1,14 +1,14 @@
 name: False positive
-description: seatbelt asked about or blocked something that should be allowed
+description: applygate asked about or blocked something that should be allowed
 labels: [false-positive]
 body:
   - type: input
     id: version
-    attributes: {label: seatbelt version, description: Output of `seatbelt version`}
+    attributes: {label: applygate version, description: Output of `applygate version`}
     validations: {required: true}
   - type: input
     id: agent
-    attributes: {label: Agent and version, placeholder: Claude Code 2.x / Codex 0.x / seatbelt check}
+    attributes: {label: Agent and version, placeholder: Claude Code 2.x / Codex 0.x / applygate check}
   - type: textarea
     id: command
     attributes:
@@ -19,13 +19,13 @@ body:
   - type: textarea
     id: explain
     attributes:
-      label: seatbelt explain output
-      description: Output of `seatbelt explain --cwd <dir> -- '<command>'`.
+      label: applygate explain output
+      description: Output of `applygate explain --cwd <dir> -- '<command>'`.
       render: text
   - type: textarea
     id: config
     attributes:
-      label: Relevant .seatbelt.yaml
+      label: Relevant .applygate.yaml
       render: yaml
   - type: textarea
     id: why

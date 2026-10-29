@@ -2,7 +2,7 @@
 
 By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md). Report security issues privately as described in [SECURITY.md](SECURITY.md).
 
-seatbelt is small on purpose: a shell-aware analyzer, a classifier, preflight checks, a plan gate and a policy table. Changes that keep it deterministic, local and honest about its limits are welcome.
+applygate is small on purpose: a shell-aware analyzer, a classifier, preflight checks, a plan gate and a policy table. Changes that keep it deterministic, local and honest about its limits are welcome.
 
 ## Ground rules
 
@@ -16,7 +16,7 @@ seatbelt is small on purpose: a shell-aware analyzer, a classifier, preflight ch
 
 1. Append it to `harness/pack/scenarios.json` with an `id`, `spec` (S1–S14, `plan` or `benign`), `kind`, `title`, `cwd` (relative to `pack/fixtures/repo`), `tool`, `tool_input`, `expect`, and `must_mention` strings the message must contain. S3 cases take a `bypass_class`.
 2. Plan-level scenarios reference a `show -json` fixture under `pack/plans` by `plans: {"<planfile>": "<fixture>.json"}`.
-3. Run `go test ./harness`, `go build -o bin/seatbelt ./cmd/seatbelt && bin/seatbelt selftest -v` and `python3 -I harness/run.py --guard bin/seatbelt`.
+3. Run `go test ./harness`, `go build -o bin/applygate ./cmd/applygate && bin/applygate selftest -v` and `python3 -I harness/run.py --guard bin/applygate`.
 
 ## Adding a guard to the comparison
 
@@ -34,8 +34,8 @@ seatbelt is small on purpose: a shell-aware analyzer, a classifier, preflight ch
 ```bash
 gofmt -l . && go vet ./... && go test -race -count=1 ./...
 go generate ./internal/hook   # after editing the host capability table: regenerates docs/hosts.md
-go build -o bin/seatbelt ./cmd/seatbelt && bin/seatbelt selftest
-python3 -I harness/run.py --guard bin/seatbelt --md /tmp/replay.md
+go build -o bin/applygate ./cmd/applygate && bin/applygate selftest
+python3 -I harness/run.py --guard bin/applygate --md /tmp/replay.md
 ```
 
 CI also runs `govulncheck` and a short fuzz of the shell analyzer. Releases are cut from `v*` tags by `.github/workflows/release.yml`.

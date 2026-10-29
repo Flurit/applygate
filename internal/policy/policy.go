@@ -1,5 +1,5 @@
 // Package policy combines command class, environment tier, preflight and
-// plan-gate findings into one verdict. It is the seatbelt's decision function.
+// plan-gate findings into one verdict. It is the applygate's decision function.
 package policy
 
 import (
@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Flurit/seatbelt/internal/classify"
-	"github.com/Flurit/seatbelt/internal/config"
-	"github.com/Flurit/seatbelt/internal/plangate"
-	"github.com/Flurit/seatbelt/internal/preflight"
-	"github.com/Flurit/seatbelt/internal/shell"
+	"github.com/Flurit/applygate/internal/classify"
+	"github.com/Flurit/applygate/internal/config"
+	"github.com/Flurit/applygate/internal/plangate"
+	"github.com/Flurit/applygate/internal/preflight"
+	"github.com/Flurit/applygate/internal/shell"
 )
 
 // Verdict is allow, ask or block.
@@ -464,7 +464,7 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 		// F10: distinguish a plan file that simply does not exist from one that
 		// exists but cannot be read. A missing file means there is nothing to
 		// apply, so it is High (protected tier asks) rather than Critical
-		// (block). An existing-but-unreadable plan stays Critical: seatbelt
+		// (block). An existing-but-unreadable plan stays Critical: applygate
 		// cannot verify a real plan, so it must fail closed.
 		if _, serr := os.Stat(planPath); errors.Is(serr, os.ErrNotExist) {
 			r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-missing", Severity: preflight.High,
@@ -580,7 +580,7 @@ func nextStep(c classify.Class, engine string) string {
 	case classify.CloudDestructive:
 		return "Deleting cloud resources directly needs a human. Tell the user which resource and why; prefer changing the Terraform configuration and planning."
 	case classify.Tampering:
-		return "The agent may not change its own guardrails, hook configuration or seatbelt's config and log. Ask the user to make this change themselves."
+		return "The agent may not change its own guardrails, hook configuration or applygate's config and log. Ask the user to make this change themselves."
 	case classify.Dynamic:
 		return "Write the command out literally, without eval, variables for subcommands, encoded text, or piping generated or fetched text into a shell, so it can be checked."
 	case classify.UnknownWrapper:
@@ -595,7 +595,7 @@ func nextStep(c classify.Class, engine string) string {
 
 func message(d Decision) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "seatbelt: %s.", strings.ToUpper(string(d.Enforced)))
+	fmt.Fprintf(&b, "applygate: %s.", strings.ToUpper(string(d.Enforced)))
 	if d.Enforced != d.Verdict {
 		fmt.Fprintf(&b, " (policy verdict: %s)", d.Verdict)
 	}

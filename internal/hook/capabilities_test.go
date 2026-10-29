@@ -41,7 +41,7 @@ func TestHostsTableComplete(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	HostsText(&buf)
-	for _, want := range []string{"Claude Code (seatbelt hook claude)", "Codex (seatbelt hook codex)", "fails open", "Cursor, Copilot CLI, OpenCode: not supported"} {
+	for _, want := range []string{"Claude Code (applygate hook claude)", "Codex (applygate hook codex)", "fails open", "Cursor, Copilot CLI, OpenCode: not supported"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("text table lacks %q:\n%s", want, buf.String())
 		}

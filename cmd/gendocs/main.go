@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/Flurit/seatbelt/internal/hook"
+	"github.com/Flurit/applygate/internal/hook"
 )
 
 func main() {

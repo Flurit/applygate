@@ -1,5 +1,7 @@
 # Live-agent test results (T3.x)
 
+> The project was renamed from seatbelt to applygate on 2026-10-29; the records below predate the rename and keep the old name where they describe those builds.
+
 Date: 2026-10-28. Tester: Sumant Thakur (one run per case, one machine, Linux).
 Binary: `seatbelt` built from main after PRs #1-#3 (`seatbelt_version: dev`).
 Agents: Claude Code 2.1.312, Codex 0.159.2 (first T3.7 run) and 0.165.0 (chaos tests and clean re-run).

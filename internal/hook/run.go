@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Flurit/seatbelt/internal/config"
-	"github.com/Flurit/seatbelt/internal/decisionlog"
-	"github.com/Flurit/seatbelt/internal/policy"
-	"github.com/Flurit/seatbelt/internal/preflight"
+	"github.com/Flurit/applygate/internal/config"
+	"github.com/Flurit/applygate/internal/decisionlog"
+	"github.com/Flurit/applygate/internal/policy"
+	"github.com/Flurit/applygate/internal/preflight"
 )
 
 // Version is set at build time.
@@ -135,7 +135,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		entry.DurationMS = float64(time.Since(start).Microseconds()) / 1000
 		if !opt.NoLog {
 			if err := decisionlog.Append(logPath(cfg), entry); err != nil {
-				o.Stderr += "seatbelt: could not write decision log: " + err.Error() + "\n"
+				o.Stderr += "applygate: could not write decision log: " + err.Error() + "\n"
 			}
 		}
 		return o
@@ -173,11 +173,11 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		entry.Enforced = policy.Allow
 		if block {
 			entry.Enforced = policy.Block
-			msg += " (seatbelt fails closed here; fix the problem or set on_error in the user config)"
+			msg += " (applygate fails closed here; fix the problem or set on_error in the user config)"
 		} else {
-			msg += " (seatbelt fails open here per on_error/mode)"
+			msg += " (applygate fails open here per on_error/mode)"
 		}
-		return finish(cfg, a.Fail(block, "seatbelt: "+msg))
+		return finish(cfg, a.Fail(block, "applygate: "+msg))
 	}
 	// A panic that escapes the normal paths (including policy.Run's own
 	// recover) still fails closed: block unless observe mode is in effect.
@@ -191,11 +191,11 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 			entry.Enforced = policy.Allow
 			if block {
 				entry.Enforced = policy.Block
-				msg += " (seatbelt fails closed here)"
+				msg += " (applygate fails closed here)"
 			} else {
 				msg += " (observe mode: allowed)"
 			}
-			out = finish(recoverCfg, a.Fail(block, "seatbelt: "+msg))
+			out = finish(recoverCfg, a.Fail(block, "applygate: "+msg))
 		}
 	}()
 	if err != nil {
@@ -214,7 +214,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	entry.Session, entry.Tool, entry.Cwd, entry.Command, entry.Paths = ev.Session, ev.Tool, ev.Cwd, ev.Command, ev.Paths
 	dirKnown = ev.DirKnown
 	if ev.Kind == policy.KindOther {
-		return Output{} // tools seatbelt does not inspect are not logged
+		return Output{} // tools applygate does not inspect are not logged
 	}
 	cfg, err := config.Load(opt.UserConfig, ev.Cwd)
 	if err != nil {
@@ -236,11 +236,11 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 			entry.Error, entry.Verdict, entry.Enforced = msg, policy.Block, policy.Allow
 			if block {
 				entry.Enforced = policy.Block
-				msg += " (seatbelt fails closed here in every tier)"
+				msg += " (applygate fails closed here in every tier)"
 			} else {
 				msg += " (observe mode: allowed)"
 			}
-			return finish(cfg, a.Fail(block, "seatbelt: "+msg))
+			return finish(cfg, a.Fail(block, "applygate: "+msg))
 		}
 		return fail(cfg, ev.Cwd, err.Error())
 	}

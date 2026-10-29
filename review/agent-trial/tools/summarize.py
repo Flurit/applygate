@@ -79,7 +79,7 @@ def main():
     print("| Field | Value |")
     print("|---|---|")
     print(f"| Date | {date} |")
-    print(f"| seatbelt | {versions.get('seatbelt', 'unknown')} |")
+    print(f"| applygate | {versions.get('applygate', 'unknown')} |")
     if agents:
         print(f"| Agents | {'; '.join(agents)} |")
     else:
@@ -156,7 +156,7 @@ def main():
 
     rep = read(os.path.join("raw", "report.txt"))
     if rep:
-        print("## `seatbelt report`")
+        print("## `applygate report`")
         print()
         print("```")
         print(rep.rstrip())
@@ -165,7 +165,7 @@ def main():
 
     doc = read("doctor-summary.txt")
     if doc:
-        print("## `seatbelt doctor` per clone (`doctor-summary.txt`)")
+        print("## `applygate doctor` per clone (`doctor-summary.txt`)")
         print()
         print("```")
         print(doc.rstrip())

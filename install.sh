@@ -1,17 +1,17 @@
 #!/bin/sh
-# install.sh -- install the seatbelt binary from a GitHub release.
+# install.sh -- install the applygate binary from a GitHub release.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Flurit/seatbelt/<tag>/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/<tag>/install.sh | sh
 #
 # Use a release tag, not main, in that URL, so the script you run is the
 # reviewed one for that release.
 #
 # Environment overrides:
-#   SEATBELT_VERSION      release tag to install, e.g. v0.3.0 (default: latest release)
-#   SEATBELT_INSTALL_DIR  directory to install into (default: $HOME/.local/bin, or
+#   APPLYGATE_VERSION      release tag to install, e.g. v0.3.0 (default: latest release)
+#   APPLYGATE_INSTALL_DIR  directory to install into (default: $HOME/.local/bin, or
 #                         /usr/local/bin when it is writable and $HOME/.local/bin
 #                         is not on PATH)
-#   SEATBELT_VERIFY_SIGNATURE
+#   APPLYGATE_VERIFY_SIGNATURE
 #                         auto (default): verify the cosign signature on
 #                         checksums.txt when cosign is installed, warn when it
 #                         is not; require: refuse to install without cosign
@@ -29,7 +29,7 @@
 # Works with curl or wget, POSIX sh only (no bash required).
 set -eu
 
-REPO="Flurit/seatbelt"
+REPO="Flurit/applygate"
 BASE_URL="https://github.com/${REPO}"
 API_URL="https://api.github.com/repos/${REPO}"
 
@@ -55,7 +55,7 @@ else
 fi
 
 # --- temp dir, cleaned on exit ----------------------------------------------
-tmp=$(mktemp -d 2>/dev/null || mktemp -d -t seatbelt) || die "cannot create a temp dir"
+tmp=$(mktemp -d 2>/dev/null || mktemp -d -t applygate) || die "cannot create a temp dir"
 cleanup() { rm -rf "$tmp"; }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -86,21 +86,30 @@ resolve_latest() {
         final=$(fetch_final_url "${BASE_URL}/releases/latest" 2>/dev/null) || true
         v=$(printf '%s\n' "$final" | sed -n 's#.*/releases/tag/\([^/?#]*\).*#\1#p')
     fi
-    [ -n "$v" ] || die "could not determine the latest release; set SEATBELT_VERSION=vX.Y.Z"
+    [ -n "$v" ] || die "could not determine the latest release; set APPLYGATE_VERSION=vX.Y.Z"
     printf '%s\n' "$v"
 }
 
-verify_mode=${SEATBELT_VERIFY_SIGNATURE:-auto}
+# The project was renamed from seatbelt on 2026-10-29; the SEATBELT_* names
+# are honoured for one release.
+for v in VERSION INSTALL_DIR VERIFY_SIGNATURE; do
+    eval "new=\${APPLYGATE_$v:-}"; eval "old=\${SEATBELT_$v:-}"
+    if [ -z "$new" ] && [ -n "$old" ]; then
+        log "SEATBELT_$v is deprecated; use APPLYGATE_$v"
+        eval "APPLYGATE_$v=\$old"
+    fi
+done
+verify_mode=${APPLYGATE_VERIFY_SIGNATURE:-auto}
 case "$verify_mode" in
     auto | require) ;;
-    *) die "SEATBELT_VERIFY_SIGNATURE must be auto or require, not '${verify_mode}'" ;;
+    *) die "APPLYGATE_VERIFY_SIGNATURE must be auto or require, not '${verify_mode}'" ;;
 esac
 if [ "$verify_mode" = require ] && ! need cosign; then
-    die "cosign is not installed and SEATBELT_VERIFY_SIGNATURE=require (https://docs.sigstore.dev/cosign/system_config/installation/)"
+    die "cosign is not installed and APPLYGATE_VERIFY_SIGNATURE=require (https://docs.sigstore.dev/cosign/system_config/installation/)"
 fi
 
-if [ -n "${SEATBELT_VERSION:-}" ]; then
-    tag=$SEATBELT_VERSION
+if [ -n "${APPLYGATE_VERSION:-}" ]; then
+    tag=$APPLYGATE_VERSION
     case "$tag" in v*) ;; *) tag="v$tag" ;; esac
 else
     tag=$(resolve_latest)
@@ -110,10 +119,10 @@ case "$tag" in
 esac
 version=${tag#v} # goreleaser names archives without the leading v
 
-archive="seatbelt_${version}_${os}_${arch}.tar.gz"
+archive="applygate_${version}_${os}_${arch}.tar.gz"
 download="${BASE_URL}/releases/download/${tag}"
 
-log "seatbelt ${tag} (${os}/${arch})"
+log "applygate ${tag} (${os}/${arch})"
 
 # --- download ----------------------------------------------------------------
 log "downloading ${archive}"
@@ -140,11 +149,11 @@ if need cosign; then
         die "signature verification of checksums.txt failed; refusing to install"
     fi
 elif [ "$verify_mode" = require ]; then
-    die "cosign is not installed and SEATBELT_VERIFY_SIGNATURE=require (https://docs.sigstore.dev/cosign/system_config/installation/)"
+    die "cosign is not installed and APPLYGATE_VERIFY_SIGNATURE=require (https://docs.sigstore.dev/cosign/system_config/installation/)"
 else
     log "WARNING: cosign is not installed, so the release signature is NOT verified."
     log "  The sha256 check below catches a corrupted download, not a tampered release."
-    log "  Install cosign and rerun, or set SEATBELT_VERIFY_SIGNATURE=require to make this an error."
+    log "  Install cosign and rerun, or set APPLYGATE_VERIFY_SIGNATURE=require to make this an error."
 fi
 
 # --- verify sha256 -----------------------------------------------------------
@@ -166,9 +175,11 @@ fi
 log "sha256 verified"
 
 # --- extract only the binary -------------------------------------------------
-tar -xzf "${tmp}/${archive}" -C "$tmp" seatbelt || die "could not extract seatbelt from ${archive}"
-[ -f "${tmp}/seatbelt" ] || die "archive did not contain a seatbelt binary"
-chmod 755 "${tmp}/seatbelt"
+tar -xzf "${tmp}/${archive}" -C "$tmp" applygate || die "could not extract applygate from ${archive}"
+# The archive also carries the "seatbelt" compatibility shim for one release.
+tar -xzf "${tmp}/${archive}" -C "$tmp" seatbelt 2>/dev/null || true
+[ -f "${tmp}/applygate" ] || die "archive did not contain a applygate binary"
+chmod 755 "${tmp}/applygate"
 
 # --- install dir -------------------------------------------------------------
 on_path() {
@@ -178,8 +189,8 @@ on_path() {
     return 1
 }
 
-if [ -n "${SEATBELT_INSTALL_DIR:-}" ]; then
-    dir=$SEATBELT_INSTALL_DIR
+if [ -n "${APPLYGATE_INSTALL_DIR:-}" ]; then
+    dir=$APPLYGATE_INSTALL_DIR
 else
     dir="${HOME}/.local/bin"
     if ! on_path "$dir" && [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
@@ -188,18 +199,20 @@ else
 fi
 
 mkdir -p "$dir" || die "cannot create ${dir}"
-[ -w "$dir" ] || die "${dir} is not writable (set SEATBELT_INSTALL_DIR to another directory)"
+[ -w "$dir" ] || die "${dir} is not writable (set APPLYGATE_INSTALL_DIR to another directory)"
 
 if need install; then
-    install -m 755 "${tmp}/seatbelt" "${dir}/seatbelt"
+    install -m 755 "${tmp}/applygate" "${dir}/applygate"
+    [ -f "${tmp}/seatbelt" ] && install -m 755 "${tmp}/seatbelt" "${dir}/seatbelt"
 else
-    mv -f "${tmp}/seatbelt" "${dir}/seatbelt"
-    chmod 755 "${dir}/seatbelt"
+    mv -f "${tmp}/applygate" "${dir}/applygate"
+    chmod 755 "${dir}/applygate"
+    if [ -f "${tmp}/seatbelt" ]; then mv -f "${tmp}/seatbelt" "${dir}/seatbelt"; chmod 755 "${dir}/seatbelt"; fi
 fi
 
 # --- report ------------------------------------------------------------------
 log ""
-log "installed $("${dir}/seatbelt" version 2>/dev/null || printf 'seatbelt %s' "$tag") to ${dir}/seatbelt"
+log "installed $("${dir}/applygate" version 2>/dev/null || printf 'applygate %s' "$tag") to ${dir}/applygate"
 if on_path "$dir"; then
     log "${dir} is on your PATH"
 else
@@ -208,5 +221,5 @@ else
 fi
 log ""
 log "next steps:"
-log "  seatbelt init     # install the hook into your agent config"
-log "  seatbelt doctor   # check config, hooks and versions"
+log "  applygate init     # install the hook into your agent config"
+log "  applygate doctor   # check config, hooks and versions"

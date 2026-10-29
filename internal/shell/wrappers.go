@@ -18,7 +18,7 @@ var tfEngines = map[string]bool{"terraform": true, "tofu": true, "terragrunt": t
 
 // notWrappers are programs that take "terraform" as data, not as a command
 // to run: text handling, search, version control, editors, file and package
-// management, and tools seatbelt already classifies itself. The backstop
+// management, and tools applygate already classifies itself. The backstop
 // never fires for them.
 var notWrappers = toSet(
 	// text output, search and processing
@@ -42,8 +42,8 @@ var notWrappers = toSet(
 	"brew", "apt", "apt-get", "dpkg", "yum", "dnf", "rpm", "pacman", "apk", "zypper", "port", "snap", "flatpak",
 	"pip", "pip3", "pipx", "gem", "cargo", "go", "conda", "mamba", "choco", "scoop", "winget", "nix-env",
 	"tfenv", "tofuenv", "tgenv", "tfswitch", "aqua",
-	// infrastructure tools seatbelt classifies itself, and linters that take a directory
-	"terraform", "tofu", "opentofu", "terragrunt", "aws", "kubectl", "oc", "helm", "seatbelt",
+	// infrastructure tools applygate classifies itself, and linters that take a directory
+	"terraform", "tofu", "opentofu", "terragrunt", "aws", "kubectl", "oc", "helm", "applygate",
 	"claude", "codex", "cursor-agent", "copilot", "gemini", "opencode",
 	"tflint", "tfsec", "checkov", "trivy", "terraform-docs", "infracost", "tfupdate", "pre-commit",
 )
@@ -150,7 +150,7 @@ func envRunner(bn string, rest []Word) (cmd []Word, script *Word, ok bool) {
 	return nil, nil, false
 }
 
-// backstop handles a program seatbelt does not recognize. If one of its
+// backstop handles a program applygate does not recognize. If one of its
 // arguments is exactly terraform, tofu or terragrunt (not part of a longer
 // string, not the value of a message flag), the arguments from that word on
 // are analyzed as the command the program would run. A shell-string flag

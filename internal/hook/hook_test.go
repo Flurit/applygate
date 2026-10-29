@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Flurit/seatbelt/internal/decisionlog"
-	"github.com/Flurit/seatbelt/internal/policy"
+	"github.com/Flurit/applygate/internal/decisionlog"
+	"github.com/Flurit/applygate/internal/policy"
 )
 
 // panicOnRender parses like Codex but panics while rendering, to exercise the
@@ -65,7 +65,7 @@ func setup(t *testing.T, mode, onErr string) string {
 	t.Helper()
 	root := t.TempDir()
 	cfg := strings.NewReplacer("%MODE%", mode, "%ONERR%", onErr).Replace(prodConfig)
-	if err := os.WriteFile(filepath.Join(root, ".seatbelt.yaml"), []byte(cfg), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range []string{"prod", "dev"} {
@@ -190,7 +190,7 @@ func TestMissingPlanFileAsksNotBlocks(t *testing.T) {
 
 func TestBrokenRepoConfigFailsClosed(t *testing.T) {
 	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, ".seatbelt.yaml"), []byte("mode: enforce\nunknown_key: 1\n"), 0o644)
+	os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte("mode: enforce\nunknown_key: 1\n"), 0o644)
 	o := Run(Claude{}, strings.NewReader(event("Bash", root, map[string]any{"command": "ls"})), Options{NoLog: true, NoGit: true, Env: map[string]string{}})
 	if o.Exit != 2 || !strings.Contains(o.Stderr, "config error") {
 		t.Fatalf("got exit %d stderr %q", o.Exit, o.Stderr)
@@ -229,7 +229,7 @@ func TestObserveModeLogsWouldBlock(t *testing.T) {
 
 func TestAllowProducesNoOutput(t *testing.T) {
 	// A hook "allow" would skip Claude Code's own permission prompt, so
-	// seatbelt must stay silent when it has no objection.
+	// applygate must stay silent when it has no objection.
 	root := setup(t, "enforce", "auto")
 	o := Run(Claude{}, strings.NewReader(event("Bash", filepath.Join(root, "prod"), map[string]any{"command": "terraform plan"})), Options{NoLog: true, NoGit: true, Env: map[string]string{}})
 	if len(o.Stdout) != 0 || o.Exit != 0 {
@@ -328,7 +328,7 @@ environments:
 func setupRootStandard(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, ".seatbelt.yaml"), []byte(rootStandardConfig), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte(rootStandardConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	for _, d := range []string{"prod", "dev"} {
@@ -538,7 +538,7 @@ func TestCodexUnknownDirFailsClosed(t *testing.T) {
 		t.Fatalf("session_root in dev: got %s tier %q, want allow/disposable", got, e.Actions[0].Tier)
 	}
 	// A repository config that says session_root is ignored.
-	os.WriteFile(filepath.Join(root, ".seatbelt.yaml"), []byte(rootStandardConfig+"unknown_dir: session_root\n"), 0o644)
+	os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte(rootStandardConfig+"unknown_dir: session_root\n"), 0o644)
 	if got, e := run("", root); got != "deny" || e.Actions[0].Tier != "protected" {
 		t.Fatalf("repo config must not loosen unknown_dir: got %s tier %q", got, e.Actions[0].Tier)
 	}

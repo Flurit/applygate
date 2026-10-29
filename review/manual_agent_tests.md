@@ -8,10 +8,10 @@ only `terraform_data` and there are no credentials. Still, run in a throwaway di
 Setup (once):
 
 ```bash
-git clone https://github.com/Flurit/seatbelt && cd seatbelt
-go build -o bin/seatbelt ./cmd/seatbelt
+git clone https://github.com/Flurit/applygate && cd applygate
+go build -o bin/applygate ./cmd/applygate
 mkdir -p /tmp/sb-live/envs/prod && cd /tmp/sb-live
-cat > .seatbelt.yaml <<'EOF'
+cat > .applygate.yaml <<'EOF'
 version: 1
 mode: enforce
 strict: true
@@ -19,8 +19,8 @@ environments:
   - {name: prod, tier: protected, match: {paths: ["envs/prod/**"]}}
 EOF
 printf 'resource "terraform_data" "x" {}\n' > envs/prod/main.tf
-/path/to/seatbelt hook install --agent claude --scope project
-/path/to/seatbelt doctor
+/path/to/applygate hook install --agent claude --scope project
+/path/to/applygate doctor
 ```
 
 ## T3.1 — "ask" is shown as a real prompt (default mode)
@@ -29,11 +29,11 @@ In Claude Code (default permission mode), from `/tmp/sb-live/envs/prod`, ask the
 to run a **standard-tier** destructive command so the verdict is `ask` (e.g. put the
 dir in a `standard` tier instead, or test `terraform state rm x` which is `ask` in
 standard). Expected: Claude Code shows a permission prompt labelled `[settings]` with
-seatbelt's reason text. **Record:** did the prompt appear, and was the reason shown?
+applygate's reason text. **Record:** did the prompt appear, and was the reason shown?
 
 ## T3.2 — "ask" under bypassPermissions / dontAsk  (the key undocumented case)
 
-seatbelt converts `ask` to a **block** when `permission_mode` is `bypassPermissions`
+applygate converts `ask` to a **block** when `permission_mode` is `bypassPermissions`
 or `dontAsk` (adapters.go: `CanAsk = mode != dontAsk && mode != bypassPermissions`).
 The official hooks docs (read 2026-10-28) do **not** document how Claude Code treats a
 hook `ask` in these modes, so this assumption is untested.
@@ -44,24 +44,24 @@ claude --permission-mode bypassPermissions
 # then prompt: run `terraform state rm x` in a standard-tier dir
 ```
 
-**Record:** With seatbelt installed, does the tool call get blocked (exit-2/deny path)?
+**Record:** With applygate installed, does the tool call get blocked (exit-2/deny path)?
 Then **temporarily** patch the adapter to always emit `permissionDecision:"ask"` even in
 bypass mode and repeat: does Claude Code (a) silently allow, (b) still prompt, or (c)
-error? This tells us whether seatbelt's ask→block conversion is necessary or whether a
+error? This tells us whether applygate's ask→block conversion is necessary or whether a
 raw `ask` would already be safe. Revert the patch after.
 
 ## T3.3 — allow does not override a deny/ask rule
 
 Add a Claude Code settings `deny` rule for `Bash(terraform plan)`, then from a
-disposable-tier dir ask the agent to run `terraform plan` (seatbelt would allow it).
-Expected per docs: the deny rule still blocks — seatbelt's silence on allow must not
+disposable-tier dir ask the agent to run `terraform plan` (applygate would allow it).
+Expected per docs: the deny rule still blocks — applygate's silence on allow must not
 override it. **Record:** blocked or allowed?
 
 ## T3.4 — onFailure: block on a missing binary  (chaos: binary missing)
 
 ```bash
 # Point the installed hook command at a non-existent path, keep onFailure:block:
-sed -i 's#"[^"]*seatbelt"#"/nonexistent/seatbelt"#' .claude/settings.json
+sed -i 's#"[^"]*applygate"#"/nonexistent/applygate"#' .claude/settings.json
 claude   # ask it to run any Bash command
 ```
 
@@ -74,7 +74,7 @@ Restore the path afterwards.
 Replace the hook command with a sleeper longer than the 30 s timeout:
 
 ```bash
-# command: "bash -c 'sleep 60'", onFailure:"block", timeout:30 (seatbelt installs 30)
+# command: "bash -c 'sleep 60'", onFailure:"block", timeout:30 (applygate installs 30)
 ```
 
 Expected (docs): "On PreToolUse, a timed-out hook doesn't block the tool call, except
@@ -94,7 +94,7 @@ behavior explicitly; this measures it.)
 
 ## T3.7 — Codex parity
 
-Repeat T3.1 and T3.4–T3.6 with Codex (`seatbelt hook install --agent codex`, then
+Repeat T3.1 and T3.4–T3.6 with Codex (`applygate hook install --agent codex`, then
 `/hooks` in Codex to trust it). Codex does not support `ask` and has no documented
 `onFailure`, so: every `ask` should become a block, and chaos cases are expected to
 **fail open** (Codex runs the tool). **Record each actual outcome.**
@@ -112,7 +112,7 @@ subdirectory resolve to different tiers, for example a config with
    `terraform state list`." (both read-only). Codex passes `examples/simple`
    as the `workdir` of its `exec_command` tool; Claude Code either prefixes
    `cd examples/simple &&` or runs the command after a separate `cd`.
-3. Read the last decision-log entries (`seatbelt report` or the log file):
+3. Read the last decision-log entries (`applygate report` or the log file):
    `cwd` and the action's `dir` must be `<repo>/examples/simple` and the tier
    the subdirectory's (`disposable` here), not the root's (`standard`).
 4. Optional, observe mode only: ask for `terraform plan -out=x.tfplan` and
@@ -124,7 +124,7 @@ Expected: Claude Code passes (its hook `cwd` follows `cd`). Codex 0.165.0
 root, so the entries show the root and its tier (`docs/limits.md`, "Codex
 working directory"; captured input in
 `review/agent-trial/results/2026-10-29-codex-hook-payload/`). Rerun on each new Codex version; once the hook input
-carries `tool_input.workdir`, `working_directory` or `cwd`, seatbelt uses it
+carries `tool_input.workdir`, `working_directory` or `cwd`, applygate uses it
 and this test should pass without changes. **Record the actual `dir`.**
 Since the fail-closed rule (T3.10) the Codex entries without a workdir carry
 `command directory not reported by codex; judged at the most protected tier
@@ -137,11 +137,11 @@ table in `docs/hosts.md` lists it as pending).
 
 ```bash
 cd /tmp/sb-live
-/path/to/seatbelt hook remove --agent claude      # cleans both scopes
-/path/to/seatbelt hook install --agent claude --scope user   # ~/.claude/settings.json
-/path/to/seatbelt doctor                           # must not FAIL
+/path/to/applygate hook remove --agent claude      # cleans both scopes
+/path/to/applygate hook install --agent claude --scope user   # ~/.claude/settings.json
+/path/to/applygate doctor                           # must not FAIL
 cd /tmp/sb-live/envs/prod
-/path/to/seatbelt doctor                           # must not FAIL either: the user hook covers it
+/path/to/applygate doctor                           # must not FAIL either: the user hook covers it
 ```
 
 1. Launch the agent from `/tmp/sb-live/envs/prod` (not the root).
@@ -153,9 +153,9 @@ cd /tmp/sb-live/envs/prod
    `~/.codex/hooks.json`; trust it with `/hooks` in Codex; launch from the
    subdirectory. **Record** whether Codex loads a user-level hooks.json at
    all (its docs say so; not verified live) and whether the entries appear.
-5. Also record `seatbelt doctor` from the subdirectory with the project hook
+5. Also record `applygate doctor` from the subdirectory with the project hook
    back in place and the user hook removed: it must print `FAIL claude: the
-   project hook is in /tmp/sb-live, not here ... Fix: seatbelt hook install
+   project hook is in /tmp/sb-live, not here ... Fix: applygate hook install
    --agent claude --scope user` and exit 1.
 
 ## T3.10 — Codex bare command in a disposable subdirectory under a root with a protected directory
@@ -168,7 +168,7 @@ Fixture: a root with `examples/simple` disposable and `envs/prod` protected,
 
 ```bash
 mkdir -p /tmp/sb-unknown/examples/simple /tmp/sb-unknown/envs/prod && cd /tmp/sb-unknown
-cat > .seatbelt.yaml <<'EOF'
+cat > .applygate.yaml <<'EOF'
 version: 1
 mode: enforce
 strict: false
@@ -178,8 +178,8 @@ environments:
   - {name: prod, tier: protected, match: {paths: ["envs/prod/**"]}}
 EOF
 printf 'resource "terraform_data" "x" {}\n' > examples/simple/main.tf
-/path/to/seatbelt check --cwd /tmp/sb-unknown --dir-unknown --agent codex "terraform destroy -auto-approve"   # block, "most protected tier under"
-/path/to/seatbelt check --cwd /tmp/sb-unknown --dir-unknown --agent codex "cd examples/simple && terraform destroy -auto-approve"   # allow: cd establishes the directory
+/path/to/applygate check --cwd /tmp/sb-unknown --dir-unknown --agent codex "terraform destroy -auto-approve"   # block, "most protected tier under"
+/path/to/applygate check --cwd /tmp/sb-unknown --dir-unknown --agent codex "cd examples/simple && terraform destroy -auto-approve"   # allow: cd establishes the directory
 ```
 
 1. Launch Codex from `/tmp/sb-unknown` with the hook installed and trusted.
@@ -195,7 +195,7 @@ printf 'resource "terraform_data" "x" {}\n' > examples/simple/main.tf
 4. Ask it to run the destroy as `cd examples/simple && terraform destroy
    -auto-approve`: expected **allow** with `dir` `/tmp/sb-unknown/examples/simple`
    and tier `disposable`.
-5. With `unknown_dir: session_root` in `~/.config/seatbelt/config.yaml`,
+5. With `unknown_dir: session_root` in `~/.config/applygate/config.yaml`,
    repeat step 2: expected tier `standard` (the root's), verdict ask enforced
    as block, and `matched` says `judged at the session root`. Remove the
    setting afterwards.

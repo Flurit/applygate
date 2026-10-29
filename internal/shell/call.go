@@ -278,7 +278,7 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			return
 		}
 	}
-	// Backstop for wrappers seatbelt does not know: a standalone terraform,
+	// Backstop for wrappers applygate does not know: a standalone terraform,
 	// tofu or terragrunt argument starts the command the wrapper would run.
 	record()
 	a.backstop(bn, rest, redirs, cmdSt, st, via, depth)
@@ -638,7 +638,7 @@ func joinWords(ws []Word) string {
 	return strings.Join(parts, " ")
 }
 
-var mentionRe = regexp.MustCompile(`(?i)\b(terraform|tofu|terragrunt|kubectl)\b|\baws\s+[a-z0-9-]+\s+[a-z0-9-]+|\.claude/settings|managed-settings|\.codex/(hooks\.json|config\.toml)|\.seatbelt\.ya?ml|\.aws/credentials|\.tfstate\b|\b(boto3|botocore|aws-sdk)\b|@aws-sdk/|github\.com/aws/aws-sdk-go`)
+var mentionRe = regexp.MustCompile(`(?i)\b(terraform|tofu|terragrunt|kubectl)\b|\baws\s+[a-z0-9-]+\s+[a-z0-9-]+|\.claude/settings|managed-settings|\.codex/(hooks\.json|config\.toml)|\.applygate\.ya?ml|\.seatbelt\.ya?ml|\.aws/credentials|\.tfstate\b|\b(boto3|botocore|aws-sdk)\b|@aws-sdk/|github\.com/aws/aws-sdk-go`)
 
 // Mentions returns the infrastructure or guard-file words found in text.
 func Mentions(text string) []string {

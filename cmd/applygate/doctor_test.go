@@ -9,10 +9,10 @@ import (
 	"testing"
 )
 
-const seatbeltSettings = `{
+const applygateSettings = `{
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": "\"/usr/bin/seatbelt\" hook claude"}]}
+      {"matcher": "Bash", "hooks": [{"type": "command", "command": "\"/usr/bin/applygate\" hook claude"}]}
     ]
   }
 }`
@@ -22,7 +22,7 @@ func TestLaunchDirWarnings(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(seatbeltSettings), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(applygateSettings), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	sub := filepath.Join(root, "envs", "prod")
@@ -43,7 +43,7 @@ func TestLaunchDirWarnings(t *testing.T) {
 	if len(c) != 1 || !c[0].fail {
 		t.Fatalf("expected one failure from a subdirectory, got %v", c)
 	}
-	if !strings.Contains(c[0].msg, "claude") || !strings.Contains(c[0].msg, root) || !strings.Contains(c[0].msg, "seatbelt hook install --agent claude --scope user") {
+	if !strings.Contains(c[0].msg, "claude") || !strings.Contains(c[0].msg, root) || !strings.Contains(c[0].msg, "applygate hook install --agent claude --scope user") {
 		t.Fatalf("failure should name the agent, the hook directory and the fix: %q", c[0].msg)
 	}
 
@@ -56,7 +56,7 @@ func TestLaunchDirWarnings(t *testing.T) {
 	// Project hook here plus a user-scope hook: runs twice, a warning with
 	// the remove command.
 	c = launchDirChecks(root, map[string]bool{"claude": true})
-	if len(c) != 1 || c[0].fail || !strings.Contains(c[0].msg, "seatbelt hook remove --agent claude --scope project") {
+	if len(c) != 1 || c[0].fail || !strings.Contains(c[0].msg, "applygate hook remove --agent claude --scope project") {
 		t.Fatalf("double install should warn: %v", c)
 	}
 }
@@ -67,8 +67,8 @@ func TestDoctorFailsFromSubdirectoryWithoutUserHook(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, ".claude"), 0o755)
-	os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(seatbeltSettings), 0o644)
-	os.WriteFile(filepath.Join(root, ".seatbelt.yaml"), []byte("version: 1\nmode: observe\nenvironments:\n  - {name: prod, tier: protected, match: {paths: [\"envs/prod/**\"]}}\n"), 0o644)
+	os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(applygateSettings), 0o644)
+	os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte("version: 1\nmode: observe\nenvironments:\n  - {name: prod, tier: protected, match: {paths: [\"envs/prod/**\"]}}\n"), 0o644)
 	sub := filepath.Join(root, "envs", "prod")
 	os.MkdirAll(sub, 0o755)
 	t.Chdir(sub)
@@ -76,7 +76,7 @@ func TestDoctorFailsFromSubdirectoryWithoutUserHook(t *testing.T) {
 	if rc := cmdDoctor(&out, &errb); rc != 1 || !strings.Contains(out.String(), "FAIL claude: the project hook is in "+root) {
 		t.Fatalf("doctor from a subdirectory without a user hook: rc %d\n%s", rc, out.String())
 	}
-	if !strings.Contains(out.String(), "Fix: seatbelt hook install --agent claude --scope user") {
+	if !strings.Contains(out.String(), "Fix: applygate hook install --agent claude --scope user") {
 		t.Fatalf("doctor should print the fix:\n%s", out.String())
 	}
 	// Install the user-scope hook: the failure goes away.
@@ -84,7 +84,7 @@ func TestDoctorFailsFromSubdirectoryWithoutUserHook(t *testing.T) {
 	if rc := cmdInstall("install", []string{"--agent", "claude", "--scope", "user"}, &ib, &errb); rc != 0 {
 		t.Fatalf("install: %d %s", rc, errb.String())
 	}
-	if b, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); err != nil || !settingsHasSeatbelt(b) {
+	if b, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); err != nil || !settingsHasApplygate(b) {
 		t.Fatalf("user-scope install did not write ~/.claude/settings.json: %v", err)
 	}
 	out.Reset()
@@ -97,36 +97,36 @@ func TestDoctorFailsFromSubdirectoryWithoutUserHook(t *testing.T) {
 	if rc := cmdInstall("remove", []string{"--agent", "claude"}, &rb, &errb); rc != 0 {
 		t.Fatalf("remove: %d %s", rc, errb.String())
 	}
-	if b, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); settingsHasSeatbelt(b) {
+	if b, _ := os.ReadFile(filepath.Join(home, ".claude", "settings.json")); settingsHasApplygate(b) {
 		t.Fatal("remove did not clean the user scope")
 	}
-	if !strings.Contains(rb.String(), "removed 1 seatbelt hook entry from "+filepath.Join(home, ".claude", "settings.json")) {
+	if !strings.Contains(rb.String(), "removed 1 applygate hook entry from "+filepath.Join(home, ".claude", "settings.json")) {
 		t.Fatalf("remove output: %s", rb.String())
 	}
 }
 
-func TestSeatbeltHookDirIgnoresNonSeatbelt(t *testing.T) {
+func TestApplygateHookDirIgnoresNonApplygate(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, ".claude"), 0o755)
-	// A settings file with an unrelated hook must not be treated as seatbelt's.
+	// A settings file with an unrelated hook must not be treated as applygate's.
 	os.WriteFile(filepath.Join(root, ".claude", "settings.json"),
 		[]byte(`{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo hi"}]}]}}`), 0o644)
-	if dir := seatbeltHookDir(root, filepath.Join(".claude", "settings.json")); dir != "" {
-		t.Fatalf("non-seatbelt hook should not match, got %q", dir)
+	if dir := applygateHookDir(root, filepath.Join(".claude", "settings.json")); dir != "" {
+		t.Fatalf("non-applygate hook should not match, got %q", dir)
 	}
 }
 
 func TestScanHooks(t *testing.T) {
 	doc := `{"hooks":{"PreToolUse":[
-		{"matcher":"Bash","hooks":[{"type":"command","command":"\"/usr/bin/seatbelt\" hook codex"}]},
+		{"matcher":"Bash","hooks":[{"type":"command","command":"\"/usr/bin/applygate\" hook codex"}]},
 		{"matcher":"*","hooks":[{"type":"command","command":"my-own-logger --flag"}]}
 	]}}`
 	s, ok := scanHooks([]byte(doc))
 	if !ok {
 		t.Fatal("valid JSON reported invalid")
 	}
-	if len(s.seatbeltBins) != 1 || s.seatbeltBins[0] != "/usr/bin/seatbelt" {
-		t.Fatalf("seatbelt bins: %v", s.seatbeltBins)
+	if len(s.applygateBins) != 1 || s.applygateBins[0] != "/usr/bin/applygate" {
+		t.Fatalf("applygate bins: %v", s.applygateBins)
 	}
 	if len(s.unrecognised) != 1 || !strings.Contains(s.unrecognised[0], "my-own-logger") {
 		t.Fatalf("unrecognised: %v", s.unrecognised)
@@ -182,18 +182,18 @@ func TestCodexInstallPreservesEntries(t *testing.T) {
 		t.Fatalf("unrelated top-level key dropped: %v", doc["model"])
 	}
 	pre := doc["hooks"].(map[string]any)["PreToolUse"].([]any)
-	var sawOwn, sawSeatbelt bool
+	var sawOwn, sawApplygate bool
 	for _, e := range pre {
-		if isSeatbeltEntry(e) {
-			sawSeatbelt = true
+		if isApplygateEntry(e) {
+			sawApplygate = true
 			continue
 		}
 		if strings.Contains(entrySummary(e), "my-own-logger") {
 			sawOwn = true
 		}
 	}
-	if !sawSeatbelt {
-		t.Fatal("seatbelt entry was not installed")
+	if !sawApplygate {
+		t.Fatal("applygate entry was not installed")
 	}
 	if !sawOwn {
 		t.Fatal("unrelated hook entry was dropped by install")
@@ -245,7 +245,7 @@ func TestInitInstallsHooksForDetectedAgents(t *testing.T) {
 	}
 	// init installs at user scope, so the hook fires from any directory.
 	b, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
-	if err != nil || !settingsHasSeatbelt(b) {
+	if err != nil || !settingsHasApplygate(b) {
 		t.Fatalf("init should install the claude user-scope hook: %v %s", err, b)
 	}
 	if _, err := os.Stat(filepath.Join(wd, ".claude", "settings.json")); err == nil {
@@ -254,7 +254,7 @@ func TestInitInstallsHooksForDetectedAgents(t *testing.T) {
 	if !strings.Contains(out.String(), "user scope") {
 		t.Fatalf("init should explain the scope choice: %s", out.String())
 	}
-	if _, err := os.Stat(filepath.Join(wd, ".seatbelt.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(wd, ".applygate.yaml")); err != nil {
 		t.Fatal("config not written")
 	}
 	// --scope project keeps the old behaviour.
@@ -265,7 +265,7 @@ func TestInitInstallsHooksForDetectedAgents(t *testing.T) {
 	if rc := cmdInit([]string{"--scope", "project"}, &out, &errb); rc != 0 {
 		t.Fatalf("init --scope project rc %d", rc)
 	}
-	if b, err := os.ReadFile(filepath.Join(wd3, ".claude", "settings.json")); err != nil || !settingsHasSeatbelt(b) {
+	if b, err := os.ReadFile(filepath.Join(wd3, ".claude", "settings.json")); err != nil || !settingsHasApplygate(b) {
 		t.Fatalf("init --scope project should write the project hook: %v", err)
 	}
 	os.Chdir(wd)
@@ -279,5 +279,19 @@ func TestInitInstallsHooksForDetectedAgents(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(wd2, ".claude", "settings.json")); err == nil {
 		t.Fatal("--no-hooks must not install hooks")
+	}
+}
+
+// Hook entries written before the rename call the seatbelt binary; they are
+// still recognised as ours (so doctor sees them and hook install replaces
+// them rather than adding a second entry).
+func TestLegacySeatbeltHookEntryRecognised(t *testing.T) {
+	legacy := `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "\"/usr/local/bin/seatbelt\" hook claude"}]}]}}`
+	if !settingsHasApplygate([]byte(legacy)) {
+		t.Fatal("a seatbelt hook entry should be recognised as ours")
+	}
+	other := `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "guardfall hook claude"}]}]}}`
+	if settingsHasApplygate([]byte(other)) {
+		t.Fatal("a third-party hook entry must not be recognised as ours")
 	}
 }

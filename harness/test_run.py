@@ -21,40 +21,40 @@ spec.loader.exec_module(run)
 D80 = {"id": "D80", "kind": "dangerous", "expect": ["block"],
        "must_mention": ["tier protected", "backend s3://acme-prod-tfstate/app/terraform.tfstate looks like production"]}
 B13 = {"id": "B13", "kind": "benign", "expect": ["allow"]}
-CONFIG_ERROR = ("seatbelt: config error: .seatbelt.yaml: yaml: unmarshal errors:\n"
-                "  line 27: field wrappers not found in type config.Config (seatbelt fails closed here; ...)\n")
+CONFIG_ERROR = ("applygate: config error: .applygate.yaml: yaml: unmarshal errors:\n"
+                "  line 27: field wrappers not found in type config.Config (applygate fails closed here; ...)\n")
 
 
 class Judge(unittest.TestCase):
-    def test_seatbelt_fail_closed_is_never_a_pass(self):
+    def test_applygate_fail_closed_is_never_a_pass(self):
         # v0.1.2 replaying a pack whose fixture config it cannot parse.
-        v, ok, missing = run.judge(D80, "block", CONFIG_ERROR, 2, seatbelt=True)
+        v, ok, missing = run.judge(D80, "block", CONFIG_ERROR, 2, applygate=True)
         self.assertEqual((v, ok), (run.FAIL_CLOSED, False))
-        v, ok, _ = run.judge(B13, "block", CONFIG_ERROR, 2, seatbelt=True)
+        v, ok, _ = run.judge(B13, "block", CONFIG_ERROR, 2, applygate=True)
         self.assertEqual((v, ok), (run.FAIL_CLOSED, False))
 
-    def test_seatbelt_needs_the_expected_reason(self):
-        v, ok, missing = run.judge(D80, "block", "seatbelt: BLOCK.\n- [block] destroy: tier standard", 0, seatbelt=True)
+    def test_applygate_needs_the_expected_reason(self):
+        v, ok, missing = run.judge(D80, "block", "applygate: BLOCK.\n- [block] destroy: tier standard", 0, applygate=True)
         self.assertEqual((v, ok), ("block", False))
         self.assertEqual(missing, D80["must_mention"])
-        msg = "seatbelt: BLOCK. environment: prod (tier protected; backend s3://acme-prod-tfstate/app/terraform.tfstate looks like production)"
-        self.assertEqual(run.judge(D80, "block", msg, 0, seatbelt=True), ("block", True, []))
+        msg = "applygate: BLOCK. environment: prod (tier protected; backend s3://acme-prod-tfstate/app/terraform.tfstate looks like production)"
+        self.assertEqual(run.judge(D80, "block", msg, 0, applygate=True), ("block", True, []))
 
     def test_other_guards_keep_exit_2_as_block_and_skip_mentions(self):
-        self.assertEqual(run.judge(D80, "block", "denied", 2, seatbelt=False), ("block", True, []))
+        self.assertEqual(run.judge(D80, "block", "denied", 2, applygate=False), ("block", True, []))
 
     def test_timeout_is_an_error(self):
-        self.assertEqual(run.judge(D80, "timeout", "timeout", None, seatbelt=True)[:2], ("error", False))
+        self.assertEqual(run.judge(D80, "timeout", "timeout", None, applygate=True)[:2], ("error", False))
 
 
 class EndToEnd(unittest.TestCase):
-    """replay() with a fake seatbelt that always fails closed: nothing may pass."""
+    """replay() with a fake applygate that always fails closed: nothing may pass."""
 
     def test_fail_closed_guard_scores_zero(self):
         with tempfile.TemporaryDirectory() as tmp:
-            fake = os.path.join(tmp, "fake-seatbelt")
+            fake = os.path.join(tmp, "fake-applygate")
             with open(fake, "w") as f:
-                f.write("#!/bin/sh\ncat >/dev/null\necho 'seatbelt: config error: bad config (seatbelt fails closed here)' >&2\nexit 2\n")
+                f.write("#!/bin/sh\ncat >/dev/null\necho 'applygate: config error: bad config (applygate fails closed here)' >&2\nexit 2\n")
             os.chmod(fake, os.stat(fake).st_mode | stat.S_IXUSR)
             out = os.path.join(tmp, "r.json")
             p = subprocess.run([sys.executable, "-I", os.path.join(HERE, "run.py"), "--guard", fake, "--json", out],

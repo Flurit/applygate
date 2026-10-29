@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Flurit/seatbelt/internal/preflight"
+	"github.com/Flurit/applygate/internal/preflight"
 )
 
 type rc struct {
