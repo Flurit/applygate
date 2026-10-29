@@ -9,7 +9,7 @@
 3. `internal/classify` assigns a class to each invocation, redirect and file tool call.
 4. For each action, the tier comes from config (paths, workspaces, backends, AWS profiles, optional accounts) plus name hints (`prod`, `production`, `prd`, `live` as a whole word between `/ _ . : -` or the ends, so `acme-prod-tfstate` matches and `acme-products-tfstate` does not). Name hints are checked on the path, workspace, AWS profile, the backend URL, the backend's `bucket`, `key`, `workspace_key_prefix`, `dynamodb_table` and `address` values, and the name of a `-backend-config` file. The backend values come from `.terraform/terraform.tfstate`, or, when an init in the same command line passes `-backend-config` files or `key=value` pairs, from those (the two paths use the same rules). The values are read whether or not the backend type is known (a directory may have no `backend` block and no `.terraform` yet), and `-backend-config` files may write values quoted or unquoted (`bucket = "x"`, `bucket="x"`, `bucket=x`). When signals disagree, the most protected tier wins. If nothing matches, the tier is protected in strict mode (the default) or `default_tier` otherwise.
 5. Preflight: backend changed since init, stale or archived state (and, when `preflight.live_state` is on in the user config, a read-only state pull that compares lineage and serial), and (for applies and destroys) lock-file and source drift since HEAD.
-6. Plan gate for `apply <planfile>`: planfile workspace vs. selected workspace, then the `show -json` rules. A plan containing pure deletes is reclassified as **destroy**.
+6. Plan gate for `apply <planfile>`: planfile workspace vs. selected workspace, then the `show -json` rules. When the two workspaces differ, the action is judged by the more protected of the two tiers (a `prod` plan applied from `staging` is a protected-tier action, and the log records that tier), so the critical workspace-mismatch finding blocks whichever side is protected. A plan containing pure deletes is reclassified as **destroy**.
 7. Verdict = max(class × tier, finding severity × tier) across all actions. If the host cannot ask, ask becomes block. Observe mode logs the verdict and returns allow.
 
 ## Verdict table
@@ -54,7 +54,7 @@
 | out-of-scope (`plan_gate.scope`) | high | plan |
 | plan-errored, plan-unreadable (plan exists but cannot be read) | critical | plan |
 | plan-missing (the plan file does not exist, so there is nothing to apply) | high | plan |
-| workspace-mismatch (planfile workspace ≠ selected) | critical | planfile |
+| workspace-mismatch (planfile workspace ≠ selected; the action takes the more protected of the two workspaces' tiers) | critical | planfile |
 | backend-changed | high | preflight |
 | backend-config-unreadable (an init in the same command points at a `-backend-config` file that cannot be read; only on later state-changing commands) | high | preflight |
 | stale-state | high | preflight |
