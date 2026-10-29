@@ -1,0 +1,4 @@
+tier standard: ask (5 changes, 5 deletes, 0 replaces)
+- critical stateful-destroyed: plan destroys or replaces stateful resources
+    aws_dynamodb_table.sessions (aws_dynamodb_table) is destroyed
+    aws_s3_bucket.data (aws_s3_bucket) is destroyed

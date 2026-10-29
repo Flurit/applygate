@@ -1,0 +1,10 @@
+tier protected: block (5 changes, 5 deletes, 0 replaces)
+- high destroy-count: plan destroys or replaces 5 resources; the limit for this tier is 0
+    aws_dynamodb_table.sessions
+    aws_s3_bucket.data
+    aws_s3_bucket_versioning.data
+    aws_security_group.web
+    aws_vpc.main
+- critical stateful-destroyed: plan destroys or replaces stateful resources
+    aws_dynamodb_table.sessions (aws_dynamodb_table) is destroyed
+    aws_s3_bucket.data (aws_s3_bucket) is destroyed

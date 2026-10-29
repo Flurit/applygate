@@ -1,0 +1,76 @@
+ Container seatbelt-agent-trial-localstack-1 Running 
+ Container seatbelt-agent-trial-localstack-1 Waiting 
+ Container seatbelt-agent-trial-localstack-1 Healthy 
+ Container seatbelt-agent-trial-trial-run-de341c32ce97 Creating 
+ Container seatbelt-agent-trial-trial-run-de341c32ce97 Created 
+== /work/cloud-platform-infrastructure/
+mode: observe
+seatbelt 0.1.3 at /usr/local/bin/seatbelt
+ok   config loads (/work/cloud-platform-infrastructure/.seatbelt.yaml)
+ok   repository config found (/work/cloud-platform-infrastructure)
+ok   3 environment(s) configured
+     mode observe, strict true, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
+ok   claude hook command binary is executable: /usr/local/bin/seatbelt
+ok   codex hook command binary is executable: /usr/local/bin/seatbelt
+ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
+ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 56ms
+exit 0
+== /work/govuk-infrastructure/
+mode: observe
+seatbelt 0.1.3 at /usr/local/bin/seatbelt
+ok   config loads (/work/govuk-infrastructure/.seatbelt.yaml)
+ok   repository config found (/work/govuk-infrastructure)
+ok   4 environment(s) configured
+     mode observe, strict true, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
+ok   claude hook command binary is executable: /usr/local/bin/seatbelt
+ok   codex hook command binary is executable: /usr/local/bin/seatbelt
+ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
+ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 55ms
+exit 0
+== /work/terraform-aws-eks-blueprints/
+mode: observe
+seatbelt 0.1.3 at /usr/local/bin/seatbelt
+ok   config loads (/work/terraform-aws-eks-blueprints/.seatbelt.yaml)
+ok   repository config found (/work/terraform-aws-eks-blueprints)
+ok   1 environment(s) configured
+     mode observe, strict false, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
+ok   claude hook command binary is executable: /usr/local/bin/seatbelt
+ok   codex hook command binary is executable: /usr/local/bin/seatbelt
+ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
+ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 54ms
+exit 0
+== /work/terraform-aws-vpc/
+mode: observe
+seatbelt 0.1.3 at /usr/local/bin/seatbelt
+ok   config loads (/work/terraform-aws-vpc/.seatbelt.yaml)
+ok   repository config found (/work/terraform-aws-vpc)
+ok   1 environment(s) configured
+     mode observe, strict false, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
+ok   claude hook command binary is executable: /usr/local/bin/seatbelt
+ok   codex hook command binary is executable: /usr/local/bin/seatbelt
+ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
+ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 58ms
+exit 0
+== /work/terragrunt-infrastructure-live-example/
+mode: observe
+seatbelt 0.1.3 at /usr/local/bin/seatbelt
+ok   config loads (/work/terragrunt-infrastructure-live-example/.seatbelt.yaml)
+ok   repository config found (/work/terragrunt-infrastructure-live-example)
+ok   2 environment(s) configured
+     mode observe, strict true, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
+ok   claude hook command binary is executable: /usr/local/bin/seatbelt
+ok   codex hook command binary is executable: /usr/local/bin/seatbelt
+ok   hooks installed: claude (.claude/settings.json), codex (.codex/hooks.json)
+ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 81ms
+exit 0
+== from a subdirectory (/work/terraform-aws-vpc/examples/simple), the launch-directory caveat
+seatbelt 0.1.3 at /usr/local/bin/seatbelt
+ok   config loads (/work/terraform-aws-vpc/.seatbelt.yaml)
+ok   repository config found (/work/terraform-aws-vpc)
+ok   1 environment(s) configured
+     mode observe, strict false, on_error auto, log /home/trial/.local/state/seatbelt/decisions.jsonl
+WARN hooks installed: (none)
+WARN claude project hook is in /work/terraform-aws-vpc, not the current directory; claude reads project settings only from the directory it is launched in, so starting it here will not apply the hook — launch from /work/terraform-aws-vpc, or install at user scope (--scope user)
+WARN codex project hook is in /work/terraform-aws-vpc, not the current directory; codex reads project settings only from the directory it is launched in, so starting it here will not apply the hook — launch from /work/terraform-aws-vpc, or install at user scope (--scope user)
+ok   selftest: scenario pack v2: dangerous caught 80/80, benign flagged 0/42, exact expectation 122/122, 69ms
+exit 1

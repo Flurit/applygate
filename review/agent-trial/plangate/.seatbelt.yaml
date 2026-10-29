@@ -1,0 +1,14 @@
+# Plan-gate exercise config. Enforce mode on purpose: the exercise records the
+# decision an agent would receive, not trial friction. The workspace is the
+# tier signal: prod is protected, staging is standard, anything else is
+# protected (strict).
+version: 1
+mode: enforce
+strict: true
+environments:
+  - name: prod
+    tier: protected
+    match: {workspaces: ["prod"]}
+  - name: staging
+    tier: standard
+    match: {workspaces: ["staging"]}

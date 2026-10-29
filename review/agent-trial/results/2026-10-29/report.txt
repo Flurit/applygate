@@ -1,0 +1,5 @@
+log: /tmp/tmp.xIzJPnMKPx/decisions.jsonl
+decisions: 0 (malformed lines: 0, internal errors: 0)
+policy verdicts:   allow 0, ask 0, block 0
+enforced verdicts: allow 0, ask 0, block 0
+observe mode, would have asked or blocked: 0

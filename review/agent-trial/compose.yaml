@@ -1,0 +1,66 @@
+# Agent-driven observe-mode trial: the trial container plus a LocalStack
+# sidecar that stands in for AWS. See README.md in this directory.
+#
+# The trial service gets exactly one set of AWS settings: LocalStack's dummy
+# credentials and an endpoint override that points every AWS SDK and the
+# Terraform AWS provider at the sidecar. Nothing from the host's ~/.aws is
+# mounted, and the AWS config and credential files are pointed at /dev/null
+# so no profile can be picked up by accident.
+name: seatbelt-agent-trial
+
+services:
+  localstack:
+    image: localstack/localstack:4.14.0
+    environment:
+      SERVICES: s3,ec2,dynamodb,sts,iam,kms
+      EAGER_SERVICE_LOADING: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:4566/_localstack/health | grep -q '\"s3\": \"\\(available\\|running\\)\"'"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+    # Not published on the host: only the trial container can reach it.
+
+  trial:
+    build:
+      context: ../..
+      dockerfile: review/agent-trial/Dockerfile
+    image: seatbelt-agent-trial:local
+    init: true
+    stdin_open: true
+    tty: true
+    depends_on:
+      localstack:
+        condition: service_healthy
+    environment:
+      # LocalStack dummy credentials. These are the only AWS values in the
+      # container and they are not valid anywhere else.
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://localstack:4566
+      LOCALSTACK_ENDPOINT: http://localstack:4566
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_CONFIG_FILE: /dev/null
+      AWS_SHARED_CREDENTIALS_FILE: /dev/null
+      TF_IN_AUTOMATION: "1"
+      CHECKPOINT_DISABLE: "1"
+    volumes:
+      # Agent sign-in state, so the user signs in once per volume, never on
+      # the host. Remove the volumes to forget it: docker compose down -v
+      - claude-state:/home/trial/.claude
+      - codex-state:/home/trial/.codex
+      # The seatbelt decision log (one file, entries carry their cwd).
+      - seatbelt-log:/home/trial/.local/state/seatbelt
+      # Provider plugin cache and the clones, so agent edits survive restarts.
+      - tf-plugin-cache:/home/trial/.terraform.d/plugin-cache
+      - work:/work
+    working_dir: /work
+
+volumes:
+  claude-state:
+  codex-state:
+  seatbelt-log:
+  tf-plugin-cache:
+  work:

@@ -1,0 +1,6 @@
+tier protected: block (2 changes, 0 deletes, 2 replaces)
+- high destroy-count: plan destroys or replaces 2 resources; the limit for this tier is 0
+    aws_s3_bucket.data
+    aws_s3_bucket_versioning.data
+- critical stateful-destroyed: plan destroys or replaces stateful resources
+    aws_s3_bucket.data (aws_s3_bucket) is replaced
