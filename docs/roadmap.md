@@ -33,7 +33,7 @@ Done:
 - the analyzer, tiers, preflight and plan gate;
 - Claude Code and Codex adapters, tested live;
 - observe mode and the decision log;
-- signed releases with provenance (v0.1.0 to v0.1.3);
+- signed releases with provenance (v0.1.0 to v0.1.4);
 - a static false-positive trial on 5 public repositories: 0.48% ([oss-corpus-trial.md](oss-corpus-trial.md)).
 
 Open:
