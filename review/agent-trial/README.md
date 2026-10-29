@@ -57,6 +57,7 @@ that is why nothing in the container can reach a real cloud.
 |---|---|
 | `Dockerfile` | The trial image: seatbelt v0.1.3 installed by the repository's `install.sh` with `SEATBELT_VERIFY_SIGNATURE=require` (cosign keyless signature on `checksums.txt`, then sha256); Terraform 1.16.1 and cosign checksummed against their published sums; Claude Code and Codex from npm, pinned; the five repositories at the commits in `review/oss-corpus/repos.txt`, each with its trial config as `.seatbelt.yaml` switched to `mode: observe` and both hooks installed by `seatbelt hook install`. |
 | `compose.yaml` | The trial container plus a LocalStack 4.14.0 sidecar (not published on the host). Named volumes keep the agents' sign-in state, the decision log, the provider cache and the clones between runs. |
+| `tools/reset-repos.sh` | Resets the five clones to their pinned commits between agents (keeps the harness files and the log). |
 | `tools/setup-repos.sh` | Runs at build time: clones at the pinned commits with git hooks disabled, verifies the commit, writes the observe-mode config, installs the hooks. Refuses to run with any AWS credential in the environment. |
 | `tasks.md` | The fixed task list per repository: a provider bump, a new module, a rename, "clean up the dev environment", a saved-plan apply, and two or three that should legitimately ask or block in a protected tier. |
 | `plangate/` | The plan-gate exercise: a small stack against LocalStack (S3 bucket with versioning, a security group, a DynamoDB table) and `run-plangate.sh`, which produces a create plan and then flipped delete, replace, protection-removal and exposure plans, and runs each through `seatbelt plan-check` and through the hook path for `terraform apply <planfile>`. Needs no agent. |
@@ -162,7 +163,23 @@ column of every ask and block with `expected`, `fp-policy`, `fp-analyzer`,
 `label.py`), fill the task log, and compute the per-repository rate. Commit
 the directory.
 
-### Resetting
+### Resetting the clones between agents
+
+Each agent should start from the pinned commits, not from the previous
+agent's edits. After `collect.sh` (which saves the edits as
+`raw/diff/<repo>.patch`), run from the host:
+
+```bash
+review/agent-trial/tools/reset-repos.sh
+```
+
+It resets every clone to the commit in `review/oss-corpus/repos.txt` and
+removes untracked files, keeping `.seatbelt.yaml`, the hook configs, the
+provider caches and the decision log. It does not clean LocalStack or state
+files an apply left behind; destroy those from inside the container if it
+matters.
+
+### Resetting everything
 
 `docker compose -f review/agent-trial/compose.yaml down -v` removes the
 containers and every volume, including the agents' sign-in state, the

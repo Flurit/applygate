@@ -1,0 +1,7 @@
+collected: 2026-10-29T09:03:49Z
+seatbelt: seatbelt 0.1.3
+terraform: Terraform v1.16.1
+claude-code: 2.1.312 (Claude Code)
+codex: codex-cli 0.165.0
+container: Linux 7.0.0-42-generic x86_64, Ubuntu 24.04.5 LTS
+localstack: {"services": {"acm": "disabled", "apigateway": "disabled", "cloudformation": "disabled", "cloudwatch": "disabled", "config": "disabled", "dynamodb": "running", "dynamodbstreams": "running", "ec2": "ru
