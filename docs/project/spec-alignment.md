@@ -144,4 +144,6 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 
 ## Not in scope of this alignment (v2 and v3)
 
-Backup-isolation checks, plan-hash approval with typed confirmation, more agents (Cursor, Copilot CLI, OpenCode), CI mode as a GitHub Action, signed receipts, session capture, CloudTrail stamping and `applygate who`. The plan SHA-256 in every plan-gate message is the hook for v2 approval.
+CI mode as a GitHub Action, planned for v2, shipped early as `action.yml` and `docs/ci.md` (plan-check on a saved plan between plan and apply; also a Terragrunt `before_hook`).
+
+Backup-isolation checks, plan-hash approval with typed confirmation, more agents (Cursor, Copilot CLI, OpenCode), signed receipts, session capture, CloudTrail stamping and `applygate who`. The plan SHA-256 in every plan-gate message is the hook for v2 approval.
