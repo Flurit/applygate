@@ -140,6 +140,9 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		}
 		return o
 	}
+	// dirKnown is whether the parsed event's cwd is the command's directory;
+	// until an event is parsed nothing is known.
+	dirKnown := false
 	// fail applies the error behavior. Without a usable config the guard
 	// fails closed: an unknown environment is treated as protected.
 	fail := func(cfg *config.Config, cwd, msg string) Output {
@@ -151,7 +154,15 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 			case "allow":
 				block = false
 			case "auto":
-				block = cwd == "" || cfg.Resolve(config.Signals{Dir: cwd}).Tier == config.Protected
+				tier := config.Protected
+				switch {
+				case cwd == "":
+				case dirKnown || !cfg.UnknownDirMostProtected():
+					tier = cfg.Resolve(config.Signals{Dir: cwd}).Tier
+				default:
+					tier = cfg.ResolveUnknownDir(a.Name(), cwd, config.Signals{}).Tier
+				}
+				block = tier == config.Protected
 			}
 			if cfg.Observe() {
 				block = false
@@ -201,6 +212,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		return Output{} // not an event we check; nothing to log
 	}
 	entry.Session, entry.Tool, entry.Cwd, entry.Command, entry.Paths = ev.Session, ev.Tool, ev.Cwd, ev.Command, ev.Paths
+	dirKnown = ev.DirKnown
 	if ev.Kind == policy.KindOther {
 		return Output{} // tools seatbelt does not inspect are not logged
 	}

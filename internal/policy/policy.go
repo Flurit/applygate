@@ -113,6 +113,13 @@ type Event struct {
 	// CanAsk is false when the host cannot show an ask prompt; ask then
 	// becomes block.
 	CanAsk bool `json:"can_ask"`
+	// DirKnown is true when Cwd is the directory the command runs in. When
+	// the host reports only the session root (Codex 0.165.0 sends no
+	// workdir), it is false and the command is judged at the most protected
+	// tier it could be in under Cwd, unless unknown_dir is session_root. A
+	// cd or -chdir inside the command establishes the directory for that
+	// invocation. The zero value fails closed on purpose.
+	DirKnown bool `json:"dir_known"`
 }
 
 // Deps are the effects Decide may use. Tests replace them.
@@ -252,8 +259,37 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		return r
 	}
 	env := mergeEnv(deps.Env, a.Env)
-	sig := config.Signals{Dir: a.Dir}
 	tf := a.Engine == "terraform" || a.Engine == "tofu" || a.Engine == "terragrunt"
+	// The directory is known when the host reported it or the command
+	// itself moved there (cd, pushd, -chdir); a.Dir then differs from the
+	// event's cwd. A relative cd is resolved against the session root, which
+	// is the host's best information.
+	dirKnown := ev.DirKnown || (a.Dir != "" && a.Dir != ev.Cwd)
+	var dirNotes []string
+	if !dirKnown && tf && a.Dir != "" && a.Class == classify.ApplySavedPlan && a.PlanFile != "" && !filepath.IsAbs(a.PlanFile) {
+		// A relative planfile that is not in the reported directory may sit
+		// in the directory the command really runs in. One copy under the
+		// root identifies that directory; several cannot be told apart.
+		if _, err := os.Stat(filepath.Join(a.Dir, a.PlanFile)); errors.Is(err, os.ErrNotExist) {
+			matches, truncated := findPlanfile(a.Dir, a.PlanFile)
+			switch {
+			case len(matches) == 1 && !truncated:
+				dir := filepath.Dir(matches[0])
+				if rel := filepath.Dir(a.PlanFile); rel != "." {
+					dir = strings.TrimSuffix(matches[0], string(filepath.Separator)+a.PlanFile)
+				}
+				dirNotes = append(dirNotes, fmt.Sprintf("planfile %s is not in %s; found once under it at %s, whose directory is taken as the command directory", a.PlanFile, a.Dir, matches[0]))
+				a.Dir, r.Dir, dirKnown = dir, dir, true
+			case len(matches) > 1 || truncated:
+				msg := fmt.Sprintf("the saved plan file %s is not in %s and %d copies exist under it; the command directory is not known, so the plan that would be applied cannot be identified", a.PlanFile, a.Dir, len(matches))
+				if truncated {
+					msg = fmt.Sprintf("the saved plan file %s is not in %s and the search under it was cut short (%d found before the limit); the command directory is not known, so the plan that would be applied cannot be identified", a.PlanFile, a.Dir, len(matches))
+				}
+				r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-ambiguous", Severity: preflight.Critical, Message: msg, Evidence: matches})
+			}
+		}
+	}
+	sig := config.Signals{Dir: a.Dir}
 	var recorded, declared *preflight.Backend
 	if tf && a.Dir != "" {
 		r.Workspace = preflight.Workspace(a.Dir, env)
@@ -302,8 +338,18 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 			r.Findings = append(r.Findings, preflight.Finding{Rule: "live-identity", Severity: preflight.Info, Message: "STS identity check failed: " + err.Error()})
 		}
 	}
-	res := cfg.Resolve(sig)
+	var res config.Resolution
+	switch {
+	case dirKnown || a.Dir == "":
+		res = cfg.Resolve(sig)
+	case cfg.UnknownDirMostProtected():
+		res = cfg.ResolveUnknownDir(ev.Agent, a.Dir, sig)
+	default:
+		res = cfg.Resolve(sig)
+		res.Matched = append([]string{fmt.Sprintf("command directory not reported by %s; judged at the session root %s (unknown_dir: session_root)", orHost(ev.Agent), a.Dir)}, res.Matched...)
+	}
 	r.Tier, r.Env, r.Matched = res.Tier, res.Env, res.Matched
+	r.Matched = append(r.Matched, dirNotes...)
 	if a.Dir == "" && tf {
 		r.Matched = append(r.Matched, "working directory could not be resolved statically")
 	}
@@ -402,6 +448,13 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 			r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "plan workspace "+ws)
 		}
 	}
+	for _, f := range r.Findings {
+		if f.Rule == "plan-ambiguous" {
+			// Several candidate planfiles: nothing to show, and reading one
+			// of them would check the wrong plan.
+			return classify.ApplySavedPlan
+		}
+	}
 	if deps.PlanJSON == nil {
 		r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-unreadable", Severity: preflight.Critical, Message: "reading saved plans is disabled (plan_gate.run_show: false), so the plan cannot be checked"})
 		return classify.ApplySavedPlan
@@ -442,6 +495,67 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 	}
 	r.Why = fmt.Sprintf("applies saved plan %s (%d change(s))", a.PlanFile, gres.Changes)
 	return classify.ApplySavedPlan
+}
+
+func orHost(agent string) string {
+	if agent == "" {
+		return "the host"
+	}
+	return agent
+}
+
+// Limits of the planfile search under the session root.
+const (
+	planSearchMaxDepth   = 8
+	planSearchMaxEntries = 20000
+	planSearchMaxMatches = 5
+)
+
+// findPlanfile looks for rel (a relative planfile path) in every directory
+// under root, bounded by depth and by the number of directory entries
+// visited; .git and .terraform are skipped and symbolic links are not
+// followed. truncated is true when a limit stopped the walk before it
+// finished, so the matches may be incomplete.
+func findPlanfile(root, rel string) (matches []string, truncated bool) {
+	entries := 0
+	stop := errors.New("stop")
+	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if p != root {
+			switch d.Name() {
+			case ".git", ".terraform":
+				return filepath.SkipDir
+			}
+			if r, err := filepath.Rel(root, p); err == nil && strings.Count(r, string(filepath.Separator)) >= planSearchMaxDepth {
+				return filepath.SkipDir
+			}
+		}
+		entries++
+		if entries > planSearchMaxEntries {
+			truncated = true
+			return stop
+		}
+		if p == root {
+			return nil
+		}
+		if fi, err := os.Stat(filepath.Join(p, rel)); err == nil && fi.Mode().IsRegular() {
+			matches = append(matches, filepath.Join(p, rel))
+			if len(matches) >= planSearchMaxMatches {
+				truncated = true
+				return stop
+			}
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, stop) {
+		truncated = true
+	}
+	return matches, truncated
 }
 
 func first(ss []string, n int) []string {

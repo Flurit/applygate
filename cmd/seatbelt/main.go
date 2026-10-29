@@ -32,17 +32,20 @@ const usage = `seatbelt: allow / ask / block for agent actions on Terraform and 
 
 Usage:
   seatbelt hook claude|codex          read one PreToolUse event on stdin (used by the agent)
-  seatbelt check [--cwd DIR] [--json] "<command>"
+  seatbelt check [--cwd DIR] [--dir-unknown] [--json] "<command>"
                                       dry-run a command through the policy
-  seatbelt explain [--cwd DIR] "<command>"
+  seatbelt explain [--cwd DIR] [--dir-unknown] "<command>"
                                       show the parse, classification and decision trace
   seatbelt plan-check [--tier T] [--cwd DIR] <plan.json>
                                       evaluate "terraform show -json" output
   seatbelt report [--log FILE]        summarize the decision log
   seatbelt selftest [-v]              run the scenario pack against this binary
-  seatbelt init [--no-hooks]          write a starter .seatbelt.yaml, detect agents, install hooks
+  seatbelt init [--no-hooks] [--scope user|project]
+                                      write a starter .seatbelt.yaml, detect agents, install their hooks (user scope)
   seatbelt hook install|remove --agent claude|codex [--scope project|user]
-  seatbelt doctor                     check config, hooks and versions
+                                      install defaults to project scope; remove cleans both scopes
+  seatbelt doctor                     check config, hooks, launch directory and versions (exit 1 on a problem)
+  seatbelt hosts [--markdown]         what each agent host can do with the hook (same table as docs/hosts.md)
   seatbelt version
 `
 
@@ -75,6 +78,13 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdInit(args[1:], stdout, stderr)
 	case "doctor":
 		return cmdDoctor(stdout, stderr)
+	case "hosts":
+		if len(args) > 1 && args[1] == "--markdown" {
+			io.WriteString(stdout, hook.HostsMarkdown())
+			return 0
+		}
+		hook.HostsText(stdout)
+		return 0
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, "seatbelt", hook.Version)
 		return 0
@@ -135,6 +145,8 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	cwd := fs.String("cwd", "", "working directory the command runs in (default: current)")
+	dirUnknown := fs.Bool("dir-unknown", false, "treat --cwd as the session root only, as a host that does not report the command directory would (Codex 0.165.0); see docs/hosts.md")
+	agent := fs.String("agent", "cli", "host name recorded in the decision (claude, codex)")
 	asJSON := fs.Bool("json", false, "print the decision as JSON")
 	var planJSON multiFlag
 	fs.Var(&planJSON, "plan-json", "PLANFILE=JSON: use this JSON for a saved plan instead of running show")
@@ -169,7 +181,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 			return nil, fmt.Errorf("no --plan-json for %s", planfile)
 		}
 	}
-	ev := policy.Event{Agent: "cli", Tool: "Bash", Kind: policy.KindShell, Command: fs.Arg(0), Cwd: dir, CanAsk: true}
+	ev := policy.Event{Agent: *agent, Tool: "Bash", Kind: policy.KindShell, Command: fs.Arg(0), Cwd: dir, CanAsk: true, DirKnown: !*dirUnknown}
 	deps := hook.Deps(context.Background(), cfg, opt)
 	if explain {
 		res := shell.Analyze(ev.Command, shell.Options{Dir: dir, Env: opt.Env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ProtectedPaths: cfg.GuardPaths(), ProtectedPath: func(p string) bool { return classify.IsProtectedPath(p, cfg.GuardPaths()) }})
@@ -390,13 +402,19 @@ plan_gate:
 `
 
 // cmdInit writes the starter config, detects installed agents and installs
-// their project-scope hooks (the spec's "init" command). --no-hooks skips the
-// hook step.
+// their hooks at user scope (the spec's "init" command), so the hook fires
+// whichever directory of the repository the agent is launched from.
+// --scope project keeps the old behaviour; --no-hooks skips the hook step.
 func cmdInit(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	noHooks := fs.Bool("no-hooks", false, "write the config only; do not detect agents or install hooks")
+	scope := fs.String("scope", "user", "where to install the hooks: user (fires from any directory) or project (this directory's settings only)")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *scope != "user" && *scope != "project" {
+		fmt.Fprintf(stderr, "--scope must be user or project, not %q\n", *scope)
 		return 2
 	}
 	if _, err := os.Stat(config.FileName); err == nil {
@@ -420,10 +438,20 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	fmt.Fprintf(stdout, "detected agents: %s\n", strings.Join(agents, ", "))
+	if *scope == "user" {
+		fmt.Fprintln(stdout, "installing the hooks at user scope (~/.claude/settings.json, ~/.codex/hooks.json): a project-scope hook is loaded only when the agent is launched from this directory, a user-scope hook fires from any directory of any repository. Repositories without a .seatbelt.yaml are judged by the user config or the defaults (enforce, strict). Use --scope project for a hook that lives in this repository only.")
+	}
 	rc := 0
 	for _, a := range agents {
-		if r := cmdInstall("install", []string{"--agent", a}, stdout, stderr); r != 0 {
+		if r := cmdInstall("install", []string{"--agent", a, "--scope", *scope}, stdout, stderr); r != 0 {
 			rc = r
+		}
+		if *scope == "user" {
+			if rel, err := settingsPath(a, "project"); err == nil {
+				if b, err := os.ReadFile(rel); err == nil && settingsHasSeatbelt(b) {
+					fmt.Fprintf(stdout, "note: %s also has a project-scope seatbelt hook; both will run here. Remove one with: seatbelt hook remove --agent %s --scope project\n", rel, a)
+				}
+			}
 		}
 	}
 	fmt.Fprintln(stdout, "run: seatbelt doctor")
@@ -478,14 +506,34 @@ func settingsPath(agent, scope string) (string, error) {
 	return "", fmt.Errorf("unsupported agent/scope %s/%s", agent, scope)
 }
 
+// cmdInstall installs or removes the hook entry. install defaults to project
+// scope (the settings file in the current directory; see docs/limits.md for
+// why init prefers user scope); remove without --scope cleans both scopes.
 func cmdInstall(verb string, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("hook "+verb, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	agent := fs.String("agent", "claude", "claude or codex")
-	scope := fs.String("scope", "project", "project or user")
+	scope := fs.String("scope", "", "project (the settings file in this directory, the default for install) or user (~/.claude or ~/.codex, fires from any directory); remove without --scope cleans both")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if verb != "install" && *scope == "" {
+		rc := 0
+		for _, sc := range []string{"project", "user"} {
+			if r := hookEntry(verb, *agent, sc, stdout, stderr); r != 0 {
+				rc = r
+			}
+		}
+		return rc
+	}
+	if *scope == "" {
+		*scope = "project"
+	}
+	return hookEntry(verb, *agent, *scope, stdout, stderr)
+}
+
+func hookEntry(verb, agentName, scopeName string, stdout, stderr io.Writer) int {
+	agent, scope := &agentName, &scopeName
 	path, err := settingsPath(*agent, *scope)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -538,6 +586,11 @@ func cmdInstall(verb string, args []string, stdout, stderr io.Writer) int {
 	} else {
 		delete(doc, "hooks")
 	}
+	if verb != "install" && removed == 0 {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return 0 // nothing to clean, nothing to write
+		}
+	}
 	b, _ := json.MarshalIndent(doc, "", "  ")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -549,8 +602,8 @@ func cmdInstall(verb string, args []string, stdout, stderr io.Writer) int {
 	}
 	if verb == "install" {
 		fmt.Fprintf(stdout, "installed seatbelt PreToolUse hook for %s in %s (replaced %d old entr%s)\n", *agent, path, removed, plural(removed))
-		if *agent == "codex" {
-			fmt.Fprintln(stdout, "Codex asks you to review and trust new hooks: run /hooks in Codex once.")
+		for _, n := range hook.InstallNotes(*agent) {
+			fmt.Fprintln(stdout, n)
 		}
 	} else {
 		fmt.Fprintf(stdout, "removed %d seatbelt hook entr%s from %s\n", removed, plural(removed), path)
@@ -611,24 +664,52 @@ func seatbeltHookDir(cwd, rel string) string {
 	}
 }
 
-// launchDirWarnings warns when a project-scope seatbelt hook lives in an
-// ancestor of cwd. Claude Code and Codex read project settings only from the
-// directory the session is launched in, so a hook in an ancestor is not loaded
-// when the agent starts in cwd.
-func launchDirWarnings(cwd string) []string {
-	var warns []string
+// launchDirCheck is one finding of launchDirChecks.
+type launchDirCheck struct {
+	fail bool
+	msg  string
+}
+
+// launchDirChecks looks at where each agent's seatbelt hook lives relative to
+// cwd. Claude Code and Codex read project settings only from the directory
+// the session is launched in, so a project-scope hook in an ancestor of cwd
+// is silent for a session started in cwd: that is a failure unless a
+// user-scope hook (userHas) covers the agent. A project hook in cwd next to
+// a user-scope hook runs twice, which is a warning.
+func launchDirChecks(cwd string, userHas map[string]bool) []launchDirCheck {
+	var out []launchDirCheck
 	for _, agent := range []string{"claude", "codex"} {
 		rel, err := settingsPath(agent, "project")
 		if err != nil {
 			continue
 		}
-		if dir := seatbeltHookDir(cwd, rel); dir != "" && dir != cwd {
-			warns = append(warns, fmt.Sprintf(
-				"%s project hook is in %s, not the current directory; %s reads project settings only from the directory it is launched in, so starting it here will not apply the hook — launch from %s, or install at user scope (--scope user)",
-				agent, dir, agent, dir))
+		dir := seatbeltHookDir(cwd, rel)
+		switch {
+		case dir == "":
+		case dir != cwd && !userHas[agent]:
+			out = append(out, launchDirCheck{fail: true, msg: fmt.Sprintf(
+				"%s: the project hook is in %s, not here, and %s loads project settings only from the directory it is launched in, so a session started here runs without seatbelt. Fix: seatbelt hook install --agent %s --scope user (fires from any directory), or launch %s from %s",
+				agent, dir, agent, agent, agent, dir)})
+		case dir != cwd:
+			out = append(out, launchDirCheck{msg: fmt.Sprintf("%s: user-scope hook covers this directory (the project hook in %s is not loaded from here)", agent, dir)})
+		case userHas[agent]:
+			out = append(out, launchDirCheck{msg: fmt.Sprintf(
+				"%s: both a project hook (%s) and a user-scope hook are installed, so seatbelt runs twice per tool call here; remove one with: seatbelt hook remove --agent %s --scope project",
+				agent, filepath.Join(dir, rel), agent)})
 		}
 	}
-	return warns
+	return out
+}
+
+// hasUserHook reports whether the user-scope settings file of agent holds a
+// seatbelt hook.
+func hasUserHook(agent string) bool {
+	p, err := settingsPath(agent, "user")
+	if err != nil {
+		return false
+	}
+	b, err := os.ReadFile(p)
+	return err == nil && settingsHasSeatbelt(b)
 }
 
 // hookScan summarizes one settings file's PreToolUse hooks.
@@ -712,6 +793,10 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "%s %s\n", mark, fmt.Sprintf(format, a...))
 	}
+	fail := func(format string, a ...any) {
+		problems++
+		fmt.Fprintf(stdout, "FAIL %s\n", fmt.Sprintf(format, a...))
+	}
 	fmt.Fprintf(stdout, "seatbelt %s at %s\n", hook.Version, selfPath())
 	wd, _ := os.Getwd()
 	cfg, err := config.Load(config.UserPath(), wd)
@@ -770,8 +855,16 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 	}
 	sort.Strings(where)
 	say(found > 0, "hooks installed: %s", orNone(strings.Join(where, ", ")))
-	for _, w := range launchDirWarnings(wd) {
-		say(false, "%s", w)
+	userHas := map[string]bool{"claude": hasUserHook("claude"), "codex": hasUserHook("codex")}
+	for _, c := range launchDirChecks(wd, userHas) {
+		switch {
+		case c.fail:
+			fail("%s", c.msg)
+		case strings.Contains(c.msg, "runs twice"):
+			say(false, "%s", c.msg)
+		default:
+			say(true, "%s", c.msg)
+		}
 	}
 	var buf bytes.Buffer
 	rc := cmdSelftest(nil, &buf, &buf)

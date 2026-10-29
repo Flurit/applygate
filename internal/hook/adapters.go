@@ -85,7 +85,7 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 	// block. This is observed, not documented; rerun T3.2 on new versions
 	// (see docs/limits.md).
 	ev := policy.Event{Agent: "claude", Tool: in.ToolName, Cwd: in.Cwd, Session: in.SessionID, PermissionMode: in.PermissionMode,
-		CanAsk: in.PermissionMode != "dontAsk"}
+		CanAsk: in.PermissionMode != "dontAsk", DirKnown: true}
 	var ti struct {
 		Command      string `json:"command"`
 		FilePath     string `json:"file_path"`
@@ -166,7 +166,10 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 	if in.ToolName == "" {
 		return policy.Event{}, false, errors.New("malformed hook event: no tool_name")
 	}
-	ev := policy.Event{Agent: "codex", Tool: in.ToolName, Cwd: in.Cwd, Session: in.SessionID, PermissionMode: in.PermissionMode, CanAsk: false}
+	// File edits are resolved against the turn's cwd by Codex itself, so
+	// their directory is known; a shell command's is known only when the
+	// event names its workdir.
+	ev := policy.Event{Agent: "codex", Tool: in.ToolName, Cwd: in.Cwd, Session: in.SessionID, PermissionMode: in.PermissionMode, CanAsk: false, DirKnown: true}
 	var ti map[string]json.RawMessage
 	if len(in.ToolInput) > 0 {
 		if err := json.Unmarshal(in.ToolInput, &ti); err != nil {
@@ -180,7 +183,7 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 	switch in.ToolName {
 	case "Bash", "shell", "local_shell", "exec_command", "unified_exec", "container.exec":
 		ev.Kind, ev.Command = policy.KindShell, cmd
-		ev.Cwd = workDir(ti, in.Cwd)
+		ev.Cwd, ev.DirKnown = workDir(ti, in.Cwd)
 	case "apply_patch", "Edit", "Write":
 		patch := cmd
 		if patch == "" {
@@ -203,9 +206,10 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 // workDir returns the directory a Codex shell command runs in: the first of
 // tool_input.workdir, working_directory and cwd that is a non-empty string,
 // resolved against the event's top-level cwd when relative, or that cwd when
-// none is present. The result is what the policy resolves the tier from and
-// what the decision log records as the action's dir.
-func workDir(ti map[string]json.RawMessage, cwd string) string {
+// none is present. known is false in the fallback case: the top-level cwd is
+// then the session root, not necessarily where the command runs, and the
+// policy judges the command at the most protected tier under it.
+func workDir(ti map[string]json.RawMessage, cwd string) (dir string, known bool) {
 	for _, k := range []string{"workdir", "working_directory", "cwd"} {
 		wd := stringField(ti[k])
 		if wd == "" {
@@ -214,9 +218,9 @@ func workDir(ti map[string]json.RawMessage, cwd string) string {
 		if !filepath.IsAbs(wd) && cwd != "" {
 			wd = filepath.Join(cwd, wd)
 		}
-		return filepath.Clean(wd)
+		return filepath.Clean(wd), true
 	}
-	return cwd
+	return cwd, false
 }
 
 // stringField accepts a JSON string only.

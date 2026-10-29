@@ -40,7 +40,7 @@ func TestFileOnlyEditAllowedWithNoteAndNonProdIsStandard(t *testing.T) {
 	nonprod := filepath.Join(dir, "non-prod", "us-east-1", "qa")
 
 	// File-only edit: allowed in the protected tier, with a note that says why.
-	d := Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: edit, Cwd: prod, CanAsk: true}, cfg, deps)
+	d := Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: edit, Cwd: prod, CanAsk: true, DirKnown: true}, cfg, deps)
 	if d.Verdict != Allow || len(d.Actions) != 0 {
 		t.Fatalf("file-only edit in prod: verdict %s, actions %+v", d.Verdict, d.Actions)
 	}
@@ -50,7 +50,7 @@ func TestFileOnlyEditAllowedWithNoteAndNonProdIsStandard(t *testing.T) {
 
 	// The same edit with a process start keeps asking in the protected tier.
 	dangerous := strings.Replace(edit, "open(p,'w').write(s)\n", "open(p,'w').write(s)\nimport subprocess\nsubprocess.run(['terraform','destroy','-auto-approve'])\n", 1)
-	d = Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: dangerous, Cwd: prod, CanAsk: true}, cfg, deps)
+	d = Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: dangerous, Cwd: prod, CanAsk: true, DirKnown: true}, cfg, deps)
 	if d.Verdict != Ask || len(d.Notes) != 0 {
 		t.Fatalf("edit plus subprocess in prod: verdict %s, notes %v, actions %+v", d.Verdict, d.Notes, d.Actions)
 	}
@@ -59,14 +59,14 @@ func TestFileOnlyEditAllowedWithNoteAndNonProdIsStandard(t *testing.T) {
 	}
 
 	// non-prod/** is the configured standard environment, not "prod (name hint)".
-	d = Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: "terraform apply -auto-approve", Cwd: nonprod, CanAsk: true}, cfg, deps)
+	d = Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: "terraform apply -auto-approve", Cwd: nonprod, CanAsk: true, DirKnown: true}, cfg, deps)
 	if len(d.Actions) != 1 {
 		t.Fatalf("got %d actions: %+v", len(d.Actions), d.Actions)
 	}
 	if a := d.Actions[0]; d.Verdict != Ask || a.Tier != config.Standard || a.Env != "non-prod" {
 		t.Fatalf("apply under non-prod: verdict %s, tier %s, env %s, matched %v", d.Verdict, a.Tier, a.Env, a.Matched)
 	}
-	d = Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: "terraform apply -auto-approve", Cwd: prod, CanAsk: true}, cfg, deps)
+	d = Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: "terraform apply -auto-approve", Cwd: prod, CanAsk: true, DirKnown: true}, cfg, deps)
 	if d.Verdict != Block {
 		t.Fatalf("apply under envs/prod: verdict %s", d.Verdict)
 	}

@@ -29,7 +29,7 @@ func TestLineageCheckWired(t *testing.T) {
 		}
 		return []byte(`{"version":4,"lineage":"new-lineage","serial":7}`), nil
 	}}
-	d := Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: "terraform plan", Cwd: dir, CanAsk: true}, cfg, deps)
+	d := Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: "terraform plan", Cwd: dir, CanAsk: true, DirKnown: true}, cfg, deps)
 	if pulled != 1 {
 		t.Fatalf("state pull ran %d times, want 1", pulled)
 	}
@@ -43,7 +43,7 @@ func TestLineageCheckWired(t *testing.T) {
 		t.Fatalf("want stale-state and state-lineage high, got %v", rules)
 	}
 	// Without the opt-in there is no pull and no lineage finding.
-	d2 := Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: "terraform plan", Cwd: dir, CanAsk: true}, cfg, Deps{Env: deps.Env})
+	d2 := Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: "terraform plan", Cwd: dir, CanAsk: true, DirKnown: true}, cfg, Deps{Env: deps.Env})
 	for _, a := range d2.Actions {
 		for _, f := range a.Findings {
 			if f.Rule == "state-lineage" {

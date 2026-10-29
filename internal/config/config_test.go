@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -169,5 +170,86 @@ func TestBackendValueHints(t *testing.T) {
 		if r := c.Resolve(Signals{Dir: "/x/y", BackendValues: x.values}); r.Tier != x.want {
 			t.Errorf("%v: got %s, want %s (%v)", x.values, r.Tier, x.want, r.Matched)
 		}
+	}
+}
+
+func TestResolveUnknownDir(t *testing.T) {
+	c := load(t, `
+strict: false
+default_tier: standard
+name_hints: false
+environments:
+  - {name: prod, tier: protected, match: {paths: ["envs/prod/**"]}}
+  - {name: dev, tier: disposable, match: {paths: ["envs/dev/**"]}}
+`)
+	root := c.Root
+	// The root could hold a prod directory: protected, with the reason first.
+	r := c.ResolveUnknownDir("codex", root, Signals{})
+	if r.Tier != Protected || r.Env != "prod" || !r.DirUnknown {
+		t.Fatalf("root: %+v", r)
+	}
+	if r.Matched[0] != "command directory not reported by codex; judged at the most protected tier under "+root+" (prod, tier protected)" {
+		t.Fatalf("matched: %v", r.Matched)
+	}
+	// Under envs/dev nothing protected can be reached, and dev/** covers the
+	// subtree, so the default tier does not apply either.
+	if r := c.ResolveUnknownDir("codex", root+"/envs/dev", Signals{}); r.Tier != Disposable || r.Env != "dev" {
+		t.Fatalf("dev: %+v", r)
+	}
+	// Under envs/other only the default tier applies.
+	if r := c.ResolveUnknownDir("codex", root+"/envs/other", Signals{}); r.Tier != Standard || r.Env != "unknown" {
+		t.Fatalf("other: %+v", r)
+	}
+	// Known signals still count: a prod profile from the environment.
+	c2 := load(t, "strict: false\ndefault_tier: disposable\nname_hints: false\nenvironments:\n  - {name: prod, tier: protected, match: {aws_profiles: [prod]}}\n")
+	if r := c2.ResolveUnknownDir("codex", c2.Root, Signals{}); r.Tier != Protected {
+		t.Fatalf("profile matcher: %+v", r)
+	}
+	// Strict mode: an unmatched directory under the root is protected.
+	c3 := load(t, "environments:\n  - {name: dev, tier: disposable, match: {paths: [\"envs/dev/**\"]}}\n")
+	if r := c3.ResolveUnknownDir("", c3.Root, Signals{}); r.Tier != Protected || !strings.HasPrefix(r.Matched[0], "command directory not reported by the host") {
+		t.Fatalf("strict: %+v", r)
+	}
+}
+
+func TestGlobCouldMatchUnder(t *testing.T) {
+	cases := []struct {
+		pattern, root string
+		could, covers bool
+	}{
+		{"/r/envs/prod/**", "/r", true, false},
+		{"/r/envs/prod/**", "/r/envs", true, false},
+		{"/r/envs/prod/**", "/r/envs/prod", true, true},
+		{"/r/envs/prod/**", "/r/envs/prod/modules", true, true},
+		{"/r/envs/prod/**", "/r/envs/staging", false, false},
+		{"/r/envs/prod", "/r/envs/prod/x", false, false},
+		{"/r/envs/*/live", "/r/envs/a/x", false, false},
+		{"/r/envs/*/live", "/r/envs/a", true, false},
+		{"/r/**", "/r/a/b", true, true},
+		{"**", "/anything", true, true},
+		{"**/prod/**", "/r/a", true, false},
+		{"**/prod/**", "/r/prod/a", true, true},
+		{"/other/**", "/r", false, false},
+	}
+	for _, c := range cases {
+		if got := globCouldMatchUnder(c.pattern, c.root); got != c.could {
+			t.Errorf("could %q under %q: got %v want %v", c.pattern, c.root, got, c.could)
+		}
+		if got := globCoversSubtree(c.pattern, c.root); got != c.covers {
+			t.Errorf("covers %q under %q: got %v want %v", c.pattern, c.root, got, c.covers)
+		}
+	}
+}
+
+func TestUnknownDirMerge(t *testing.T) {
+	if c := load(t, "unknown_dir: session_root\n"); !c.UnknownDirMostProtected() {
+		t.Fatal("a repository config must not loosen unknown_dir")
+	}
+	if _, err := LoadFile(func() string {
+		p := filepath.Join(t.TempDir(), "c.yaml")
+		os.WriteFile(p, []byte("unknown_dir: whatever\n"), 0o644)
+		return p
+	}()); err == nil || !strings.Contains(err.Error(), "unknown_dir") {
+		t.Fatalf("bad value should be rejected: %v", err)
 	}
 }
