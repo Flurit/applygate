@@ -375,7 +375,25 @@ this section:
    bodies plus `subprocess.run`, an `os.system` built with `getattr` and split
    literals (the F1 shape), a `boto3` import, or a `.seatbelt.yaml`/`.tfstate`
    target still ask or block (`internal/shell/interp_test.go`, pack B43–B46
-   versus D96–D99).
+   versus D96–D99). A code review of that PR found six ways past the first
+   version (a function passed by reference, `sys.call_tracing(os.system, …)`,
+   `map(os.system, …)`, `f=open`; a name rebound by a `for` loop, a `with … as`,
+   a parameter or destructuring after being bound once to a literal; an
+   `import` after `if …:` or `try:`; `../` traversal out of the working
+   directory; `io.FileIO`; writes to `.envrc`, `makefile`, `.ts`, `package.json`
+   or `.github/workflows`) and one false positive (`provider.aws` in HCL text
+   matched the `.aws` credential pattern). The check now splits Python code
+   from its strings and comments and denies the dangerous names wherever they
+   appear in code, marks every other binding form as unresolved, finds imports
+   anywhere, requires a path boundary around guard directory names, and
+   replaces the write-target denylist with a positive rule (a literal path
+   under the working directory, no hidden segment, no tool manifest, a
+   repository-configuration extension). Every string in the body is scanned
+   for state, guard, credential and start-up files, so trial edit 3 (root.hcl
+   gaining an HCL block that names `terraform.tfstate` as text, decision at
+   08:29:54 UTC) asks again; that is deliberate and B45 in the pack records it
+   as an expected ask. Pack D101–D102 hold the reference-passing and rebinding
+   forms.
 2. **The `prod` name hint matched `non-prod`.** Every command under
    `non-prod/us-east-1/…` in `terragrunt-infrastructure-live-example` was tiered
    protected with environment "prod (name hint)" ("path non-prod/us-east-1/qa
@@ -390,8 +408,9 @@ this section:
    UTC); that is a true whole-word `live` and is unchanged.
 
 Before and after on the trial commands (replayed through `seatbelt check` with
-the trial configs): the four edit scripts go ask → allow in the protected and
-non-prod directories; the `terragrunt plan` and `terragrunt run --all -- plan
+the trial configs): three of the four edit scripts go ask → allow in the
+protected and non-prod directories (the root.hcl edit stays an ask because its
+text names `terraform.tfstate`); the `terragrunt plan` and `terragrunt run --all -- plan
 -destroy` commands under `non-prod/us-east-1/…` stay allow but are now tier
 standard, environment `non-prod`, instead of protected, "prod (name hint)".
 
