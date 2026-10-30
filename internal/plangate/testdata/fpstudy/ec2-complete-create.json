@@ -1,0 +1,1457 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "aws_ec2_capacity_reservation.open",
+   "mode": "managed",
+   "type": "aws_ec2_capacity_reservation",
+   "name": "open",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "aws_ec2_capacity_reservation.targeted",
+   "mode": "managed",
+   "type": "aws_ec2_capacity_reservation",
+   "name": "targeted",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "aws_kms_key.this",
+   "mode": "managed",
+   "type": "aws_kms_key",
+   "name": "this",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "aws_network_interface.this",
+   "mode": "managed",
+   "type": "aws_network_interface",
+   "name": "this",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "aws_placement_group.web",
+   "mode": "managed",
+   "type": "aws_placement_group",
+   "name": "web",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "random_string.suffix",
+   "mode": "managed",
+   "type": "random_string",
+   "name": "suffix",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_complete.aws_ebs_volume.this[\"/dev/sdf\"]",
+   "module_address": "module.ec2_complete",
+   "mode": "managed",
+   "type": "aws_ebs_volume",
+   "name": "this",
+   "index": "/dev/sdf",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_complete.aws_eip.this[0]",
+   "module_address": "module.ec2_complete",
+   "mode": "managed",
+   "type": "aws_eip",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_complete.aws_iam_instance_profile.this[0]",
+   "module_address": "module.ec2_complete",
+   "mode": "managed",
+   "type": "aws_iam_instance_profile",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_complete.aws_iam_role.this[0]",
+   "module_address": "module.ec2_complete",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_complete.aws_iam_role_policy_attachment.this[\"AdministratorAccess\"]",
+   "module_address": "module.ec2_complete",
+   "mode": "managed",
+   "type": "aws_iam_role_policy_attachment",
+   "name": "this",
+   "index": "AdministratorAccess",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "policy_arn": "arn:aws:iam::aws:policy/AdministratorAccess"
+    }
+   }
+  },
+  {
+   "address": "module.ec2_complete.aws_instance.this[0]",
+   "module_address": "module.ec2_complete",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_complete.aws_security_group.this[0]",
+   "module_address": "module.ec2_complete",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_complete.aws_volume_attachment.this[\"/dev/sdf\"]",
+   "module_address": "module.ec2_complete",
+   "mode": "managed",
+   "type": "aws_volume_attachment",
+   "name": "this",
+   "index": "/dev/sdf",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_complete.aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_complete",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_complete.aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_complete",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_computed_name.aws_instance.ignore_ami[0]",
+   "module_address": "module.ec2_computed_name",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "ignore_ami",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_computed_name.aws_security_group.this[0]",
+   "module_address": "module.ec2_computed_name",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_computed_name.aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_computed_name",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_computed_name.aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_computed_name",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_ignore_ami_changes.aws_instance.ignore_ami[0]",
+   "module_address": "module.ec2_ignore_ami_changes",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "ignore_ami",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_ignore_ami_changes.aws_security_group.this[0]",
+   "module_address": "module.ec2_ignore_ami_changes",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete-ignore-ami-changes",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_ignore_ami_changes.aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_ignore_ami_changes",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_ignore_ami_changes.aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_ignore_ami_changes",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_metadata_options.aws_instance.this[0]",
+   "module_address": "module.ec2_metadata_options",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_metadata_options.aws_security_group.this[0]",
+   "module_address": "module.ec2_metadata_options",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete-metadata-options",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_metadata_options.aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_metadata_options",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_metadata_options.aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_metadata_options",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"one\"].aws_instance.this[0]",
+   "module_address": "module.ec2_multiple[\"one\"]",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"one\"].aws_security_group.this[0]",
+   "module_address": "module.ec2_multiple[\"one\"]",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete-multi-one",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"one\"].aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_multiple[\"one\"]",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"one\"].aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_multiple[\"one\"]",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"three\"].aws_instance.this[0]",
+   "module_address": "module.ec2_multiple[\"three\"]",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"three\"].aws_security_group.this[0]",
+   "module_address": "module.ec2_multiple[\"three\"]",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete-multi-three",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"three\"].aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_multiple[\"three\"]",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"three\"].aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_multiple[\"three\"]",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"two\"].aws_instance.this[0]",
+   "module_address": "module.ec2_multiple[\"two\"]",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"two\"].aws_security_group.this[0]",
+   "module_address": "module.ec2_multiple[\"two\"]",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete-multi-two",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"two\"].aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_multiple[\"two\"]",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_multiple[\"two\"].aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_multiple[\"two\"]",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_network_interface.aws_instance.this[0]",
+   "module_address": "module.ec2_network_interface",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_open_capacity_reservation.aws_instance.this[0]",
+   "module_address": "module.ec2_open_capacity_reservation",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_open_capacity_reservation.aws_security_group.this[0]",
+   "module_address": "module.ec2_open_capacity_reservation",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete-open-capacity-reservation",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_open_capacity_reservation.aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_open_capacity_reservation",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_open_capacity_reservation.aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_open_capacity_reservation",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_spot_instance.aws_ebs_volume.this[\"/dev/sdf\"]",
+   "module_address": "module.ec2_spot_instance",
+   "mode": "managed",
+   "type": "aws_ebs_volume",
+   "name": "this",
+   "index": "/dev/sdf",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_spot_instance.aws_ec2_tag.spot_instance[\"Example\"]",
+   "module_address": "module.ec2_spot_instance",
+   "mode": "managed",
+   "type": "aws_ec2_tag",
+   "name": "spot_instance",
+   "index": "Example",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_spot_instance.aws_ec2_tag.spot_instance[\"Name\"]",
+   "module_address": "module.ec2_spot_instance",
+   "mode": "managed",
+   "type": "aws_ec2_tag",
+   "name": "spot_instance",
+   "index": "Name",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_spot_instance.aws_ec2_tag.spot_instance[\"Repository\"]",
+   "module_address": "module.ec2_spot_instance",
+   "mode": "managed",
+   "type": "aws_ec2_tag",
+   "name": "spot_instance",
+   "index": "Repository",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_spot_instance.aws_security_group.this[0]",
+   "module_address": "module.ec2_spot_instance",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete-spot-instance",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_spot_instance.aws_spot_instance_request.this[0]",
+   "module_address": "module.ec2_spot_instance",
+   "mode": "managed",
+   "type": "aws_spot_instance_request",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_spot_instance.aws_volume_attachment.this[\"/dev/sdf\"]",
+   "module_address": "module.ec2_spot_instance",
+   "mode": "managed",
+   "type": "aws_volume_attachment",
+   "name": "this",
+   "index": "/dev/sdf",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_spot_instance.aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_spot_instance",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_spot_instance.aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_spot_instance",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_t2_unlimited.aws_instance.this[0]",
+   "module_address": "module.ec2_t2_unlimited",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_t2_unlimited.aws_security_group.this[0]",
+   "module_address": "module.ec2_t2_unlimited",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete-t2-unlimited",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_t2_unlimited.aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_t2_unlimited",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_t2_unlimited.aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_t2_unlimited",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_t3_unlimited.aws_instance.this[0]",
+   "module_address": "module.ec2_t3_unlimited",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_t3_unlimited.aws_security_group.this[0]",
+   "module_address": "module.ec2_t3_unlimited",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete-t3-unlimited",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_t3_unlimited.aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_t3_unlimited",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_t3_unlimited.aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_t3_unlimited",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_targeted_capacity_reservation.aws_instance.this[0]",
+   "module_address": "module.ec2_targeted_capacity_reservation",
+   "mode": "managed",
+   "type": "aws_instance",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_targeted_capacity_reservation.aws_security_group.this[0]",
+   "module_address": "module.ec2_targeted_capacity_reservation",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete-targeted-capacity-reservation",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.ec2_targeted_capacity_reservation.aws_vpc_security_group_egress_rule.this[\"ipv4_default\"]",
+   "module_address": "module.ec2_targeted_capacity_reservation",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv4_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.ec2_targeted_capacity_reservation.aws_vpc_security_group_egress_rule.this[\"ipv6_default\"]",
+   "module_address": "module.ec2_targeted_capacity_reservation",
+   "mode": "managed",
+   "type": "aws_vpc_security_group_egress_rule",
+   "name": "this",
+   "index": "ipv6_default",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.security_group.aws_security_group.this_name_prefix[0]",
+   "module_address": "module.security_group",
+   "mode": "managed",
+   "type": "aws_security_group",
+   "name": "this_name_prefix",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "tags": {
+      "Example": "ex-complete",
+      "Name": "ex-complete",
+      "Repository": "https://github.com/terraform-aws-modules/terraform-aws-ec2-instance"
+     }
+    }
+   }
+  },
+  {
+   "address": "module.security_group.aws_security_group_rule.ingress_rules[0]",
+   "module_address": "module.security_group",
+   "mode": "managed",
+   "type": "aws_security_group_rule",
+   "name": "ingress_rules",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "type": "ingress",
+     "cidr_blocks": [
+      "0.0.0.0/0"
+     ],
+     "ipv6_cidr_blocks": [],
+     "from_port": 80,
+     "to_port": 80,
+     "protocol": "tcp"
+    }
+   }
+  },
+  {
+   "address": "module.security_group.aws_security_group_rule.ingress_rules[1]",
+   "module_address": "module.security_group",
+   "mode": "managed",
+   "type": "aws_security_group_rule",
+   "name": "ingress_rules",
+   "index": 1,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {
+     "type": "ingress",
+     "cidr_blocks": [
+      "0.0.0.0/0"
+     ],
+     "ipv6_cidr_blocks": [],
+     "from_port": -1,
+     "to_port": -1,
+     "protocol": "icmp"
+    }
+   }
+  },
+  {
+   "address": "module.vpc.aws_default_network_acl.this[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_default_network_acl",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_default_route_table.default[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_default_route_table",
+   "name": "default",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_default_security_group.this[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_default_security_group",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_internet_gateway.this[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_internet_gateway",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route.public_internet_gateway[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route",
+   "name": "public_internet_gateway",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route_table.private[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route_table",
+   "name": "private",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route_table.private[1]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route_table",
+   "name": "private",
+   "index": 1,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route_table.private[2]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route_table",
+   "name": "private",
+   "index": 2,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route_table.public[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route_table",
+   "name": "public",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route_table_association.private[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route_table_association",
+   "name": "private",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route_table_association.private[1]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route_table_association",
+   "name": "private",
+   "index": 1,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route_table_association.private[2]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route_table_association",
+   "name": "private",
+   "index": 2,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route_table_association.public[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route_table_association",
+   "name": "public",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route_table_association.public[1]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route_table_association",
+   "name": "public",
+   "index": 1,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_route_table_association.public[2]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_route_table_association",
+   "name": "public",
+   "index": 2,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_subnet.private[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_subnet",
+   "name": "private",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_subnet.private[1]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_subnet",
+   "name": "private",
+   "index": 1,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_subnet.private[2]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_subnet",
+   "name": "private",
+   "index": 2,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_subnet.public[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_subnet",
+   "name": "public",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_subnet.public[1]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_subnet",
+   "name": "public",
+   "index": 1,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_subnet.public[2]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_subnet",
+   "name": "public",
+   "index": 2,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.vpc.aws_vpc.this[0]",
+   "module_address": "module.vpc",
+   "mode": "managed",
+   "type": "aws_vpc",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  }
+ ],
+ "configuration": {
+  "root_module": {}
+ },
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}

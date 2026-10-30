@@ -3,11 +3,13 @@
 package hook
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Flurit/applygate/internal/classify"
 	"github.com/Flurit/applygate/internal/policy"
@@ -140,6 +142,10 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 	case "Read", "Grep", "Glob":
 		ev.Kind, ev.Paths = policy.KindRead, nonEmpty(ti.FilePath, ti.Path)
 	default:
+		if isMCPTool(in.ToolName) {
+			ev.Kind, ev.Command = policy.KindMCP, mcpArguments(in.ToolInput)
+			return ev, true, nil
+		}
 		// Cursor, Copilot CLI and Devin also load hooks from
 		// .claude/settings.json and send their own tool names (Shell,
 		// exec, ...). Such a call is judged like that host's own: no ask,
@@ -260,8 +266,40 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 		}
 	default:
 		ev.Kind = policy.KindOther
+		if isMCPTool(in.ToolName) {
+			ev.Kind, ev.Command = policy.KindMCP, mcpArguments(in.ToolInput)
+		}
 	}
 	return ev, true, nil
+}
+
+// isMCPTool reports whether a tool name is an MCP server's tool. Claude Code
+// and Codex both name them mcp__<server>__<tool>.
+func isMCPTool(name string) bool {
+	return strings.HasPrefix(name, "mcp__") && len(name) > len("mcp__")
+}
+
+// maxMCPArgs caps the arguments kept in the log for one MCP call.
+const maxMCPArgs = 4096
+
+// mcpArguments is an MCP call's tool_input as compact JSON for the log,
+// capped at maxMCPArgs bytes. The decision log redacts likely secrets in it
+// like in any command.
+func mcpArguments(raw json.RawMessage) string {
+	var buf bytes.Buffer
+	if json.Compact(&buf, raw) != nil {
+		buf.Reset()
+		buf.Write(raw)
+	}
+	s := buf.String()
+	if len(s) > maxMCPArgs {
+		cut := maxMCPArgs
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + fmt.Sprintf(" …(%d bytes, truncated)", len(s))
+	}
+	return s
 }
 
 // workDir returns the directory a Codex shell command runs in: the first of

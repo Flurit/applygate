@@ -57,7 +57,7 @@ export DO_NOT_TRACK=1          # the cross-tool convention is honoured too
 
 ## Where it goes
 
-A release build may carry a default endpoint, set at link time (`-X github.com/Flurit/applygate/internal/telemetry.DefaultEndpoint=https://…`). As of v0.3.1 no release carries one, so `applygate telemetry on` needs `--endpoint`. The endpoint must be `https`; plain `http` is accepted only on localhost, for a collector you run yourself. `APPLYGATE_TELEMETRY_ENDPOINT` in the environment overrides both, for teams that want the counts in their own store. Redirects are not followed, so a report never goes anywhere but the configured address.
+A release build may carry a default endpoint, set at link time (`-X github.com/Flurit/applygate/internal/telemetry.DefaultEndpoint=https://…`). As of v0.3.2 no release carries one, so `applygate telemetry on` needs `--endpoint`. The endpoint must be `https`; plain `http` is accepted only on localhost, for a collector you run yourself. `APPLYGATE_TELEMETRY_ENDPOINT` in the environment overrides both, for teams that want the counts in their own store. Redirects are not followed, so a report never goes anywhere but the configured address.
 
 The collector side is one `POST` of the JSON above; any endpoint that returns 2xx works. There is no authentication because there is nothing to authenticate: the payload identifies no one.
 

@@ -200,6 +200,9 @@ var pathKeys = []string{"file_path", "filePath", "path", "notebook_path", "absol
 func (c call) toEvent(agent string) (policy.Event, error) {
 	ev := policy.Event{Agent: agent, Tool: c.tool, Cwd: c.cwd, Session: c.session, PermissionMode: c.mode}
 	switch {
+	case isMCPTool(c.tool):
+		raw, _ := json.Marshal(c.input)
+		ev.Kind, ev.Command = policy.KindMCP, mcpArguments(raw)
 	case shellTools[c.tool]:
 		cmd := commandOf(c.input)
 		if strings.TrimSpace(cmd) == "" {

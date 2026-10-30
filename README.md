@@ -12,7 +12,7 @@ A deterministic, local pre-execution check for coding agents (Claude Code, Codex
   <img src="docs/assets/demo.svg" alt="applygate blocking terraform destroy in prod, also when it is hidden in base64, while allowing a commit message that mentions it" width="820">
 </p>
 
-Status: pre-1.0 (v0.3.1), tested live with Claude Code and Codex. Adapters for Cursor, GitHub Copilot CLI, Gemini CLI, Windsurf (Cascade), Devin, OpenCode and Cline are written from each host's documentation and source and are **not yet tested live** ([docs/hosts.md](docs/hosts.md)). What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md). Upgrading from seatbelt, the project's old name: [docs/migration.md](docs/migration.md).
+Status: pre-1.0 (v0.3.2), tested live with Claude Code and Codex. Adapters for Cursor, GitHub Copilot CLI, Gemini CLI, Windsurf (Cascade), Devin, OpenCode and Cline are written from each host's documentation and source and are **not yet tested live** ([docs/hosts.md](docs/hosts.md)). What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md). Upgrading from seatbelt, the project's old name: [docs/migration.md](docs/migration.md).
 
 ## Try it in a minute
 
@@ -52,8 +52,8 @@ It is not a sandbox and not an AI reviewer. No model is in the decision path, it
 # Installer from a release tag, never from main. It verifies the cosign signature on checksums.txt
 # when cosign is installed and warns when it is not; APPLYGATE_VERIFY_SIGNATURE=require makes cosign
 # mandatory. Without cosign only the sha256 is checked, which does not detect a tampered release.
-curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.3.1/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
-# or: go install github.com/Flurit/applygate/cmd/applygate@v0.3.1
+curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.3.2/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
+# or: go install github.com/Flurit/applygate/cmd/applygate@v0.3.2
 # or: brew install Flurit/tap/applygate   (Homebrew checks the sha256 only, not the cosign signature)
 # or: go build -o bin/applygate ./cmd/applygate
 cd your-infra-repo
@@ -63,7 +63,7 @@ applygate doctor
 applygate check "terraform -chdir=envs/prod destroy"
 ```
 
-`applygate init --no-hooks` writes the config only; `applygate init --scope project` keeps the hook inside this repository; `applygate hook install --agent AGENT [--scope user]` adds a hook by hand (project scope by default), and `applygate hook remove --agent AGENT` cleans both scopes. What each host can and cannot do with the hook is in [docs/hosts.md](docs/hosts.md) (`applygate hosts`). Releases are built by `.github/workflows/release.yml` from a tag: builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`), every archive carries a build-provenance attestation, and tags of published releases are never moved. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
+`applygate init --no-hooks` writes the config only; `applygate init --scope project` keeps the hook inside this repository; `applygate hook install --agent AGENT [--scope user]` adds a hook by hand (project scope by default), and `applygate hook remove --agent AGENT` cleans both scopes. What each host can and cannot do with the hook is in [docs/hosts.md](docs/hosts.md) (`applygate hosts`). Releases are built by `.github/workflows/release.yml` from a tag: builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`), every archive carries a build-provenance attestation, and tags of published releases are never moved. A Claude Code plugin lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it): it runs the `applygate` on PATH, or, when there is none, downloads the release it pins, checks the archive against the sha256 committed in the plugin, and keeps it in the plugin's data directory.
 
 Security issues: see [SECURITY.md](SECURITY.md).
 
@@ -91,10 +91,10 @@ Only Copilot CLI can show an approval prompt for an ask; on the other hosts an a
 
 ### Verify a download
 
-Download a release and check its signature before running anything. Replace `v0.3.1` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
+Download a release and check its signature before running anything. Replace `v0.3.2` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
 
 ```bash
-tag=v0.3.1
+tag=v0.3.2
 base=https://github.com/Flurit/applygate/releases/download/$tag
 curl -fsSLO "$base/checksums.txt" -O "$base/checksums.txt.sigstore.json" -O "$base/applygate_${tag#v}_linux_amd64.tar.gz"
 cosign verify-blob --bundle checksums.txt.sigstore.json \
@@ -123,7 +123,7 @@ Outside a terminal an ask is refused unless `--yes` is given, and `--yes` never 
 The same plan gate runs in a pipeline between `plan -out` and `apply`, as a GitHub Action or a shell step, and as a Terragrunt `before_hook`; exit codes 0/4/3 are allow/ask/block. See [docs/ci.md](docs/ci.md).
 
 ```yaml
-- uses: Flurit/applygate@v0.3.1
+- uses: Flurit/applygate@v0.3.2
   with:
     plan: tfplan
     working-directory: envs/prod
@@ -142,7 +142,7 @@ The same plan gate runs in a pipeline between `plan -out` and `apply`, as a GitH
 | Guard tampering | skip-permissions flags, edits to hook config, applygate config or log | block | block | block |
 | Dynamic / unresolvable | `eval "$(curl …)"`, `sh -c "$X"`, `curl … \| bash` | ask | ask | allow |
 
-Plan gate: in protected tiers critical findings block and high findings ask; in standard tiers critical findings ask; in disposable tiers findings are logged. Addresses listed in `protected_resources` are critical whatever their type, and a plan whose configuration runs code (provisioners, `external` data sources) is a high finding. Unknown environments count as protected in strict mode, which is the default. The full table, including the classes applygate adds beyond the spec, is in [docs/policy.md](docs/policy.md).
+Plan gate: in protected tiers critical findings block and high findings ask; in standard tiers critical findings ask; in disposable tiers findings are logged. Addresses listed in `protected_resources` are critical whatever their type, and a plan whose apply runs code (provisioners on resources it creates, replaces or destroys, `external` data sources read at apply) is a high finding. Unknown environments count as protected in strict mode, which is the default. The full table, including the classes applygate adds beyond the spec, is in [docs/policy.md](docs/policy.md).
 
 ## Commands
 
@@ -202,7 +202,7 @@ internal/decisionlog/ JSONL log with redaction, report
 harness/              scenario pack, fixtures, Go regression test, run.py replay runner
 docs/                 policy, config, limits, hosts (generated), threat model, roadmap; docs/project/ for project records
 review/               live-agent test write-ups and the open-source corpus trial (tools, configs, summaries)
-plugin/claude-code/   Claude Code plugin manifest (hooks only; the binary comes from a release)
+plugin/claude-code/   Claude Code plugin: hooks and a launcher that finds or fetches the pinned release
 site/                 project page, published to https://flurit.github.io/applygate/ by .github/workflows/pages.yml
 .goreleaser.yaml      release builds: reproducible archives, checksums, cosign signature, SBOMs
 install.sh            installer: verifies the cosign signature (when cosign is installed) and the sha256

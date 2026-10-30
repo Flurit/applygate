@@ -129,8 +129,12 @@ func Report(w io.Writer, entries []Entry, bad int) {
 	type key struct{ verdict, class, cmd string }
 	seen := map[key]int{}
 	errors := 0
+	mcp := map[string]int{} // MCP calls per server
 	var durs []float64
 	for _, e := range entries {
+		if strings.HasPrefix(e.Tool, "mcp__") {
+			mcp[mcpServer(e.Tool)]++
+		}
 		counts[e.Verdict]++
 		enforced[e.Enforced]++
 		durs = append(durs, e.DurationMS)
@@ -155,6 +159,16 @@ func Report(w io.Writer, entries []Entry, bad int) {
 	if len(durs) > 0 {
 		sort.Float64s(durs)
 		fmt.Fprintf(w, "latency ms: p50 %.1f, p95 %.1f, max %.1f\n", pct(durs, 50), pct(durs, 95), durs[len(durs)-1])
+	}
+	if len(mcp) > 0 {
+		var servers []string
+		n := 0
+		for s, c := range mcp {
+			servers = append(servers, fmt.Sprintf("%s %d", s, c))
+			n += c
+		}
+		sort.Strings(servers)
+		fmt.Fprintf(w, "MCP tool calls (logged, not judged): %d (%s)\n", n, strings.Join(servers, ", "))
 	}
 	if len(byClass) > 0 {
 		fmt.Fprintln(w, "\nask or block by class:")
@@ -190,6 +204,15 @@ func Report(w io.Writer, entries []Entry, bad int) {
 			fmt.Fprintf(w, "  %4dx %-5s %-18s %s\n", x.n, x.k.verdict, x.k.class, shorten(x.k.cmd, 100))
 		}
 	}
+}
+
+// mcpServer is the server part of an mcp__<server>__<tool> tool name.
+func mcpServer(tool string) string {
+	s := strings.TrimPrefix(tool, "mcp__")
+	if i := strings.Index(s, "__"); i > 0 {
+		return s[:i]
+	}
+	return s
 }
 
 func pct(sorted []float64, p int) float64 {

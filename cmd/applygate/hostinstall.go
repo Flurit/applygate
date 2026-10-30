@@ -46,7 +46,7 @@ var installSpecs = []installSpec{
 			// Block the tool call if the hook crashes or times out
 			// (Claude Code v2.1.295+; older versions fail open).
 			h["onFailure"] = "block"
-			return map[string]any{"PreToolUse": map[string]any{"matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep", "hooks": []any{h}}}
+			return map[string]any{"PreToolUse": map[string]any{"matcher": claudeMatcher, "hooks": []any{h}}}
 		},
 		homeDirs: []string{".claude"}, projectDirs: []string{".claude"}, bins: []string{"claude"},
 	},
