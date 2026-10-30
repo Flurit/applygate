@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -16,8 +17,31 @@ import (
 	"github.com/Flurit/applygate/internal/preflight"
 )
 
-// Version is set at build time.
+// Version is set at build time by the release's -ldflags. A binary built
+// with `go install ...@vX.Y.Z` has no ldflags, so init falls back to the
+// module version the Go toolchain embeds.
 var Version = "dev"
+
+func init() {
+	if Version != "dev" {
+		return
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := moduleVersion(bi.Main.Version); v != "" {
+			Version = v
+		}
+	}
+}
+
+// moduleVersion turns a Go module version into a release version: v0.3.0 ->
+// 0.3.0. A local build reports "(devel)" or a pseudo-version, both of which
+// stay "dev".
+func moduleVersion(v string) string {
+	if v == "" || v == "(devel)" || strings.Contains(v, "-") || strings.Contains(v, "+") {
+		return ""
+	}
+	return strings.TrimPrefix(v, "v")
+}
 
 // Options configure one hook run.
 type Options struct {
