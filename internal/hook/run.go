@@ -134,7 +134,8 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	finish := func(cfg *config.Config, o Output) Output {
 		entry.DurationMS = float64(time.Since(start).Microseconds()) / 1000
 		if !opt.NoLog {
-			if err := decisionlog.Append(logPath(cfg), entry); err != nil {
+			o.LogPath = logPath(cfg)
+			if err := decisionlog.Append(o.LogPath, entry); err != nil {
 				o.Stderr += "applygate: could not write decision log: " + err.Error() + "\n"
 			}
 		}

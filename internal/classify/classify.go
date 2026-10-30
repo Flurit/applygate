@@ -162,10 +162,16 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		}
 		return out
 	case "applygate":
-		if len(args) >= 2 && args[0].Text == "hook" && (args[1].Text == "remove" || args[1].Text == "uninstall") ||
-			len(args) >= 1 && (args[0].Text == "init" || args[0].Text == "disable") {
+		switch {
+		case len(args) >= 2 && args[0].Text == "hook" && (args[1].Text == "remove" || args[1].Text == "uninstall"),
+			len(args) >= 1 && (args[0].Text == "init" || args[0].Text == "disable"):
 			a := base
 			a.Class, a.Engine, a.Why = Tampering, "applygate", "changes applygate's own installation"
+			out = append(out, a)
+		case len(args) >= 2 && args[0].Text == "telemetry" && (args[1].Text == "on" || args[1].Text == "off"):
+			// Only a person turns usage reporting on or off.
+			a := base
+			a.Class, a.Engine, a.Why = Tampering, "applygate", "changes applygate's telemetry setting, which only a person may do"
 			out = append(out, a)
 		}
 		return out
