@@ -295,3 +295,35 @@ func TestLegacySeatbeltHookEntryRecognised(t *testing.T) {
 		t.Fatal("a third-party hook entry must not be recognised as ours")
 	}
 }
+
+// hook install writes a Claude matcher that includes MCP tools, and doctor
+// warns about a Claude hook installed before that, whose matcher misses them.
+func TestClaudeHookSeesMCPCalls(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, ".claude"), 0o755)
+	os.WriteFile(filepath.Join(root, ".claude", "settings.json"), []byte(applygateSettings), 0o644)
+	os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte("version: 1\nmode: observe\n"), 0o644)
+	t.Chdir(root)
+	var out, errb bytes.Buffer
+	cmdDoctor(&out, &errb)
+	if !strings.Contains(out.String(), "WARN claude hook in .claude/settings.json does not see MCP tool calls") ||
+		!strings.Contains(out.String(), "applygate hook install --agent claude --scope project") {
+		t.Fatalf("doctor should warn about the old matcher:\n%s", out.String())
+	}
+	if rc := cmdInstall("install", []string{"--agent", "claude", "--scope", "project"}, &bytes.Buffer{}, &errb); rc != 0 {
+		t.Fatalf("install: %d %s", rc, errb.String())
+	}
+	b, _ := os.ReadFile(filepath.Join(root, ".claude", "settings.json"))
+	scan, ok := scanHooks(b)
+	if !ok || len(scan.matchers) != 1 || scan.matchers[0] != claudeMatcher || !strings.Contains(claudeMatcher, "mcp__.*") {
+		t.Fatalf("installed matchers: %v", scan.matchers)
+	}
+	out.Reset()
+	cmdDoctor(&out, &errb)
+	if strings.Contains(out.String(), "does not see MCP") {
+		t.Fatalf("no MCP warning once reinstalled:\n%s", out.String())
+	}
+}

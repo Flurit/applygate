@@ -29,7 +29,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Ten dangerous scenarios S1–S10, replayed, never run | done | `harness/pack/scenarios.json` (D01–D36 plus added cases); replay only, `run.py` uses an empty PATH and no shell |
 | Stretch S11 (database and backups in one plan) | done | D37 |
 | Stretch S12 (plan runs code via provisioner or external data source) | done | D51, B30; `code-execution` finding |
-| Stretch S13 (destructive call through a Terraform MCP tool) | open | MCP tool inputs are not inspected; documented in [limits](../limits.md) |
+| Stretch S13 (destructive call through a Terraform MCP tool) | partly | MCP calls are logged with their arguments and counted by `report`, not judged; documented in [limits](../limits.md) |
 | Stretch S14 (instruction hidden in a README) | open | needs an end-to-end agent run; the T3 suite exercised live agents but not this case |
 | Ten benign controls | done | B01–B12 cover the spec list; B13–B30 add text-mention, cleanup and S6/S12 controls |
 | Adapters per agent format (Claude Code, Cursor, Codex) | done | `run.py --format claude|codex|cursor` |

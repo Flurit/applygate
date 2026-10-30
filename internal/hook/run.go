@@ -241,6 +241,20 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	if ev.Kind == policy.KindOther {
 		return Output{} // tools applygate does not inspect are not logged
 	}
+	if ev.Kind == policy.KindMCP {
+		// MCP calls are recorded, not judged, so nothing about them may
+		// block: a broken repository config still logs (to the user-level
+		// or default log) and allows.
+		cfg, err := config.Load(opt.UserConfig, ev.Cwd)
+		if err != nil {
+			cfg = userCfg
+			entry.Error = "config error (MCP call logged, not judged): " + err.Error()
+		}
+		entry.Mode = cfg.Mode
+		entry.Verdict, entry.Enforced = policy.Allow, policy.Allow
+		entry.Notes = []string{"MCP tool call: logged, not judged"}
+		return finish(cfg, Output{})
+	}
 	cfg, err := config.Load(opt.UserConfig, ev.Cwd)
 	if err != nil {
 		return fail(nil, ev.Cwd, "config error: "+err.Error())

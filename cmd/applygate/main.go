@@ -589,7 +589,7 @@ func hookEntry(verb, agentName, scopeName string, stdout, stderr io.Writer) int 
 	if verb == "install" {
 		cmd := fmt.Sprintf("%q hook %s", selfPath(), *agent)
 		h := map[string]any{"type": "command", "command": cmd, "timeout": 30}
-		matcher := "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep"
+		matcher := claudeMatcher
 		if *agent == "claude" {
 			// Block the tool call if the hook crashes or times out
 			// (Claude Code v2.1.295+; older versions fail open).
@@ -736,8 +736,14 @@ func hasUserHook(agent string) bool {
 }
 
 // hookScan summarizes one settings file's PreToolUse hooks.
+// claudeMatcher is the PreToolUse matcher hook install writes for Claude
+// Code: the tools applygate judges, and MCP tools (mcp__<server>__<tool>),
+// which it logs without judging. Codex gets "*", which includes MCP calls.
+const claudeMatcher = "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|mcp__.*"
+
 type hookScan struct {
 	applygateBins []string // command binaries of applygate entries
+	matchers      []string // matchers of applygate entries
 	unrecognised  []string // short summaries of entries applygate did not install
 }
 
@@ -752,6 +758,9 @@ func scanHooks(b []byte) (hookScan, bool) {
 	for _, e := range pre {
 		if isApplygateEntry(e) {
 			s.applygateBins = append(s.applygateBins, entryBinary(e))
+			m, _ := e.(map[string]any)
+			matcher, _ := m["matcher"].(string)
+			s.matchers = append(s.matchers, matcher)
 			continue
 		}
 		s.unrecognised = append(s.unrecognised, entrySummary(e))
@@ -879,6 +888,13 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 				}
 			} else if agent == "codex" {
 				say(false, "codex settings %s has no applygate hook entry (run: applygate hook install --agent codex)", p)
+			}
+			if agent == "claude" {
+				for _, m := range scan.matchers {
+					if m != "*" && !strings.Contains(m, "mcp__") {
+						say(false, "claude hook in %s does not see MCP tool calls (matcher %q, installed before MCP logging); run: applygate hook install --agent claude --scope %s", p, m, scope)
+					}
+				}
 			}
 			if agent == "codex" {
 				for _, u := range scan.unrecognised {
