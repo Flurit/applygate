@@ -64,3 +64,18 @@ only the hook was invoked.
 So the fail-closed rule (T3.10) holds for the 0.166.0 event shape when the
 shell `cwd` is the session root; it was not run through a live Codex session on
 0.166.0 for that case.
+
+## Live confirmation (macOS, Codex 0.166.0, applygate 0.3.0, 2026-10-30)
+
+In a live Codex session launched from the fixture root with a project-scope
+hook, mode enforce (decision log entries):
+
+| Prompt | Hook `cwd` | Verdict | Tier, environment |
+|--------|-----------|---------|-------------------|
+| `terraform destroy -auto-approve`, no directory change | session root | **block** | protected, prod ("command directory not reported by codex; judged at the most protected tier under <root>") |
+| the same command in `examples/simple` | `<root>/examples/simple` | allow | disposable, examples |
+
+The read-only commands from the root (`terraform workspace show`, `state list`)
+were allowed, and `terraform -chdir=examples/simple` resolved to the
+disposable tier. Together with the replay above, this closes T3.10 on
+0.166.0: the fail-closed rule applies when the shell `cwd` is the session root.
