@@ -1,24 +1,41 @@
 # applygate
 
+**Stop coding agents from running `terraform destroy` in production.**
+
+[![Release](https://img.shields.io/github/v/release/Flurit/applygate)](https://github.com/Flurit/applygate/releases)
+[![CI](https://github.com/Flurit/applygate/actions/workflows/ci.yml/badge.svg)](https://github.com/Flurit/applygate/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/Flurit/applygate)](LICENSE)
+
 A deterministic, local pre-execution check for coding agents (Claude Code, Codex, and others with pre-tool hooks) that touch Terraform or OpenTofu infrastructure. Before the agent runs a tool call, applygate returns **allow**, **ask** or **block**, with a reason and a next step the agent can act on.
 
-Status: pre-1.0 (v0.3.0), tested live with Claude Code and Codex. What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md).
+<p align="center">
+  <img src="docs/assets/demo.svg" alt="applygate blocking terraform destroy in prod, also when it is hidden in base64, while allowing a commit message that mentions it" width="820">
+</p>
 
+Status: pre-1.0 (v0.3.0), tested live with Claude Code and Codex. What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md). Upgrading from seatbelt, the project's old name: [docs/migration.md](docs/migration.md).
 
-## Renamed from seatbelt
+## Try it in a minute
 
-This project was called seatbelt until 2026-10-29. The word already names Apple's macOS sandbox in the Claude Code and Codex documentation, and other agent-guardrail products use it, so the name was confusing for exactly the people this tool is for. v0.2.0 was the first release as applygate. For an existing install:
+```bash
+brew install Flurit/tap/applygate         # other installs and signature checks: see Install below
+cd your-infra-repo
+applygate init                            # writes .applygate.yaml in observe mode and hooks Claude Code / Codex
+applygate check "terraform -chdir=envs/prod destroy"
+```
 
-- the repository config is `.applygate.yaml` (a `.seatbelt.yaml` is still read, with a note from `doctor`; rename it);
-- hook entries become `applygate hook claude` / `applygate hook codex` (`applygate hook install` rewrites them; the old `seatbelt` command keeps working for one release through a shim shipped in the archive);
-- the user config and the decision log move to `~/.config/applygate/` and `~/.local/state/applygate/` (existing files at the old paths are used until a new one exists);
-- installer variables are `APPLYGATE_VERSION`, `APPLYGATE_INSTALL_DIR` and `APPLYGATE_VERIFY_SIGNATURE` (the `SEATBELT_*` names are honoured for one release).
-
-Release tags v0.1.0 to v0.1.4 and the records under `docs/project/` and `review/` keep the old name where they describe those builds.
+Observe mode logs what it would have blocked and blocks nothing, so `check` prints `allow` followed by the block that enforce mode would give. After a few days, `applygate report` shows what it caught and `applygate suggest` proposes a config; then set `mode: enforce`.
 
 ## Why another guard
 
-Command-pattern matching is table stakes. In our v0 test slice, the existing open-source guards we tried, on default configs, caught at most 5 of 17 dangerous Terraform scenarios. A competent hand-written Rego/regex policy reached 14 of 17, but it still missed base64, variable and `eval` obfuscation, and it blocked harmless text such as `git commit -m "never run terraform destroy"`. A matcher cannot do better than that, because it reads text, not commands, and it cannot see what a change will do.
+Command-pattern matching is table stakes. We replayed the same 17 dangerous and 13 harmless Terraform scenarios through each guard:
+
+| Guard | Dangerous scenarios caught |
+|---|---|
+| Best existing open-source guard we tried, default config | 5 / 17 |
+| A competent hand-written Rego/regex policy | 14 / 17 |
+| **applygate**, protected tier | **17 / 17** |
+
+The hand-written policy still missed base64, variable and `eval` obfuscation, and it blocked harmless text such as `git commit -m "never run terraform destroy"`. A matcher cannot do better than that, because it reads text, not commands, and it cannot see what a change will do. applygate asked on 1 of the 13 harmless scenarios (an apply of a planfile that does not exist yet). Reproduce its row with `python3 -I harness/replay_pack.py --guard bin/applygate --pack harness/pack_v0_original/scenarios.json --fixture harness/pack_v0_original/fixtures/protected`; the pack and runner are in [harness/](harness), and the larger v1 pack (87 dangerous, 46 harmless) runs with `applygate selftest`.
 
 applygate does two things a matcher cannot:
 
@@ -27,24 +44,7 @@ applygate does two things a matcher cannot:
 
 It is not a sandbox and not an AI reviewer. No model is in the decision path, it makes no network calls by default, and telemetry is off unless you turn it on ([docs/telemetry.md](docs/telemetry.md): anonymous verdict counts, nothing else).
 
-## Quickstart
-
-### Verify a download
-
-Download a release and check its signature before running anything. Replace `v0.3.0` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
-
-```bash
-tag=v0.3.0
-base=https://github.com/Flurit/applygate/releases/download/$tag
-curl -fsSLO "$base/checksums.txt" -O "$base/checksums.txt.sigstore.json" -O "$base/applygate_${tag#v}_linux_amd64.tar.gz"
-cosign verify-blob --bundle checksums.txt.sigstore.json \
-  --certificate-identity "https://github.com/Flurit/applygate/.github/workflows/release.yml@refs/tags/$tag" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
-sha256sum --ignore-missing -c checksums.txt     # macOS: shasum -a 256 --ignore-missing -c checksums.txt
-tar -xzf "applygate_${tag#v}_linux_amd64.tar.gz" applygate && install -m 755 applygate ~/.local/bin/
-```
-
-The signature ties `checksums.txt` to this repository's release workflow for that exact tag, and the checksums tie each archive to `checksums.txt`. Each archive also carries a GitHub build-provenance attestation: `gh attestation verify <archive> --repo Flurit/applygate`.
+## Install
 
 ### Install and set up
 
@@ -72,6 +72,23 @@ After a few days in observe mode, run `applygate report` to see what would have 
 **Launch directory.** Claude Code and Codex load project settings only from the directory the session starts in, so a hook at `<repo>/.claude/settings.json` does not run if you launch the agent from a subdirectory. `applygate init` therefore installs the hook at user scope (`~/.claude/settings.json`, `~/.codex/hooks.json`), where it fires from any directory of any repository; repositories without a `.applygate.yaml` are then judged by your user config or the defaults. If you keep a project-scope hook, `applygate doctor` fails with the fix when you run it from a subdirectory the hook does not cover.
 
 **Codex and the command directory.** Codex 0.165.0 does not tell the hook which directory a command runs in, only the session root. applygate then judges the command at the most protected tier it could be in under that root (so a destroy under a repository with a protected directory is blocked wherever Codex ran it), a `cd` in the command establishes the directory, and a relative planfile is looked up under the root. Details and the opt-out (`unknown_dir`) are in [docs/limits.md](docs/limits.md) and [docs/config.md](docs/config.md).
+
+### Verify a download
+
+Download a release and check its signature before running anything. Replace `v0.3.0` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
+
+```bash
+tag=v0.3.0
+base=https://github.com/Flurit/applygate/releases/download/$tag
+curl -fsSLO "$base/checksums.txt" -O "$base/checksums.txt.sigstore.json" -O "$base/applygate_${tag#v}_linux_amd64.tar.gz"
+cosign verify-blob --bundle checksums.txt.sigstore.json \
+  --certificate-identity "https://github.com/Flurit/applygate/.github/workflows/release.yml@refs/tags/$tag" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
+sha256sum --ignore-missing -c checksums.txt     # macOS: shasum -a 256 --ignore-missing -c checksums.txt
+tar -xzf "applygate_${tag#v}_linux_amd64.tar.gz" applygate && install -m 755 applygate ~/.local/bin/
+```
+
+The signature ties `checksums.txt` to this repository's release workflow for that exact tag, and the checksums tie each archive to `checksums.txt`. Each archive also carries a GitHub build-provenance attestation: `gh attestation verify <archive> --repo Flurit/applygate`.
 
 
 ### Apply from your own terminal
@@ -148,6 +165,10 @@ Off by default and off in every release. `applygate telemetry on --endpoint http
 ## Roadmap
 
 [docs/roadmap.md](docs/roadmap.md) describes the stages (v1 core now; recovery checks and plan-hash approval next) and what is still open for v1. Project records (acceptance results, an independent review, requirement-by-requirement status) live in [docs/project/](docs/project).
+
+## Contributing
+
+The easiest way in is a scenario: a command or plan that an agent could run and applygate gets wrong, added to the pack with the verdict it should get ([CONTRIBUTING.md](CONTRIBUTING.md#adding-a-scenario)). Issues labelled [good first issue](https://github.com/Flurit/applygate/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) are scoped to be done in an afternoon. Questions, setups and near-misses you have seen go in [Discussions](https://github.com/Flurit/applygate/discussions); a way around the guard goes to [SECURITY.md](SECURITY.md), not a public issue.
 
 ## Repository layout
 
