@@ -1,5 +1,5 @@
-# DRAFT, not published. The Flurit tap repository (Flurit/homebrew-tap) does not
-# exist yet; this file is meant to live there as Formula/applygate.rb.
+# Published as Formula/applygate.rb in Flurit/homebrew-tap (brew install Flurit/tap/applygate).
+# Keep the two in step: the tap's copy replaces these first three lines with a one-line source note.
 #
 # It installs the signed release binaries (macOS and Linux, amd64 and arm64).
 # Homebrew checks the sha256 below, which catches corruption; the cosign
@@ -15,23 +15,23 @@ class Applygate < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/Flurit/applygate/releases/download/v0.3.0/applygate_0.3.0_darwin_arm64.tar.gz"
-      sha256 "db77af050f6c1097a6db8341e5f15c8951f57b2ff4a9b0cadd5d186484c76710"
+      url "https://github.com/Flurit/applygate/releases/download/v0.3.1/applygate_0.3.1_darwin_arm64.tar.gz"
+      sha256 "97d525f62f08c0b073566457e1301a7893096919f5bf5da209f51532f59fda1f"
     end
     on_intel do
-      url "https://github.com/Flurit/applygate/releases/download/v0.3.0/applygate_0.3.0_darwin_amd64.tar.gz"
-      sha256 "bff3b2681ec8129f8fa3b9e8bc8ae095ab44c8e75b5a384993e28104c7182cf5"
+      url "https://github.com/Flurit/applygate/releases/download/v0.3.1/applygate_0.3.1_darwin_amd64.tar.gz"
+      sha256 "2a1b8aadd23c72b312137081f007ffba63155f0b4e6626cc120d6751241ee20e"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/Flurit/applygate/releases/download/v0.3.0/applygate_0.3.0_linux_arm64.tar.gz"
-      sha256 "3fc5b718d396362c820686b8543ad0ed900880ad9e4315397a85d5af81716ae1"
+      url "https://github.com/Flurit/applygate/releases/download/v0.3.1/applygate_0.3.1_linux_arm64.tar.gz"
+      sha256 "06c1fd8d46a55a5f09783dc51d6428b8bf9d841f6ea1d5df32e36cc65b74d9fd"
     end
     on_intel do
-      url "https://github.com/Flurit/applygate/releases/download/v0.3.0/applygate_0.3.0_linux_amd64.tar.gz"
-      sha256 "c8b2ef90866215bbec04093e77a2250f9f179757dee674d0a29425077098b19d"
+      url "https://github.com/Flurit/applygate/releases/download/v0.3.1/applygate_0.3.1_linux_amd64.tar.gz"
+      sha256 "a355ad95e3097878a21313b9b380e172ddd37fd7c63db082bb7d5289577e9b7b"
     end
   end
 
