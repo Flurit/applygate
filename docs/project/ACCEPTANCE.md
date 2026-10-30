@@ -85,6 +85,31 @@ This is an **agent-driven trial, not a team trial**: Claude Code and Codex work 
   - **Secondary finding (fp-environment, no verdict changed):** every command under `non-prod/` in the terragrunt repository was tiered protected with environment "prod (name hint)", although the config maps `non-prod/**` as standard. Together with the Python finding this is addressed in PR #31 (open at the time of writing); after it, the four trial scripts replay as allow and the `non-prod` commands tier as standard.
 - **Finding (Codex adapter, high; addressed in PR #33).** Codex runs each shell command in the `workdir` its `exec_command` tool receives; its own transcript records `workdir:"/work/terraform-aws-vpc/examples/simple"` for the plan, apply and destroy-plan commands. Every Codex decision in the log was resolved against the session root instead (`dir` = `/work/<repo>`, environment `unknown`). Three effects: the tier came from the root (vpc examples and eks patterns judged standard instead of disposable); `terraform apply simple.tfplan` was judged `plan-missing` and allowed without the plan gate reading the file, which exists in `examples/simple`; and the destroy-plan apply was judged `plan-unreadable` because `show -json` ran without the provider schemas, an ask (enforced as block for Codex) for the wrong reason. In enforce mode this under-protects any Codex command run from a subdirectory whose session root is less protected. Addressed in PR #33: the adapter uses `tool_input.workdir`, `working_directory` or `cwd` when the event carries one (relative values resolved against the hook `cwd`) and falls back to the hook `cwd`, with tests for the disposable-under-standard and protected-under-disposable cases; the Codex source at `rust-v0.165.0` and a captured hook input (`review/agent-trial/results/2026-10-29-codex-hook-payload/`) show that version sends no workdir at all, so the remaining gap is documented in `docs/limits.md` ("Codex working directory") and checked by manual test T3.8. Closed by the fail-closed rule (decided 2026-10-29): when the hook does not report the command directory, seatbelt judges the command at the most protected tier it could be in under the session root (`unknown_dir: most_protected`, opt-out in the user config only), a `cd` in the command establishes the directory, and a relative planfile is searched for under the root (`plan-ambiguous` when several copies exist); unit-tested in `internal/policy` and `internal/hook`, live cases T3.10 and T3.11 pending.
 
+## Plan-gate false-positive study (run 2026-10-30)
+
+How often would a routine `terraform apply <planfile>` have prompted? `review/fp-study/` generates plans against LocalStack from 166 public roots: every root of the agent trial's repositories, plus the examples of fifteen terraform-aws-modules repositories. Each root is pinned to a commit. The method and limits are in `review/fp-study/README.md`, the results in `review/fp-study/results/2026-10-30/summary.md`. Versions: applygate 0.3.0, Terraform 1.16.1, LocalStack 4.14.0.
+
+- **Plans.** Apply-mode roots get four plans:
+  - a create plan, applied to LocalStack;
+  - a no-op re-plan;
+  - a provider default-tag change;
+  - a destroy plan, the control.
+
+  Plan-only roots get the create plan alone. 84 roots produced a create plan and 64 produced day-2 plans, which gives 212 routine plans per tier. Every plan went through `plan-check --tier protected` and `--tier standard` with built-in defaults, and every prompt was reviewed by hand. The review decisions are recorded as rules in `label.py`.
+- **Standard tier:** 0 prompts on routine plans.
+- **Protected tier:** 68 prompts. 25 of them were caused only by LocalStack (tainted creates, creates re-planned after a partial apply, attributes read back differently). That leaves 43 prompts outside LocalStack (20.3%). Of those, 26 were expected and 17 were false positives (8.0%):
+  - **Expected:** unprotected RDS creates, provisioners that do run on create, an admin policy attachment, and an internet-open security group.
+  - **`code-execution` false positives (16):** the rule flags every provisioner and `external` data source in the configuration on every plan. That includes provisioners whose resource is not created or replaced, a provisioner with count 0, and reads already done at plan time.
+  - **`exposure` false positive (1):** the rule re-flags an unchanged internet-open security group when only its tags change, because it reads the planned value without comparing it with the prior one.
+- **Control:** every destroy plan with deletes prompted, 63 of 63 in each tier.
+- **Findings (open):** the two analyzer false-positive causes above. Both are fixable in `internal/plangate`:
+  - `code-execution` should check the provisioner's resource actions and whether an `external` read is deferred;
+  - `exposure` should compare the planned value with the prior one on updates.
+- **Limits:**
+  - The only day-2 change measured is a tag change. Replace-heavy changes are not covered.
+  - Plan-only roots gave 18 plans from 91 roots. govuk-infrastructure and cloud-platform-infrastructure need their real inputs and accounts, and 12 EKS patterns do not initialise at the pinned commit.
+  - Lambda functions do not start in LocalStack without Docker.
+
 ## Hosts
 
 What each host does with the hook, as verified live, is the generated table `docs/hosts.md` (`seatbelt hosts`; `TestHostsDocCurrent` fails when the file is stale). Cells that were not verified say "not tested": the user-scope hook from a subdirectory (T3.9), the Codex fail-closed directory rule (T3.10) and the planfile search (T3.11) are written but not yet run live. Codex's fail-open path on a hook that does not start is printed by `seatbelt hook install --agent codex` and `seatbelt init` from the same table.
