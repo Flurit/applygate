@@ -141,7 +141,7 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		}
 		a.call(skipFlags(rest, map[string]bool{"-a": true}), redirs, cmdSt, st, append(via, bn), depth+1, in)
 		return
-	case "direnv", "mise", "rtx", "asdf", "devbox", "nix", "nix-shell":
+	case "direnv", "mise", "rtx", "asdf", "devbox", "nix", "nix-shell", "sops":
 		if cmd, script, ok := envRunner(bn, rest); ok {
 			if script != nil {
 				if !script.Resolved {
@@ -154,8 +154,8 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			a.call(cmd, redirs, cmdSt, st, append(via, bn), depth+1, in)
 			return
 		}
-	case "aws-vault", "aws-okta", "gds", "saml2aws", "aws-sso", "doppler", "op", "chamber", "infisical", "envchain", "aws-runas":
-		if cmd, profile, ok := credentialWrapper(bn, rest); ok {
+	case "aws-vault", "aws-okta", "gds", "saml2aws", "aws-sso", "doppler", "op", "chamber", "infisical", "dotenvx", "envchain", "aws-runas":
+		if cmd, script, profile, ok := credentialWrapper(bn, rest); ok {
 			// The wrapped command runs with the wrapper's credentials; the
 			// profile or role it names is a tier signal like AWS_PROFILE.
 			ws := cmdSt.clone()
@@ -163,10 +163,21 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 				ws.vars["AWS_PROFILE"] = value{text: profile.Text, ok: true}
 				ws.exported["AWS_PROFILE"] = true
 			}
+			if script != nil {
+				if !script.Resolved {
+					a.problem(st, via, joinWords(args), bn+" runs a command line that cannot be resolved statically")
+					return
+				}
+				a.source(script.Text, ws.childState(), append(via, bn), depth+1)
+				return
+			}
 			a.call(cmd, redirs, ws, st, append(via, bn), depth+1, in)
 			return
 		}
+		// Not a shape it knows: the backstop still looks for a standalone
+		// terraform, tofu or terragrunt argument.
 		record()
+		a.backstop(bn, rest, redirs, cmdSt, st, via, depth)
 		return
 	case "sudo", "doas":
 		a.call(skipFlags(rest, map[string]bool{"-u": true, "-g": true, "-C": true, "-D": true, "-h": true, "-p": true, "-r": true, "-t": true, "-U": true}), redirs, cmdSt, st, append(via, bn), depth+1, in)
@@ -665,42 +676,72 @@ func Mentions(text string) []string {
 //	gds aws ROLE [--] cmd               aws-runas PROFILE cmd
 //	saml2aws exec [--exec-profile P] [--] cmd
 //	aws-sso exec [-p P] [--] cmd        envchain NAMESPACE cmd
-//	doppler run [flags] -- cmd          op run [flags] -- cmd
-//	chamber exec SERVICE... -- cmd      infisical run [flags] -- cmd
+//	doppler run [flags] [--] cmd        op run [flags] [--] cmd
+//	chamber exec SERVICE... -- cmd      infisical run [flags] [--] cmd
+//	dotenvx run [flags] [--] cmd
+//	doppler|infisical run [flags] --command 'command line'
 //
-// ok is false when the arguments do not have that shape (for example
-// "aws-vault list" or "op read"), in which case nothing is executed.
-func credentialWrapper(bn string, rest []Word) (cmd []Word, profile Word, ok bool) {
+// A command line given as one string is returned in script instead. ok is
+// false when the arguments do not have that shape (for example "aws-vault
+// list" or "op read"), in which case nothing is executed.
+func credentialWrapper(bn string, rest []Word) (cmd []Word, script *Word, profile Word, ok bool) {
 	sub := map[string]string{"aws-vault": "exec", "aws-okta": "exec", "gds": "aws", "saml2aws": "exec",
-		"aws-sso": "exec", "doppler": "run", "op": "run", "chamber": "exec", "infisical": "run"}
+		"aws-sso": "exec", "doppler": "run", "op": "run", "chamber": "exec", "infisical": "run", "dotenvx": "run"}
 	if want, has := sub[bn]; has {
 		if len(rest) == 0 || rest[0].Text != want {
-			return nil, Word{}, false
+			return nil, nil, Word{}, false
 		}
 		rest = rest[1:]
 	}
 	// Tools whose first positional argument names the profile or role.
 	positionalProfile := bn == "aws-vault" || bn == "aws-okta" || bn == "gds" || bn == "aws-runas" || bn == "envchain"
-	// Tools that only accept the command after "--".
-	needsDashDash := bn == "doppler" || bn == "op" || bn == "chamber" || bn == "infisical"
+	// Secrets runners whose flags name no AWS profile. Their command normally
+	// follows "--"; without it, it starts at the first argument that is not a
+	// flag or a flag's value (chamber's leading arguments are service names,
+	// so there only "--" or the end of the arguments decides).
+	secretsRunner := bn == "doppler" || bn == "op" || bn == "chamber" || bn == "infisical" || bn == "dotenvx"
 	profileFlags := map[string]bool{"--exec-profile": true, "-p": true, "--profile": true}
 	valued := map[string]bool{"--duration": true, "-d": true, "--region": true, "--mfa-token": true, "-t": true,
 		"--prompt": true, "--exec-profile": true, "-p": true, "--profile": true, "-a": true, "--idp-account": true,
 		"--project": true, "--config": true, "-c": true, "--env-file": true, "--env": true, "--account": true,
-		"--role": true, "--session-ttl": true, "--assume-role-ttl": true}
+		"--role": true, "--session-ttl": true, "--assume-role-ttl": true,
+		// doppler, infisical, dotenvx
+		"--token": true, "--mount": true, "--mount-format": true, "--mount-template": true, "--fallback": true,
+		"--name-transformer": true, "--projectId": true, "--path": true, "--tags": true, "--domain": true,
+		"-f": true, "-fk": true, "--env-keys-file": true, "-e": true, "--convention": true}
+	firstPos := -1
 	for i := 0; i < len(rest); i++ {
 		w := rest[i]
 		t := w.Text
+		if !w.Resolved {
+			t = w.Prefix
+		}
+		name, val, eq := strings.Cut(t, "=")
 		switch {
-		case t == "--":
-			return rest[i+1:], profile, i+1 < len(rest)
-		case needsDashDash:
-			continue
-		case strings.HasPrefix(t, "-") && w.Resolved:
-			name, val, eq := strings.Cut(t, "=")
+		case t == "--" && w.Resolved:
+			return rest[i+1:], nil, profile, i+1 < len(rest)
+		case secretsRunner && name == "--command" && (bn == "doppler" || bn == "infisical"):
+			if eq {
+				return nil, &Word{Text: val, Resolved: w.Resolved, Prefix: val}, profile, true
+			}
+			if i+1 < len(rest) {
+				return nil, &rest[i+1], profile, true
+			}
+			return nil, nil, profile, false
+		case secretsRunner && strings.HasPrefix(t, "-"):
+			if !eq && valued[name] {
+				i++
+			}
+		case secretsRunner && bn != "chamber":
+			return rest[i:], nil, profile, true
+		case secretsRunner:
+			if firstPos < 0 {
+				firstPos = i
+			}
+		case strings.HasPrefix(t, "-"):
 			if profileFlags[name] {
 				if eq {
-					profile = Word{Text: val, Resolved: true, Prefix: val}
+					profile = Word{Text: val, Resolved: w.Resolved, Prefix: val}
 				} else if i+1 < len(rest) {
 					profile = rest[i+1]
 				}
@@ -712,8 +753,11 @@ func credentialWrapper(bn string, rest []Word) (cmd []Word, profile Word, ok boo
 			profile = w
 			positionalProfile = false
 		default:
-			return rest[i:], profile, true
+			return rest[i:], nil, profile, true
 		}
 	}
-	return nil, profile, false
+	if firstPos >= 0 {
+		return rest[firstPos:], nil, profile, true
+	}
+	return nil, nil, profile, false
 }
