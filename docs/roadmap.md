@@ -38,11 +38,11 @@ Done:
 - the plan gate in CI (GitHub Action, any runner) and as a Terragrunt `before_hook` ([ci.md](ci.md)), pulled forward from v2;
 - `applygate apply <planfile>`: the same verdict for a human at a terminal, with a typed confirmation on an ask;
 - `applygate suggest`: a proposed config from the observe-mode log, tiers guessed from names and nothing decided for a directory whose name says nothing.
-- opt-in telemetry ([telemetry.md](telemetry.md)): anonymous counts per version, agent, mode and verdict, off by default, the switch guarded against agents.
+- opt-in telemetry ([telemetry.md](telemetry.md)): anonymous counts per version, agent, mode and verdict, off by default, the switch guarded against agents;
+- an install check on macOS (v0.3.0 on macOS 26.7.1, Intel: installer with signature verification in 7 s, selftest 133/133), recorded in [project/ACCEPTANCE.md](project/ACCEPTANCE.md).
 
 Open:
 - an observe-mode trial with real teams;
-- an install check on macOS;
 - Homebrew and package-manager wrappers.
 
 [project/ACCEPTANCE.md](project/ACCEPTANCE.md) has the measured detail, and [project/spec-alignment.md](project/spec-alignment.md) maps each planned requirement to the code.
