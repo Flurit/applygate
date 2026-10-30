@@ -3,6 +3,8 @@ package plangate
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -218,27 +220,50 @@ func TestProtectedResources(t *testing.T) {
 	}
 }
 
-// TestCodeExecution covers spec scenario S12: provisioners and external data
-// sources in the plan's configuration are a High finding.
+// TestCodeExecution covers spec scenario S12: a provisioner on a resource the
+// plan creates, replaces or destroys, and an external data source whose read
+// the plan defers to apply, are a High finding. Configuration that the apply
+// does not run is not.
 func TestCodeExecution(t *testing.T) {
 	R := DefaultRules()
+	change := func(addr, module, mode, typ, name string, acts ...string) map[string]any {
+		return map[string]any{"address": addr, "module_address": module, "mode": mode, "type": typ, "name": name,
+			"change": map[string]any{"actions": acts, "before": nil, "after": map[string]any{}}}
+	}
+	withProv := func(addr, mode, typ, name, prov string) map[string]any {
+		r := map[string]any{"address": addr, "mode": mode, "type": typ, "name": name}
+		if prov != "" {
+			r["provisioners"] = []any{map[string]any{"type": prov}}
+		}
+		return r
+	}
 	plan := map[string]any{
 		"format_version": "1.2",
 		"resource_changes": []any{
-			map[string]any{"address": "aws_instance.a", "mode": "managed", "type": "aws_instance", "name": "a",
-				"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{}}},
-			map[string]any{"address": "data.external.secrets", "mode": "data", "type": "external", "name": "secrets",
-				"change": map[string]any{"actions": []string{"read"}, "before": nil, "after": map[string]any{}}},
+			change("aws_instance.a", "", "managed", "aws_instance", "a", "create"),
+			change("data.external.secrets", "", "data", "external", "secrets", "read"),
+			// A module instance with a string key holding brackets and a dot.
+			change(`module.db["a.b]"].null_resource.bootstrap[0]`, `module.db["a.b]"]`, "managed", "null_resource", "bootstrap", "create"),
+			change("aws_instance.tainted", "", "managed", "aws_instance", "tainted", "create", "delete"),
+			change("null_resource.old", "", "managed", "null_resource", "old", "delete"),
+			change("aws_instance.same", "", "managed", "aws_instance", "same", "no-op"),
+			change(`aws_instance.tagged["x"]`, "", "managed", "aws_instance", "tagged", "update"),
 		},
 		"configuration": map[string]any{"root_module": map[string]any{
 			"resources": []any{
-				map[string]any{"address": "aws_instance.a", "mode": "managed", "type": "aws_instance", "name": "a",
-					"provisioners": []any{map[string]any{"type": "local-exec"}}},
-				map[string]any{"address": "data.external.secrets", "mode": "data", "type": "external", "name": "secrets"},
+				withProv("aws_instance.a", "managed", "aws_instance", "a", "local-exec"),
+				withProv("data.external.secrets", "data", "external", "secrets", ""),
+				withProv("aws_instance.tainted", "managed", "aws_instance", "tainted", "local-exec"),
+				withProv("null_resource.old", "managed", "null_resource", "old", "local-exec"),
+				withProv("aws_instance.same", "managed", "aws_instance", "same", "local-exec"),
+				withProv("aws_instance.tagged", "managed", "aws_instance", "tagged", "remote-exec"),
+				// count = 0: in the configuration, no instance in the plan.
+				withProv("null_resource.never", "managed", "null_resource", "never", "local-exec"),
+				// Read during the plan, so not in resource_changes.
+				withProv("data.external.at_plan", "data", "external", "at_plan", ""),
 			},
 			"module_calls": map[string]any{"db": map[string]any{"source": "./db", "module": map[string]any{
-				"resources": []any{map[string]any{"address": "null_resource.bootstrap", "mode": "managed", "type": "null_resource", "name": "bootstrap",
-					"provisioners": []any{map[string]any{"type": "remote-exec"}}}},
+				"resources": []any{withProv("null_resource.bootstrap", "managed", "null_resource", "bootstrap", "remote-exec")},
 			}}},
 		}},
 	}
@@ -247,22 +272,142 @@ func TestCodeExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var f *preflight.Finding
-	for i := range res.Findings {
-		if res.Findings[i].Rule == "code-execution" {
-			f = &res.Findings[i]
-		}
-	}
+	f := finding(res, "code-execution")
 	if f == nil || f.Severity != preflight.High {
 		t.Fatalf("want High code-execution, got %+v", res.Findings)
 	}
-	want := []string{"aws_instance.a: provisioner local-exec", "data.external.secrets: external data source runs a program", "module.db.null_resource.bootstrap: provisioner remote-exec"}
+	want := []string{
+		"aws_instance.a: provisioner local-exec",
+		"aws_instance.tainted: provisioner local-exec",
+		"data.external.secrets: external data source runs a program",
+		`module.db["a.b]"].null_resource.bootstrap[0]: provisioner remote-exec`,
+		"null_resource.old: provisioner local-exec",
+	}
 	if fmt.Sprint(f.Evidence) != fmt.Sprint(want) {
-		t.Fatalf("evidence %v, want %v", f.Evidence, want)
+		t.Fatalf("evidence\n %q\nwant\n %q", f.Evidence, want)
 	}
 	// A plain plan has no code-execution finding.
 	res2, _ := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(rc{"aws_instance.a", "aws_instance", []string{"create"}, nil, map[string]any{}})}, R)
 	if _, ok := rules(t, res2)["code-execution"]; ok {
 		t.Fatalf("unexpected code-execution: %+v", res2.Findings)
 	}
+}
+
+func TestStripKeys(t *testing.T) {
+	for in, want := range map[string]string{
+		"module.a":                      "module.a",
+		"module.a[0].module.b":          "module.a.module.b",
+		`module.a["x"].module.b["y"]`:   "module.a.module.b",
+		`module.a["a.b]c"].module.b[2]`: "module.a.module.b",
+		`module.a["q\"]"].module.b`:     "module.a.module.b",
+		`module.a["[nested]"]`:          "module.a",
+	} {
+		if got := stripKeys(in); got != want {
+			t.Errorf("stripKeys(%s) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+// TestExposureOnUpdate: an update is flagged only for exposure it adds; a
+// create or replace is flagged for everything its planned value exposes.
+func TestExposureOnUpdate(t *testing.T) {
+	R := DefaultRules()
+	ssh := map[string]any{"from_port": 22.0, "to_port": 22.0, "protocol": "tcp", "cidr_blocks": []any{"0.0.0.0/0"}}
+	rdp := map[string]any{"from_port": 3389.0, "to_port": 3389.0, "protocol": "tcp", "cidr_blocks": []any{"0.0.0.0/0"}}
+	sg := func(tag string, rules ...any) map[string]any {
+		return map[string]any{"ingress": rules, "tags": map[string]any{"env": tag}}
+	}
+	cases := []struct {
+		name   string
+		acts   []string
+		before map[string]any
+		after  map[string]any
+		want   []string
+	}{
+		{"tag-only update over an open group", []string{"update"}, sg("a", ssh), sg("b", ssh), nil},
+		{"update opens a new port", []string{"update"}, sg("a", ssh), sg("a", ssh, rdp), []string{"aws_security_group.s: ingress from the internet on port 3389"}},
+		{"update closes a port", []string{"update"}, sg("a", ssh, rdp), sg("a", ssh), nil},
+		{"replace keeps an open port", []string{"delete", "create"}, sg("a", ssh), sg("b", ssh), []string{"aws_security_group.s: ingress from the internet on port 22"}},
+		{"create", []string{"create"}, nil, sg("a", ssh), []string{"aws_security_group.s: ingress from the internet on port 22"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res, err := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(rc{"aws_security_group.s", "aws_security_group", c.acts, c.before, c.after})}, R)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			if f := finding(res, "exposure"); f != nil {
+				got = f.Evidence
+			}
+			if fmt.Sprint(got) != fmt.Sprint(c.want) {
+				t.Fatalf("exposure %q, want %q", got, c.want)
+			}
+		})
+	}
+	// A policy that already granted a wildcard is not re-flagged on update,
+	// and a new wildcard is.
+	pol := func(actions string) map[string]any {
+		return map[string]any{"policy": `{"Statement":[{"Effect":"Allow","Action":` + actions + `,"Resource":"*"}]}`}
+	}
+	res, _ := Evaluate(Input{MaxDestroy: -1, PlanJSON: planJSON(rc{"aws_iam_policy.p", "aws_iam_policy", []string{"update"}, pol(`"s3:*"`), pol(`["s3:*","ec2:*"]`)})}, R)
+	f := finding(res, "exposure")
+	if f == nil || fmt.Sprint(f.Evidence) != "[aws_iam_policy.p: IAM policy allows wildcard action ec2:*]" {
+		t.Fatalf("want only the new ec2:* wildcard, got %+v", res.Findings)
+	}
+}
+
+// TestFPStudyPlans replays trimmed plans from the plan-gate false-positive
+// study (review/fp-study): real terraform show -json output from public
+// examples applied to LocalStack. Day-2 plans (a no-op re-plan, a default-tag
+// change) must not raise code-execution or exposure for configuration the
+// apply does not run or exposure that was already there; the create plans
+// still must.
+func TestFPStudyPlans(t *testing.T) {
+	R := DefaultRules()
+	cases := []struct {
+		file string
+		rule string
+		want []string
+	}{
+		{"lambda-simple-create.json", "code-execution", []string{"module.lambda_function.null_resource.archive[0]: provisioner local-exec"}},
+		{"lambda-simple-noop.json", "code-execution", nil},
+		{"lambda-simple-tags.json", "code-execution", nil},
+		{"ec2-complete-create.json", "exposure", []string{
+			`module.ec2_complete.aws_iam_role_policy_attachment.this["AdministratorAccess"]: attaches AdministratorAccess`,
+			"module.security_group.aws_security_group_rule.ingress_rules[1]: ingress from the internet on all ports",
+		}},
+		{"ec2-complete-tags.json", "exposure", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.file, func(t *testing.T) {
+			js, err := os.ReadFile(filepath.Join("testdata", "fpstudy", c.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := Evaluate(Input{MaxDestroy: -1, PlanJSON: js}, R)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			if f := finding(res, c.rule); f != nil {
+				if f.Severity != preflight.High {
+					t.Errorf("%s severity %s, want high", c.rule, f.Severity)
+				}
+				got = f.Evidence
+			}
+			if fmt.Sprint(got) != fmt.Sprint(c.want) {
+				t.Fatalf("%s evidence %q, want %q", c.rule, got, c.want)
+			}
+		})
+	}
+}
+
+func finding(r *Result, rule string) *preflight.Finding {
+	for i := range r.Findings {
+		if r.Findings[i].Rule == rule {
+			return &r.Findings[i]
+		}
+	}
+	return nil
 }
