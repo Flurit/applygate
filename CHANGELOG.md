@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `applygate version` now reports the module version for a binary built with `go install github.com/Flurit/applygate/cmd/applygate@vX.Y.Z`, which printed `dev` because only the release build sets the version; a local build still reports `dev`. The host capability table (`docs/hosts.md`) records the macOS runs of T3.9 on Claude Code 2.1.314 and Codex 0.166.0.
+
 ## v0.3.0 (2026-10-30)
 
 - `applygate suggest`: a proposed `.applygate.yaml` from the observe-mode decision log. Environments come from the directories where the engine ran, with tiers guessed from path names (prod/production/prd/live → protected; staging, stage, uat, qa, non-prod, pre-prod → standard; dev, sandbox, test, examples, demo → disposable) and from hinted workspaces, S3 backends and AWS profiles; directories whose names say nothing stay commented out so strict mode keeps them protected until a person picks; an existing config's environments and settings are kept and not proposed again; every ask or block is listed with the reason it was judged that way. `--root` selects the repository in a shared user log, `--out` writes the file and refuses to overwrite. The output is parsed as a config before it is printed.
