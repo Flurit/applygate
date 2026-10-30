@@ -57,7 +57,7 @@ var Hosts = []Host{
 		AskModes:   `no ask in any mode: every ask is enforced as a block (T3.7); permission_mode under codex exec arrives as bypassPermissions (captured)`,
 		Verified:   `Codex 0.159.2 (T3.7) and 0.165.0 (chaos tests, clean re-run, hook input capture) on Linux, 2026-10-28 and 2026-10-29; 0.166.0 on macOS 26.7.1, 2026-10-30 (user-scope hooks.json loaded and fired, launched from the session root; the decision log's cwd followed the command's directory)`,
 		Evidence:   []string{"review/T3_RESULTS.md", "review/agent-trial/results/2026-10-29-codex-hook-payload/README.md", "review/agent-trial/results/2026-10-30-codex-0.166.0-hook-payload/README.md", "docs/project/ACCEPTANCE.md"},
-		Pending:    `T3.9 user-scope hook launched from a subdirectory: not tested; T3.10 bare command in a disposable subdirectory under a root with a protected directory: not reproduced on 0.166.0 (the command's directory reached the hook), not tested on 0.141.0; T3.11 planfile search: not exercised on 0.166.0 (the planfile was in the command's directory); hook timeout: not tested`,
+		Pending:    `T3.9 user-scope hook launched from a subdirectory: not tested; T3.10 verified on 0.166.0 only for a command run at the session root (blocked as protected); the subdirectory form arrives with the command's directory as cwd and is allowed as disposable; T3.11 planfile search: not exercised on 0.166.0 (the planfile was in the command's directory); hook timeout: not tested`,
 	},
 	{Name: "Cursor", Supported: false},
 	{Name: "Copilot CLI", Supported: false},
