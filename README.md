@@ -126,7 +126,7 @@ The same plan gate runs in a pipeline between `plan -out` and `apply`, as a GitH
 | Guard tampering | skip-permissions flags, edits to hook config, applygate config or log | block | block | block |
 | Dynamic / unresolvable | `eval "$(curl …)"`, `sh -c "$X"`, `curl … \| bash` | ask | ask | allow |
 
-Plan gate: in protected tiers critical findings block and high findings ask; in standard tiers critical findings ask; in disposable tiers findings are logged. Addresses listed in `protected_resources` are critical whatever their type, and a plan whose configuration runs code (provisioners, `external` data sources) is a high finding. Unknown environments count as protected in strict mode, which is the default. The full table, including the classes applygate adds beyond the spec, is in [docs/policy.md](docs/policy.md).
+Plan gate: in protected tiers critical findings block and high findings ask; in standard tiers critical findings ask; in disposable tiers findings are logged. Addresses listed in `protected_resources` are critical whatever their type, and a plan whose apply runs code (provisioners on resources it creates, replaces or destroys, `external` data sources read at apply) is a high finding. Unknown environments count as protected in strict mode, which is the default. The full table, including the classes applygate adds beyond the spec, is in [docs/policy.md](docs/policy.md).
 
 ## Commands
 

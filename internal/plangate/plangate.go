@@ -183,7 +183,13 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 			}
 		}
 		if !del {
-			exposure = append(exposure, exposed(rc, after, rules)...)
+			ev := exposed(rc, after, rules)
+			if acts.Update() {
+				// An update reports only the exposure it introduces; what
+				// was already open before this change is not this plan's doing.
+				ev = without(ev, exposed(rc, before, rules))
+			}
+			exposure = append(exposure, ev...)
 		}
 		if in.Backend != nil && in.Backend.Type == "s3" {
 			bucket, table := in.Backend.Config["bucket"], in.Backend.Config["dynamodb_table"]
@@ -230,10 +236,23 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 }
 
 // codeExecution lists the places where applying the plan would run
-// arbitrary code with the user's credentials: provisioners (local-exec,
-// remote-exec) declared in the configuration, and "external" data sources,
-// which run a program during plan and apply. Spec scenario S12.
+// arbitrary code with the user's credentials. Spec scenario S12.
+//
+// A provisioner (local-exec, remote-exec) runs when its resource instance is
+// created, which includes the create half of a replace. A destroy-time
+// provisioner runs when the instance is destroyed, and the plan JSON does not
+// say which kind a provisioner is, so a delete counts too. A resource the
+// plan leaves alone, or one with no instances (count 0, an empty for_each),
+// runs nothing.
+//
+// An "external" data source runs its program during the plan. It runs again
+// on apply only when the plan deferred the read: then it appears in
+// resource_changes with a "read" action.
 func codeExecution(p *tfjson.Plan) []string {
+	// Instances that are created, replaced or destroyed, keyed by their
+	// configuration address (no instance keys, so module.m["a"].x.y[0] is
+	// module.m.x.y).
+	changing := map[string][]string{}
 	seen := map[string]bool{}
 	var out []string
 	note := func(s string) {
@@ -241,6 +260,25 @@ func codeExecution(p *tfjson.Plan) []string {
 			seen[s] = true
 			out = append(out, s)
 		}
+	}
+	for _, rc := range p.ResourceChanges {
+		if rc == nil || rc.Change == nil {
+			continue
+		}
+		acts := rc.Change.Actions
+		if rc.Mode == tfjson.DataResourceMode {
+			if rc.Type == "external" && acts.Read() {
+				note(rc.Address + ": external data source runs a program")
+			}
+			continue
+		}
+		if acts.Create() || acts.Replace() || acts.Delete() {
+			ca := configAddress(rc)
+			changing[ca] = append(changing[ca], rc.Address)
+		}
+	}
+	if len(changing) == 0 || p.Config == nil {
+		return out
 	}
 	var walk func(prefix string, m *tfjson.ConfigModule)
 	walk = func(prefix string, m *tfjson.ConfigModule) {
@@ -251,36 +289,71 @@ func codeExecution(p *tfjson.Plan) []string {
 			if r == nil {
 				continue
 			}
-			for _, pv := range r.Provisioners {
-				if pv != nil && pv.Type != "" {
-					note(prefix + r.Address + ": provisioner " + pv.Type)
+			for _, addr := range changing[prefix+r.Address] {
+				for _, pv := range r.Provisioners {
+					if pv != nil && pv.Type != "" {
+						note(addr + ": provisioner " + pv.Type)
+					}
 				}
 			}
-			if r.Mode == tfjson.DataResourceMode && r.Type == "external" {
-				note(prefix + r.Address + ": external data source runs a program")
-			}
 		}
-		names := make([]string, 0, len(m.ModuleCalls))
-		for n := range m.ModuleCalls {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		for _, n := range names {
-			if mc := m.ModuleCalls[n]; mc != nil {
+		for n, mc := range m.ModuleCalls {
+			if mc != nil {
 				walk(prefix+"module."+n+".", mc.Module)
 			}
 		}
 	}
-	if p.Config != nil {
-		walk("", p.Config.RootModule)
+	walk("", p.Config.RootModule)
+	return out
+}
+
+// configAddress is the configuration address of a resource instance: its
+// module path without instance keys, then [data.]type.name.
+func configAddress(rc *tfjson.ResourceChange) string {
+	var b strings.Builder
+	if rc.ModuleAddress != "" {
+		b.WriteString(stripKeys(rc.ModuleAddress))
+		b.WriteByte('.')
 	}
-	// A plan may carry data reads without configuration (hand-built JSON).
-	for _, rc := range p.ResourceChanges {
-		if rc != nil && rc.Mode == tfjson.DataResourceMode && rc.Type == "external" {
-			note(rc.Address + ": external data source runs a program")
+	if rc.Mode == tfjson.DataResourceMode {
+		b.WriteString("data.")
+	}
+	b.WriteString(rc.Type + "." + rc.Name)
+	return b.String()
+}
+
+// stripKeys removes instance keys ([0], ["a.b]"]) from a module address. A
+// string key is quoted and may contain brackets, dots and escaped quotes.
+func stripKeys(addr string) string {
+	var b strings.Builder
+	depth, quoted, escaped := 0, false, false
+	for _, c := range addr {
+		switch {
+		case quoted:
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				quoted = false
+			}
+		case depth > 0:
+			switch c {
+			case '"':
+				quoted = true
+			case '[':
+				depth++
+			case ']':
+				depth--
+			}
+		case c == '[':
+			depth++
+		default:
+			b.WriteRune(c)
 		}
 	}
-	return out
+	return b.String()
 }
 
 // exposed returns exposure findings for a resource's planned values.
@@ -492,6 +565,24 @@ func num(v any) (float64, bool) {
 		return f, err == nil
 	}
 	return 0, false
+}
+
+// without returns the items of list that are not in drop.
+func without(list, drop []string) []string {
+	if len(drop) == 0 {
+		return list
+	}
+	skip := map[string]bool{}
+	for _, d := range drop {
+		skip[d] = true
+	}
+	var out []string
+	for _, s := range list {
+		if !skip[s] {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func contains(ss []string, s string) bool {

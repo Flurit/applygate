@@ -1,0 +1,169 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "random_pet.this",
+   "mode": "managed",
+   "type": "random_pet",
+   "name": "this",
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.lambda_function.aws_cloudwatch_log_group.lambda[0]",
+   "module_address": "module.lambda_function",
+   "mode": "managed",
+   "type": "aws_cloudwatch_log_group",
+   "name": "lambda",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.lambda_function.aws_iam_role.lambda[0]",
+   "module_address": "module.lambda_function",
+   "mode": "managed",
+   "type": "aws_iam_role",
+   "name": "lambda",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.lambda_function.aws_iam_role_policy.logs[0]",
+   "module_address": "module.lambda_function",
+   "mode": "managed",
+   "type": "aws_iam_role_policy",
+   "name": "logs",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.lambda_function.aws_lambda_function.this[0]",
+   "module_address": "module.lambda_function",
+   "mode": "managed",
+   "type": "aws_lambda_function",
+   "name": "this",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.lambda_function.local_file.archive_plan[0]",
+   "module_address": "module.lambda_function",
+   "mode": "managed",
+   "type": "local_file",
+   "name": "archive_plan",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.lambda_function.null_resource.archive[0]",
+   "module_address": "module.lambda_function",
+   "mode": "managed",
+   "type": "null_resource",
+   "name": "archive",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  },
+  {
+   "address": "module.lambda_function.terraform_data.package_filename_for_hash[0]",
+   "module_address": "module.lambda_function",
+   "mode": "managed",
+   "type": "terraform_data",
+   "name": "package_filename_for_hash",
+   "index": 0,
+   "change": {
+    "actions": [
+     "create"
+    ],
+    "before": null,
+    "after": {}
+   }
+  }
+ ],
+ "configuration": {
+  "root_module": {
+   "module_calls": {
+    "lambda_function": {
+     "source": "../../",
+     "module": {
+      "resources": [
+       {
+        "address": "null_resource.archive",
+        "mode": "managed",
+        "type": "null_resource",
+        "name": "archive",
+        "provisioners": [
+         {
+          "type": "local-exec"
+         }
+        ],
+        "count_expression": {
+         "references": [
+          "var.create",
+          "var.create_package"
+         ]
+        }
+       },
+       {
+        "address": "data.external.archive_prepare",
+        "mode": "data",
+        "type": "external",
+        "name": "archive_prepare",
+        "count_expression": {
+         "references": [
+          "var.create",
+          "var.create_package"
+         ]
+        }
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}
