@@ -310,6 +310,36 @@ func TestCodexAdapter(t *testing.T) {
 	}
 }
 
+// The Claude Code plugin's launcher and the binary it caches decide what runs
+// as the hook, so an agent may not change them, even from a disposable
+// directory.
+func TestPluginFilesAreGuarded(t *testing.T) {
+	root := setup(t, "enforce", "auto")
+	home := "/home/u"
+	run := func(tool string, input map[string]any) string {
+		o := Run(Claude{}, strings.NewReader(event(tool, filepath.Join(root, "dev"), input)), Options{NoLog: true, NoGit: true, Env: map[string]string{"HOME": home}})
+		return decision(t, o)
+	}
+	for _, p := range []string{
+		home + "/.claude/plugins/cache/applygate/applygate/0.3.2/scripts/applygate-hook",
+		home + "/.claude/plugins/cache/applygate/applygate/0.3.2/hooks/hooks.json",
+		home + "/.claude/plugins/marketplaces/applygate/plugin/claude-code/scripts/pinned-release.txt",
+		home + "/.claude/plugins/data/applygate-applygate/v0.3.2/linux_amd64/applygate",
+		home + "/.cache/applygate/plugin/v0.3.2/linux_amd64/applygate",
+	} {
+		if got := run("Write", map[string]any{"file_path": p, "content": "exit 0"}); got != "deny" {
+			t.Errorf("Write %s: %s", p, got)
+		}
+		if got := run("Bash", map[string]any{"command": "cp /tmp/fake " + p}); got != "deny" {
+			t.Errorf("cp onto %s: %s", p, got)
+		}
+	}
+	// Another plugin's data directory is not ours to guard.
+	if got := run("Write", map[string]any{"file_path": home + "/.claude/plugins/data/other-plugin/state.json", "content": "{}"}); got != "allow" {
+		t.Errorf("other plugin's data: %s", got)
+	}
+}
+
 // rootStandardConfig has a standard-tier root (strict off) with a protected
 // and a disposable subdirectory, so the tier of a command depends on whether
 // the adapter resolves it against the session root or the command's workdir.

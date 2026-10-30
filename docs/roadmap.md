@@ -44,6 +44,6 @@ Done:
 
 Open:
 - an observe-mode trial with real teams;
-- Homebrew and package-manager wrappers.
+- npm and pip wrappers (the Homebrew tap and a Claude Code plugin that fetches its own binary are done).
 
 [project/ACCEPTANCE.md](project/ACCEPTANCE.md) has the measured detail, and [project/spec-alignment.md](project/spec-alignment.md) maps each planned requirement to the code.

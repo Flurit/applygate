@@ -1,13 +1,24 @@
 {
-  "description": "applygate: allow / ask / block for Terraform, OpenTofu and cloud CLI actions. Needs `applygate` on PATH (install.sh or go install) and a .applygate.yaml in the repository (applygate init --no-hooks).",
+  "description": "applygate: allow / ask / block for Terraform, OpenTofu and cloud CLI actions. Runs the applygate on PATH, or downloads the release this plugin pins (sha256 checked) into the plugin's data directory. Needs a .applygate.yaml in the repository (applygate init --no-hooks).",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/applygate-hook\" --fetch",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",
-            "command": "applygate hook claude",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/applygate-hook\" hook claude",
             "timeout": 30,
             "onFailure": "block"
           }

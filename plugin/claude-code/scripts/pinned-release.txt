@@ -1,0 +1,7 @@
+# The applygate release the Claude Code plugin downloads when applygate is not
+# on PATH: sha256 and archive name, from the signed checksums.txt of v0.3.2.
+# Written by scripts/pin-plugin-release.sh; do not edit by hand.
+350e793bf4629b4ed42bf32551b095c402051c68b51dc3a591ceadeb12d732fd  applygate_0.3.2_darwin_amd64.tar.gz
+f9fc2dbc13c6d33cb19a983c5bad61fa031c64090d2fa88815de55f3b238e6b8  applygate_0.3.2_darwin_arm64.tar.gz
+a6eaa20ea367dd0398d0188ad1678e996a1566ae962ed1b7e19e90db46c6ad80  applygate_0.3.2_linux_amd64.tar.gz
+6f447d30d24fe8743865a6dcb44512928b45f10724eb3cd77a430ab5db7c597c  applygate_0.3.2_linux_arm64.tar.gz

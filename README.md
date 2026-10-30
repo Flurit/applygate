@@ -63,7 +63,7 @@ applygate doctor
 applygate check "terraform -chdir=envs/prod destroy"
 ```
 
-`applygate init --no-hooks` writes the config only; `applygate init --scope project` keeps the hook inside this repository; `applygate hook install --agent claude|codex [--scope user]` adds a hook by hand (project scope by default), and `applygate hook remove --agent claude|codex` cleans both scopes. What each host can and cannot do with the hook is in [docs/hosts.md](docs/hosts.md) (`applygate hosts`). Releases are built by `.github/workflows/release.yml` from a tag: builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`), every archive carries a build-provenance attestation, and tags of published releases are never moved. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
+`applygate init --no-hooks` writes the config only; `applygate init --scope project` keeps the hook inside this repository; `applygate hook install --agent claude|codex [--scope user]` adds a hook by hand (project scope by default), and `applygate hook remove --agent claude|codex` cleans both scopes. What each host can and cannot do with the hook is in [docs/hosts.md](docs/hosts.md) (`applygate hosts`). Releases are built by `.github/workflows/release.yml` from a tag: builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`), every archive carries a build-provenance attestation, and tags of published releases are never moved. A Claude Code plugin lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it): it runs the `applygate` on PATH, or, when there is none, downloads the release it pins, checks the archive against the sha256 committed in the plugin, and keeps it in the plugin's data directory.
 
 Security issues: see [SECURITY.md](SECURITY.md).
 
@@ -185,7 +185,7 @@ internal/decisionlog/ JSONL log with redaction, report
 harness/              scenario pack, fixtures, Go regression test, run.py replay runner
 docs/                 policy, config, limits, hosts (generated), threat model, roadmap; docs/project/ for project records
 review/               live-agent test write-ups and the open-source corpus trial (tools, configs, summaries)
-plugin/claude-code/   Claude Code plugin manifest (hooks only; the binary comes from a release)
+plugin/claude-code/   Claude Code plugin: hooks and a launcher that finds or fetches the pinned release
 site/                 project page, published to https://flurit.github.io/applygate/ by .github/workflows/pages.yml
 .goreleaser.yaml      release builds: reproducible archives, checksums, cosign signature, SBOMs
 install.sh            installer: verifies the cosign signature (when cosign is installed) and the sha256

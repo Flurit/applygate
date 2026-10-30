@@ -15,23 +15,23 @@ class Applygate < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/Flurit/applygate/releases/download/v0.3.1/applygate_0.3.1_darwin_arm64.tar.gz"
-      sha256 "97d525f62f08c0b073566457e1301a7893096919f5bf5da209f51532f59fda1f"
+      url "https://github.com/Flurit/applygate/releases/download/v0.3.2/applygate_0.3.2_darwin_arm64.tar.gz"
+      sha256 "f9fc2dbc13c6d33cb19a983c5bad61fa031c64090d2fa88815de55f3b238e6b8"
     end
     on_intel do
-      url "https://github.com/Flurit/applygate/releases/download/v0.3.1/applygate_0.3.1_darwin_amd64.tar.gz"
-      sha256 "2a1b8aadd23c72b312137081f007ffba63155f0b4e6626cc120d6751241ee20e"
+      url "https://github.com/Flurit/applygate/releases/download/v0.3.2/applygate_0.3.2_darwin_amd64.tar.gz"
+      sha256 "350e793bf4629b4ed42bf32551b095c402051c68b51dc3a591ceadeb12d732fd"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/Flurit/applygate/releases/download/v0.3.1/applygate_0.3.1_linux_arm64.tar.gz"
-      sha256 "06c1fd8d46a55a5f09783dc51d6428b8bf9d841f6ea1d5df32e36cc65b74d9fd"
+      url "https://github.com/Flurit/applygate/releases/download/v0.3.2/applygate_0.3.2_linux_arm64.tar.gz"
+      sha256 "6f447d30d24fe8743865a6dcb44512928b45f10724eb3cd77a430ab5db7c597c"
     end
     on_intel do
-      url "https://github.com/Flurit/applygate/releases/download/v0.3.1/applygate_0.3.1_linux_amd64.tar.gz"
-      sha256 "a355ad95e3097878a21313b9b380e172ddd37fd7c63db082bb7d5289577e9b7b"
+      url "https://github.com/Flurit/applygate/releases/download/v0.3.2/applygate_0.3.2_linux_amd64.tar.gz"
+      sha256 "a6eaa20ea367dd0398d0188ad1678e996a1566ae962ed1b7e19e90db46c6ad80"
     end
   end
 
