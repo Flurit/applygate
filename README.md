@@ -2,12 +2,12 @@
 
 A deterministic, local pre-execution check for coding agents (Claude Code, Codex, and others with pre-tool hooks) that touch Terraform or OpenTofu infrastructure. Before the agent runs a tool call, applygate returns **allow**, **ask** or **block**, with a reason and a next step the agent can act on.
 
-Status: pre-1.0 (v0.2.0), tested live with Claude Code and Codex. What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md).
+Status: pre-1.0 (v0.3.0), tested live with Claude Code and Codex. What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md).
 
 
 ## Renamed from seatbelt
 
-This project was called seatbelt until 2026-10-29. The word already names Apple's macOS sandbox in the Claude Code and Codex documentation, and other agent-guardrail products use it, so the name was confusing for exactly the people this tool is for. v0.2.0 is the first release as applygate. For an existing install:
+This project was called seatbelt until 2026-10-29. The word already names Apple's macOS sandbox in the Claude Code and Codex documentation, and other agent-guardrail products use it, so the name was confusing for exactly the people this tool is for. v0.2.0 was the first release as applygate. For an existing install:
 
 - the repository config is `.applygate.yaml` (a `.seatbelt.yaml` is still read, with a note from `doctor`; rename it);
 - hook entries become `applygate hook claude` / `applygate hook codex` (`applygate hook install` rewrites them; the old `seatbelt` command keeps working for one release through a shim shipped in the archive);
@@ -31,10 +31,10 @@ It is not a sandbox and not an AI reviewer. No model is in the decision path, it
 
 ### Verify a download
 
-Download a release and check its signature before running anything. Replace `v0.2.0` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
+Download a release and check its signature before running anything. Replace `v0.3.0` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
 
 ```bash
-tag=v0.2.0
+tag=v0.3.0
 base=https://github.com/Flurit/applygate/releases/download/$tag
 curl -fsSLO "$base/checksums.txt" -O "$base/checksums.txt.sigstore.json" -O "$base/applygate_${tag#v}_linux_amd64.tar.gz"
 cosign verify-blob --bundle checksums.txt.sigstore.json \
@@ -52,8 +52,8 @@ The signature ties `checksums.txt` to this repository's release workflow for tha
 # Installer from a release tag, never from main. It verifies the cosign signature on checksums.txt
 # when cosign is installed and warns when it is not; APPLYGATE_VERIFY_SIGNATURE=require makes cosign
 # mandatory. Without cosign only the sha256 is checked, which does not detect a tampered release.
-curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.2.0/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
-# or: go install github.com/Flurit/applygate/cmd/applygate@v0.2.0
+curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.3.0/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
+# or: go install github.com/Flurit/applygate/cmd/applygate@v0.3.0
 # or: go build -o bin/applygate ./cmd/applygate
 cd your-infra-repo
 applygate init                            # writes .applygate.yaml (observe mode), detects Claude Code / Codex, installs their hooks at user scope
@@ -89,7 +89,7 @@ Outside a terminal an ask is refused unless `--yes` is given, and `--yes` never 
 The same plan gate runs in a pipeline between `plan -out` and `apply`, as a GitHub Action or a shell step, and as a Terragrunt `before_hook`; exit codes 0/4/3 are allow/ask/block. See [docs/ci.md](docs/ci.md).
 
 ```yaml
-- uses: Flurit/applygate@v0.2.0
+- uses: Flurit/applygate@v0.3.0
   with:
     plan: tfplan
     working-directory: envs/prod
