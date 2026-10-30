@@ -186,6 +186,7 @@ harness/              scenario pack, fixtures, Go regression test, run.py replay
 docs/                 policy, config, limits, hosts (generated), threat model, roadmap; docs/project/ for project records
 review/               live-agent test write-ups and the open-source corpus trial (tools, configs, summaries)
 plugin/claude-code/   Claude Code plugin manifest (hooks only; the binary comes from a release)
+site/                 project page, published to https://flurit.github.io/applygate/ by .github/workflows/pages.yml
 .goreleaser.yaml      release builds: reproducible archives, checksums, cosign signature, SBOMs
 install.sh            installer: verifies the cosign signature (when cosign is installed) and the sha256
 SECURITY.md           how to report a vulnerability privately

@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>applygate: stop coding agents from destroying production</title>
+<meta name="description" content="A deterministic, local pre-execution check for Claude Code, Codex and other coding agents on Terraform and OpenTofu. Allow, ask or block, with a reason the agent can act on.">
+<link rel="canonical" href="https://flurit.github.io/applygate/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://flurit.github.io/applygate/">
+<meta property="og:title" content="applygate: stop coding agents from running terraform destroy in production">
+<meta property="og:description" content="Deterministic allow / ask / block hook for Claude Code and Codex on Terraform and OpenTofu. Local. No model in the decision path.">
+<meta property="og:image" content="https://flurit.github.io/applygate/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d1117'/%3E%3Cpath d='M9 11l6 5-6 5' stroke='%23ff7b72' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M17 21h7' stroke='%23e6edf3' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #ffffff;
+    --bg-soft: #f6f8fa;
+    --fg: #1f2328;
+    --muted: #59636e;
+    --line: #d1d9e0;
+    --accent: #cf222e;
+    --accent-soft: #ffebe9;
+    --ok: #1a7f37;
+    --link: #0969da;
+    --code-bg: #0d1117;
+    --code-fg: #e6edf3;
+    --bar: #d1d9e0;
+    --radius: 12px;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117;
+      --bg-soft: #151b23;
+      --fg: #e6edf3;
+      --muted: #9198a1;
+      --line: #30363d;
+      --accent: #ff7b72;
+      --accent-soft: #2d1416;
+      --ok: #3fb950;
+      --link: #4493f8;
+      --code-bg: #010409;
+      --bar: #3d444d;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --bg-soft: #151b23; --fg: #e6edf3; --muted: #9198a1; --line: #30363d;
+    --accent: #ff7b72; --accent-soft: #2d1416; --ok: #3fb950; --link: #4493f8; --code-bg: #010409; --bar: #3d444d;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.6 var(--sans); }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre, .mono { font-family: var(--mono); }
+  p code, figcaption code { font-size: .88em; background: var(--bg-soft); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+  @media (min-width: 720px) { .wrap { padding: 0 32px; } }
+
+  header.top { border-bottom: 1px solid var(--line); }
+  header.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; gap: 16px; }
+  .brand { font: 700 19px var(--mono); color: var(--fg); }
+  .brand:hover { text-decoration: none; }
+  .brand span { color: var(--accent); }
+  nav.links { display: flex; gap: 20px; font-size: 15px; }
+  nav.links a { color: var(--muted); }
+  nav.links a:hover { color: var(--fg); text-decoration: none; }
+  @media (max-width: 560px) { nav.links .opt { display: none; } }
+
+  .hero { padding: 64px 0 40px; }
+  .eyebrow { font-size: 14px; color: var(--muted); letter-spacing: .02em; margin: 0 0 16px; }
+  .eyebrow b { color: var(--fg); font-weight: 600; }
+  h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 20px; max-width: 21ch; }
+  h1 code { color: var(--accent); font-size: .92em; letter-spacing: -0.03em; white-space: nowrap; }
+  .lede { font-size: clamp(18px, 2.2vw, 21px); color: var(--muted); max-width: 46em; margin: 0 0 32px; }
+  .lede strong { color: var(--fg); font-weight: 600; }
+
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .install { display: flex; align-items: center; gap: 10px; background: var(--code-bg); color: var(--code-fg); border-radius: 10px; padding: 0 6px 0 16px; height: 48px; font: 15px var(--mono); max-width: 100%; }
+  @media (max-width: 420px) { .install { font-size: 13px; gap: 8px; padding-left: 12px; } }
+  .install .prompt { color: #39c5cf; user-select: none; }
+  .install code { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .copy { flex: none; border: 0; border-radius: 7px; background: #21262d; color: var(--code-fg); font: 13px var(--sans); padding: 7px 11px; cursor: pointer; }
+  .copy:hover { background: #30363d; }
+  .btn { display: inline-flex; align-items: center; height: 48px; padding: 0 20px; border-radius: 10px; font-weight: 600; font-size: 16px; border: 1px solid var(--line); color: var(--fg); background: var(--bg); }
+  .btn:hover { text-decoration: none; background: var(--bg-soft); }
+  .btn.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .btn.primary:hover { opacity: .88; background: var(--fg); }
+
+  .demo { margin: 48px 0 0; }
+  .demo img { display: block; width: 100%; height: auto; border-radius: var(--radius); box-shadow: 0 16px 48px rgba(1, 4, 9, .18); }
+  .demo figcaption { font-size: 14px; color: var(--muted); margin-top: 12px; text-align: center; }
+
+  section { padding: 72px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: clamp(26px, 3.6vw, 34px); line-height: 1.2; letter-spacing: -0.01em; margin: 0 0 12px; }
+  .sub { color: var(--muted); max-width: 44em; margin: 0 0 36px; }
+
+  .bench { display: grid; gap: 22px; max-width: 760px; }
+  .row .label { display: flex; justify-content: space-between; gap: 16px; font-size: 15px; margin-bottom: 8px; }
+  .row .label b { font-family: var(--mono); font-size: 16px; }
+  .track { height: 14px; border-radius: 7px; background: var(--bg-soft); border: 1px solid var(--line); overflow: hidden; }
+  .fill { height: 100%; background: var(--bar); border-radius: 7px; }
+  .row.us .fill { background: var(--ok); }
+  .row.us .label { font-weight: 600; }
+  .note { font-size: 15px; color: var(--muted); max-width: 46em; margin: 32px 0 0; }
+
+  .two { display: grid; gap: 20px; grid-template-columns: 1fr; }
+  @media (min-width: 820px) { .two { grid-template-columns: 1fr 1fr; } }
+  .card { border: 1px solid var(--line); border-radius: var(--radius); padding: 28px; background: var(--bg); }
+  .card h3 { margin: 0 0 10px; font-size: 20px; }
+  .card p { margin: 0 0 14px; color: var(--muted); }
+  .card p:last-child { margin-bottom: 0; }
+  .card code { font-size: .88em; color: var(--fg); background: var(--bg-soft); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+
+  .grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
+  @media (min-width: 600px) { .grid { grid-template-columns: 1fr 1fr; } }
+  @media (min-width: 900px) { .grid { grid-template-columns: 1fr 1fr 1fr; } }
+  .stop { border: 1px solid var(--line); border-radius: var(--radius); padding: 20px 22px; }
+  .stop h3 { font-size: 16px; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+  .stop h3::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+  .stop p { margin: 0; font-size: 15px; color: var(--muted); }
+  .stop code { font-size: .9em; color: var(--fg); }
+
+  .principles { display: grid; gap: 28px; grid-template-columns: 1fr; margin: 0; padding: 0; list-style: none; }
+  @media (min-width: 720px) { .principles { grid-template-columns: repeat(4, 1fr); } }
+  .principles b { display: block; font-size: 17px; margin-bottom: 4px; }
+  .principles span { color: var(--muted); font-size: 15px; }
+
+  .hosts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 36px; }
+  .hosts span { font-size: 14px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; color: var(--muted); }
+
+  pre.steps { background: var(--code-bg); color: var(--code-fg); border-radius: var(--radius); padding: 24px; margin: 0 0 20px; overflow-x: auto; font-size: 14.5px; line-height: 1.75; }
+  pre.steps .c { color: #8b949e; }
+  pre.steps .p { color: #39c5cf; user-select: none; }
+  .limits { border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 0 var(--radius) var(--radius) 0; padding: 18px 22px; margin-top: 36px; }
+  .limits p { margin: 0; font-size: 15.5px; }
+
+  .maker { background: var(--bg-soft); }
+  .maker .wrap { display: grid; gap: 20px; grid-template-columns: 1fr; align-items: center; }
+  @media (min-width: 820px) { .maker .wrap { grid-template-columns: 1.6fr 1fr; } }
+  .maker p { margin: 0; color: var(--muted); }
+  .maker p strong { color: var(--fg); }
+  .maker .btn { justify-self: start; }
+  @media (min-width: 820px) { .maker .btn { justify-self: end; } }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size: 14px; color: var(--muted); }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 12px 24px; justify-content: space-between; }
+  footer nav { display: flex; flex-wrap: wrap; gap: 20px; }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="./">apply<span>gate</span></a>
+    <nav class="links" aria-label="Main">
+      <a class="opt" href="#how">How it works</a>
+      <a class="opt" href="#start">Get started</a>
+      <a href="https://github.com/Flurit/applygate/tree/main/docs">Docs</a>
+      <a href="https://github.com/Flurit/applygate">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <p class="eyebrow"><b>Open source</b> · Apache-2.0 · Claude Code, Codex, CI · Terraform and OpenTofu</p>
+    <h1>Stop coding agents from running <code>terraform destroy</code> in production.</h1>
+    <p class="lede">applygate is a <strong>deterministic, local check</strong> that runs before an agent's tool call. It answers <strong>allow</strong>, <strong>ask</strong> or <strong>block</strong>, with a reason and a next step the agent can act on. It reads commands the way the shell does and reads plans the way Terraform does.</p>
+    <div class="cta">
+      <div class="install" role="group" aria-label="Install command">
+        <span class="prompt">$</span><code id="install-cmd">brew install Flurit/tap/applygate</code>
+        <button class="copy" type="button" data-copy="install-cmd">Copy</button>
+      </div>
+      <a class="btn primary" href="#start">Get started</a>
+      <a class="btn" href="https://github.com/Flurit/applygate">Star on GitHub</a>
+    </div>
+    <figure class="demo">
+      <img src="demo.svg" width="816" height="688" alt="Terminal: applygate check blocks terraform destroy in prod, blocks the same command hidden in base64, and allows a git commit message and a plan.">
+      <figcaption>Real output from <code>applygate check</code>: a destroy in prod is blocked, also when it is hidden in base64; a commit message that only mentions it is not.</figcaption>
+    </figure>
+  </div>
+
+  <section id="why">
+    <div class="wrap">
+      <h2>Pattern matching is not enough.</h2>
+      <p class="sub">We replayed the same 17 dangerous and 13 harmless Terraform scenarios through each guard. A matcher reads text, not commands, and cannot see what a change will do.</p>
+      <div class="bench" role="table" aria-label="Dangerous scenarios caught out of 17">
+        <div class="row" role="row">
+          <div class="label"><span role="cell">Best existing open-source guard we tried, default config</span><b role="cell">5 / 17</b></div>
+          <div class="track" aria-hidden="true"><div class="fill" style="width: 29.4%"></div></div>
+        </div>
+        <div class="row" role="row">
+          <div class="label"><span role="cell">A competent hand-written Rego/regex policy</span><b role="cell">14 / 17</b></div>
+          <div class="track" aria-hidden="true"><div class="fill" style="width: 82.4%"></div></div>
+        </div>
+        <div class="row us" role="row">
+          <div class="label"><span role="cell">applygate, protected tier</span><b role="cell">17 / 17</b></div>
+          <div class="track" aria-hidden="true"><div class="fill" style="width: 100%"></div></div>
+        </div>
+      </div>
+      <p class="note">The hand-written policy missed base64, variable and <code>eval</code> obfuscation, and blocked harmless text such as <code>git commit -m "never run terraform destroy"</code>. applygate asked on 1 of the 13 harmless scenarios. The pack, the runner and the command to reproduce applygate's row are <a href="https://github.com/Flurit/applygate#why-another-guard">in the repository</a>.</p>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <h2>Two things a matcher cannot do.</h2>
+      <p class="sub">No model is in the decision path. The same input always gets the same verdict, and every verdict says why.</p>
+      <div class="two">
+        <div class="card">
+          <h3>Reads commands the way bash does</h3>
+          <p>Parses with a real shell parser, follows <code>cd</code>, variables, loops and functions, and unwraps <code>bash -c</code>, <code>eval</code>, here-documents, <code>sudo</code>, <code>xargs</code>, <code>find -exec</code>, secrets runners, Makefile recipes and scripts. It decodes <code>echo … | base64 -d | sh</code>.</p>
+          <p>It tells commands from text: <code>grep "terraform destroy"</code> is a grep. What it cannot resolve statically, it refuses (ask) instead of guessing.</p>
+        </div>
+        <div class="card">
+          <h3>Judges the plan, not just the command</h3>
+          <p>Maps the directory, workspace, backend and AWS profile to an environment tier, and flags a planfile made in another workspace, a backend changed since <code>init</code>, stale state and lock-file drift.</p>
+          <p>For <code>apply &lt;planfile&gt;</code> it reads the plan and flags destroyed or replaced stateful resources, removed deletion protection, internet exposure, IAM wildcards and changes to the state backend.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="stops">
+    <div class="wrap">
+      <h2>What it stops before it runs.</h2>
+      <p class="sub">Verdicts depend on the environment's tier: protected environments block, standard ones ask, disposable ones mostly allow.</p>
+      <div class="grid">
+        <div class="stop"><h3>Destroys</h3><p><code>destroy</code>, <code>apply -destroy</code>, <code>-replace</code>, and plans that delete.</p></div>
+        <div class="stop"><h3>Unreviewed applies</h3><p><code>apply -auto-approve</code> with no saved plan.</p></div>
+        <div class="stop"><h3>State surgery</h3><p><code>state rm/mv/push</code>, <code>force-unlock</code>, <code>-migrate-state</code>.</p></div>
+        <div class="stop"><h3>Cloud CLI deletes</h3><p><code>aws … delete-*</code>, <code>s3 rb</code>, terminate, <code>kubectl delete</code>.</p></div>
+        <div class="stop"><h3>Hidden commands</h3><p><code>eval "$(curl …)"</code>, <code>curl … | bash</code>, encoded payloads.</p></div>
+        <div class="stop"><h3>Guard tampering</h3><p>Skip-permissions flags and edits to hook config, applygate's config or its log.</p></div>
+      </div>
+      <ul class="principles" style="margin-top: 56px">
+        <li><b>Deterministic</b><span>Rules decide, not a model.</span></li>
+        <li><b>Local</b><span>No network calls by default. Telemetry is off unless you turn it on.</span></li>
+        <li><b>Fails closed</b><span>A check that cannot finish blocks in protected tiers.</span></li>
+        <li><b>Observe first</b><span>Log what would be blocked for a few days, then enforce.</span></li>
+      </ul>
+      <div class="hosts" aria-label="Works with">
+        <span>Claude Code</span><span>Codex</span><span>GitHub Actions</span><span>Any CI</span><span>Terragrunt</span><span>Terraform</span><span>OpenTofu</span><span>Your own terminal</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="wrap">
+      <h2>Running in a minute.</h2>
+      <p class="sub">Start in observe mode: nothing is blocked while applygate learns your repository. Then review what it would have stopped and turn enforcement on.</p>
+<pre class="steps"><span class="p">$ </span>brew install Flurit/tap/applygate
+<span class="p">$ </span>cd your-infra-repo
+<span class="p">$ </span>applygate init                <span class="c"># .applygate.yaml in observe mode; hooks Claude Code and Codex</span>
+<span class="p">$ </span>applygate check "terraform -chdir=envs/prod destroy"
+<span class="c">  # a few days later</span>
+<span class="p">$ </span>applygate report              <span class="c"># what it would have blocked</span>
+<span class="p">$ </span>applygate suggest             <span class="c"># a proposed config from the log; then set mode: enforce</span></pre>
+      <p>Also as a signed installer, <code>go install</code>, a GitHub Action and a Terragrunt hook. Releases are reproducible, signed with cosign and carry build provenance. <a href="https://github.com/Flurit/applygate#install">Install options and signature checks →</a></p>
+      <div class="limits">
+        <p><strong>It is not a sandbox.</strong> applygate reduces the chance that a mistaken or manipulated agent damages infrastructure; it cannot guarantee it won't. Pair it with plan-only credentials and an isolated runner. <a href="https://github.com/Flurit/applygate/blob/main/docs/limits.md">What it cannot see</a> · <a href="https://github.com/Flurit/applygate/blob/main/docs/threat-model.md">Threat model</a></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="maker" aria-label="About Flurit">
+    <div class="wrap">
+      <p><strong>applygate is built and maintained by Flurit.</strong> applygate guards the moment an agent runs a change. Flurit works earlier in the path: from a repository to governed cloud infrastructure, with an explainable blueprint, surfaced assumptions and risks, and a Terraform PR after human approval.</p>
+      <a class="btn" href="https://flurit.ai/?utm_source=applygate&amp;utm_medium=oss&amp;utm_campaign=site">See Flurit →</a>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>applygate · Apache-2.0 · pre-1.0</span>
+    <nav aria-label="Footer">
+      <a href="https://github.com/Flurit/applygate">GitHub</a>
+      <a href="https://github.com/Flurit/applygate/tree/main/docs">Docs</a>
+      <a href="https://github.com/Flurit/applygate/releases">Releases</a>
+      <a href="https://github.com/Flurit/applygate/discussions">Discussions</a>
+      <a href="https://github.com/Flurit/applygate/blob/main/SECURITY.md">Security</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll("[data-copy]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var text = document.getElementById(button.dataset.copy).textContent;
+      var done = function () {
+        button.textContent = "Copied";
+        setTimeout(function () { button.textContent = "Copy"; }, 1500);
+      };
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(done, function () {});
+      }
+    });
+  });
+</script>
+</body>
+</html>
