@@ -37,6 +37,7 @@ Done:
 - a static false-positive trial on 5 public repositories: 0.48% ([oss-corpus-trial.md](oss-corpus-trial.md)), then an agent-driven trial ([project/ACCEPTANCE.md](project/ACCEPTANCE.md));
 - the plan gate in CI (GitHub Action, any runner) and as a Terragrunt `before_hook` ([ci.md](ci.md)), pulled forward from v2;
 - `applygate apply <planfile>`: the same verdict for a human at a terminal, with a typed confirmation on an ask;
+- `applygate suggest`: a proposed config from the observe-mode log, tiers guessed from names and nothing decided for a directory whose name says nothing.
 - opt-in telemetry ([telemetry.md](telemetry.md)): anonymous counts per version, agent, mode and verdict, off by default, the switch guarded against agents.
 
 Open:

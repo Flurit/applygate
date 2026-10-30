@@ -66,7 +66,7 @@ applygate check "terraform -chdir=envs/prod destroy"
 
 Security issues: see [SECURITY.md](SECURITY.md).
 
-After a few days in observe mode, run `applygate report` to see what would have been blocked, review any likely false positives, then set `mode: enforce`.
+After a few days in observe mode, run `applygate report` to see what would have been blocked, then `applygate suggest` to turn the log into a proposed `.applygate.yaml`: environments from the directories, workspaces, backends and AWS profiles the engine was seen with, tiers guessed from their names, directories whose names say nothing left commented out (strict mode keeps them protected until you choose), and every ask or block listed with a note on what would change it. Review the tiers, then set `mode: enforce`.
 
 **Launch directory.** Claude Code and Codex load project settings only from the directory the session starts in, so a hook at `<repo>/.claude/settings.json` does not run if you launch the agent from a subdirectory. `applygate init` therefore installs the hook at user scope (`~/.claude/settings.json`, `~/.codex/hooks.json`), where it fires from any directory of any repository; repositories without a `.applygate.yaml` are then judged by your user config or the defaults. If you keep a project-scope hook, `applygate doctor` fails with the fix when you run it from a subdirectory the hook does not cover.
 
@@ -120,6 +120,7 @@ Plan gate: in protected tiers critical findings block and high findings ask; in 
 | `applygate plan-check plan.json` | Evaluate `terraform show -json` output |
 | `applygate apply tfplan [args]` | Judge a saved plan as the hooks would, confirm an ask by typing the environment name, then run the engine (`--engine tofu`; `--yes` outside protected tiers) |
 | `applygate report` | Summarize the decision log |
+| `applygate suggest [--root DIR] [--out FILE]` | Propose a `.applygate.yaml` from the observe-mode log: environments, signals and the asks and blocks to review |
 | `applygate selftest` | Run the embedded scenario pack against this binary |
 | `applygate init [--no-hooks] [--scope user\|project]` | Write a starter config, detect installed agents, install their hooks (user scope by default) |
 | `applygate doctor`, `hook install/remove` | Setup checks (exit 1 on a problem) and manual hook management |
