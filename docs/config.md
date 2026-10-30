@@ -54,4 +54,15 @@ protected_resources: []         # address globs whose destroy/replace is critica
 
 `preflight.live_state` makes the only other network call besides `live_identity`. When local state files sit next to a remote backend (the `stale-state` finding), applygate runs `<engine> state pull` (read-only) and compares each local file's lineage and serial with the remote state. A local file from another lineage, behind the remote serial, or ahead of it becomes a high `state-lineage` finding with the serials in the evidence. Like `live_identity`, only the user config can turn it on; a repository config cannot.
 
+## Writing the file from the observe log
+
+`applygate suggest` proposes this file from the decision log instead of starting from the `init` template. It reads the log (the user config's `log_path`, or `--log FILE`), keeps the decisions that ran under the repository root (the directory of the nearest `.applygate.yaml`, else the working directory, or `--root DIR`), and prints a config with the evidence in comments:
+
+- **Environments** for every directory where Terraform, OpenTofu or Terragrunt ran and whose path carries a name hint: `prod`, `production`, `prd`, `live` → protected; `staging`, `stage`, `stg`, `uat`, `qa`, `non-prod`, `pre-prod` → standard; `dev`, `sandbox`, `test`, `examples`, `demo` → disposable. The `paths` glob stops at the hinted component (`envs/prod/**`, not `envs/prod/us-east-1/**`), and the most protected component wins. Hinted workspaces, `s3://` backends and AWS profiles join the environment of their tier.
+- **Directories whose names say nothing** are written as commented-out entries with their command counts. The file alone keeps them protected under `strict: true`; a person picks the tier.
+- **Signals without a hint** (a backend bucket, a profile) are listed in comments to add by hand.
+- **Every ask and block** in the repository, most frequent first, with the reason it was judged that way: no environment matched, state surgery, a dynamic command, a plan-gate finding. Programs asked about as unknown wrappers appear as a commented `wrappers:` entry.
+
+When a `.applygate.yaml` already exists at the root, its `mode`, `strict`, `on_error`, environments, `plan_gate.max_destroy`, `protected_resources` and `wrappers` are kept, and only directories it does not cover are proposed. `--out FILE` writes the proposal and refuses to overwrite an existing file; without it the YAML goes to stdout. The proposal is parsed as a config before anything is printed.
+
 The decision log is JSON Lines with mode 0600, stored outside the repository. Values that look like secrets (AWS keys, `*_SECRET*=`, tokens, bearer headers, private keys) are redacted before writing.

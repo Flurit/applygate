@@ -42,6 +42,9 @@ Usage:
                                       judge a saved plan as the hooks would, confirm an ask by typing the
                                       environment name, then run the engine's apply (the human door)
   applygate report [--log FILE]        summarize the decision log
+  applygate suggest [--log FILE] [--root DIR] [--out FILE]
+                                      propose a .applygate.yaml from the observe-mode log: environments
+                                      from the directories and signals seen, asks and blocks to review
   applygate selftest [-v]              run the scenario pack against this binary
   applygate init [--no-hooks] [--scope user|project]
                                       write a starter .applygate.yaml, detect agents, install their hooks (user scope)
@@ -77,6 +80,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdApply(args[1:], os.Stdin, os.Stdout, os.Stderr)
 	case "report":
 		return cmdReport(args[1:], stdout, stderr)
+	case "suggest":
+		return cmdSuggest(args[1:], stdout, stderr)
 	case "selftest":
 		return cmdSelftest(args[1:], stdout, stderr)
 	case "init":
