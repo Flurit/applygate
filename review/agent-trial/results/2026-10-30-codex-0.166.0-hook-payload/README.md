@@ -46,3 +46,21 @@ For `apply_patch` the `cwd` is the session root, and the patch path is absolute.
   directory would under-protect 0.165.0 sessions (the finding fixed in PR #33).
 - Not captured: whether `cwd` follows an earlier `cd` in the same command or a
   `workdir` the model passes explicitly beyond the one case above.
+
+## Replay of the payload shape through `applygate hook codex` (macOS, applygate 0.3.0)
+
+The captured Bash event shape was replayed with a different `cwd` and command,
+in a fixture with `examples/**` disposable, `envs/prod/**` protected,
+`strict: false`, `default_tier: standard`, mode enforce, with `HOME` pointed at
+an empty directory so the user log and config were not used. Nothing ran;
+only the hook was invoked.
+
+| `cwd` | command | verdict | tier, environment |
+|-------|---------|---------|-------------------|
+| session root | `terraform destroy -auto-approve` | block | protected, prod ("command directory not reported by codex; judged at the most protected tier under <root>") |
+| `<root>/examples/simple` (as 0.166.0 sends for a command run there) | `terraform destroy -auto-approve` | allow | disposable, examples |
+| session root | `cd examples/simple && terraform destroy -auto-approve` | allow | disposable, examples (the `cd` establishes the directory) |
+
+So the fail-closed rule (T3.10) holds for the 0.166.0 event shape when the
+shell `cwd` is the session root; it was not run through a live Codex session on
+0.166.0 for that case.
