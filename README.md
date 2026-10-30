@@ -54,6 +54,7 @@ The signature ties `checksums.txt` to this repository's release workflow for tha
 # mandatory. Without cosign only the sha256 is checked, which does not detect a tampered release.
 curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.3.0/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
 # or: go install github.com/Flurit/applygate/cmd/applygate@v0.3.0
+# or: brew install Flurit/tap/applygate   (Homebrew checks the sha256 only, not the cosign signature)
 # or: go build -o bin/applygate ./cmd/applygate
 cd your-infra-repo
 applygate init                            # writes .applygate.yaml (observe mode), detects Claude Code / Codex, installs their hooks at user scope
