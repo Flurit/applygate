@@ -97,6 +97,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | `init`: starter config, detect installed agents, install hooks | done | `applygate init [--no-hooks] [--scope user\|project]`; hooks go to user scope by default so they fire from any directory, and the output states the Codex fail-open path from the host table |
 | `doctor`: hooks wired, config parses, versions | done | `applygate doctor` also runs the selftest and **fails** (exit 1, with the fix command) from a subdirectory whose project-scope hook is not loaded and no user-scope hook covers the agent; warns when both scopes are installed |
 | `check`, `explain`, `plan-check`, `report`, `selftest`, `hook install/remove` | done | `cmd/applygate/main.go` |
+| `suggest` (not in the spec; the step after `report`) | done | `cmd/applygate/suggest.go`, `internal/suggest`: environments from the observe log's directories and signals, unhinted directories left commented, asks and blocks listed with their reason |
 
 ### Quality bar, security, distribution
 
