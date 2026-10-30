@@ -94,6 +94,7 @@ func configWrapper(spec WrapperSpec, rest []Word) (cmd []Word, profile Word, ok 
 //	asdf exec cmd                devbox run [--] cmd
 //	nix develop|shell [...] -c|--command cmd ...
 //	nix-shell [...] --run|--command 'command line'
+//	sops [...] exec-env|exec-file [flags] FILE 'command line'
 //
 // A command line given as one string is returned in script instead.
 func envRunner(bn string, rest []Word) (cmd []Word, script *Word, ok bool) {
@@ -145,6 +146,35 @@ func envRunner(bn string, rest []Word) (cmd []Word, script *Word, ok bool) {
 			if (w.Text == "--run" || w.Text == "--command") && i+1 < len(rest) {
 				return nil, &rest[i+1], true
 			}
+		}
+	case "sops":
+		// The decrypted secrets reach the command line through the
+		// environment (exec-env) or a file path substituted for {} (exec-file).
+		for i, w := range rest {
+			if w.Text != "exec-env" && w.Text != "exec-file" {
+				continue
+			}
+			valued := map[string]bool{"--user": true, "--filename": true, "--input-type": true, "--output-type": true}
+			var pos []int
+			for j := i + 1; j < len(rest) && len(pos) < 2; j++ {
+				t := rest[j].Text
+				if !rest[j].Resolved {
+					t = rest[j].Prefix
+				}
+				name, _, eq := strings.Cut(t, "=")
+				switch {
+				case strings.HasPrefix(t, "-"):
+					if !eq && valued[name] {
+						j++
+					}
+				default:
+					pos = append(pos, j)
+				}
+			}
+			if len(pos) == 2 {
+				return nil, &rest[pos[1]], true
+			}
+			return nil, nil, false
 		}
 	}
 	return nil, nil, false

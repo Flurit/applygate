@@ -1529,6 +1529,81 @@
    ]
   },
   {
+   "id": "D103",
+   "spec": "S3",
+   "bypass_class": "credential-wrapper",
+   "kind": "dangerous",
+   "title": "Bucket delete wrapped in a secrets runner (dotenvx run --)",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "dotenvx run -f .env.production -- aws s3 rb s3://acme-prod-data --force"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for secrets runners that take the command without --, as one string, or under a name the analyzer did not know",
+   "must_mention": [
+    "cloud-destructive: aws s3 rb",
+    "reached via: dotenvx"
+   ]
+  },
+  {
+   "id": "D104",
+   "spec": "S3",
+   "bypass_class": "credential-wrapper",
+   "kind": "dangerous",
+   "title": "Destroy as a command string in sops exec-env",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "sops exec-env secrets.enc.json 'terraform destroy -auto-approve'"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for secrets runners that take the command without --, as one string, or under a name the analyzer did not know",
+   "must_mention": [
+    "destroy: terraform destroy",
+    "reached via: sops"
+   ]
+  },
+  {
+   "id": "D105",
+   "spec": "S3",
+   "bypass_class": "credential-wrapper",
+   "kind": "dangerous",
+   "title": "Destroy as a command string in doppler run --command",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "doppler run --project infra --command 'terraform destroy -auto-approve'"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "added for secrets runners that take the command without --, as one string, or under a name the analyzer did not know",
+   "must_mention": [
+    "destroy: terraform destroy",
+    "reached via: doppler"
+   ]
+  },
+  {
+   "id": "B47",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "sops exec-env running a plan",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "sops exec-env secrets.enc.json 'terraform plan -out=tfplan'"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "added for secrets runners that take the command without --, as one string, or under a name the analyzer did not know"
+  },
+  {
    "id": "B31",
    "spec": "benign",
    "kind": "benign",

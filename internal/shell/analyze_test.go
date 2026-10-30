@@ -221,6 +221,15 @@ func TestCredentialWrappersAndScriptIdioms(t *testing.T) {
 		{"doppler run --project p -- terraform destroy", "/repo: terraform destroy", ""},
 		{"op run --env-file .env -- tofu destroy", "/repo: tofu destroy", ""},
 		{"chamber exec svc1 svc2 -- terraform destroy", "/repo: terraform destroy", ""},
+		{"dotenvx run -f .env.production -- aws s3 rb s3://b --force", "/repo: aws s3 rb s3://b --force", ""},
+		{"dotenvx run aws s3 rb s3://b --force", "/repo: aws s3 rb s3://b --force", ""},
+		{"doppler run -p infra -c prd terraform destroy", "/repo: terraform destroy", ""},
+		{"doppler run --project=\"$P\" -- terraform destroy", "/repo: terraform destroy", ""},
+		{"doppler run --command 'cd envs/prod && terraform destroy'", "/repo/envs/prod: terraform destroy", ""},
+		{"infisical run --env=prod --command='aws s3 rb s3://b --force'", "/repo: aws s3 rb s3://b --force", ""},
+		{"doppler run --command \"$CMD\"", "PROBLEM: doppler runs a command line that cannot be resolved", ""},
+		{"aws-vault exec --duration=\"$D\" prod-admin -- terraform destroy", "/repo: terraform destroy", "prod-admin"},
+		{"mytool-unknown x; doppler run --unknown-flag terraform destroy", "/repo: terraform destroy", ""},
 		{"envchain aws terraform destroy", "/repo: terraform destroy", "aws"},
 		{"./patterns/x/destroy.sh", "/repo: terraform -chdir=/repo/patterns/x destroy -auto-approve", ""},
 		{"./patterns/x/destroy.sh", "/repo: echo /repo", ""},
@@ -246,8 +255,15 @@ func TestCredentialWrappersAndScriptIdioms(t *testing.T) {
 			}
 		}
 	}
+	// A secrets runner's -p names its own project, not an AWS profile.
+	for _, inv := range Analyze("doppler run -p infra -- terraform destroy", Options{Dir: "/repo", ReadFile: fs}).Invocations {
+		if p, set := inv.Env["AWS_PROFILE"]; set {
+			t.Errorf("doppler -p set AWS_PROFILE to %q", p)
+		}
+	}
 	// Other subcommands of the same tools run nothing.
-	for _, cmd := range []string{"aws-vault list", "op read op://vault/item/field", "doppler secrets", "gds aws"} {
+	for _, cmd := range []string{"aws-vault list", "op read op://vault/item/field", "doppler secrets", "gds aws", "dotenvx get KEY",
+		"sops -d secrets.enc.json", "sops exec-env secrets.enc.json"} {
 		r := Analyze(cmd, Options{Dir: "/repo", ReadFile: fs})
 		if len(r.Invocations) != 1 || len(r.Problems) != 0 {
 			t.Errorf("%q: %v", cmd, render(r))
@@ -272,6 +288,11 @@ func TestUnknownWrapperBackstop(t *testing.T) {
 		{"nix develop -c terraform destroy", "/repo: terraform destroy"},
 		{"nix-shell --run 'terraform destroy'", "/repo: terraform destroy"},
 		{"nix-shell -p terraform --command 'cd envs/prod && terraform destroy'", "/repo/envs/prod: terraform destroy"},
+		{"sops exec-env secrets.enc.json 'aws s3 rb s3://b --force'", "/repo: aws s3 rb s3://b --force"},
+		{"sops --config .sops.yaml exec-env --user ci s.json 'cd envs/prod && terraform destroy'", "/repo/envs/prod: terraform destroy"},
+		{"sops exec-file --no-fifo s.json 'terraform apply -var-file={} -auto-approve'", "/repo: terraform apply -var-file={} -auto-approve"},
+		{"sops exec-env s.json \"$CMD\"", "PROBLEM: sops runs a command line that cannot be resolved"},
+		{"sops exec-env --user=\"$U\" s.json 'terraform destroy'", "/repo: terraform destroy"},
 		{"some-tool --command 'tofu destroy'", "/repo: tofu destroy"},
 		{"some-tool --run='terragrunt run-all destroy'", "/repo: terragrunt run-all destroy"},
 		{"company-run prod-admin aws s3 rb s3://b --force", "/repo: aws s3 rb s3://b --force"},
