@@ -182,6 +182,11 @@ var DefaultProtectedPaths = []string{
 	// Names from before the rename stay guarded so an agent cannot edit a legacy file.
 	"**/.seatbelt.yaml", "**/.seatbelt.yml", "**/.config/seatbelt/**", "**/.local/state/seatbelt/**",
 	"**/.cursor/hooks.json",
+	// The Claude Code plugin: its installed copy (hooks.json and the launcher
+	// script), the marketplace clone it is copied from, its data directory
+	// and the fallback cache where the launcher keeps the downloaded binary.
+	"**/.claude/plugins/cache/applygate/**", "**/.claude/plugins/marketplaces/applygate/**",
+	"**/.claude/plugins/data/applygate-*/**", "**/.cache/applygate/**",
 }
 
 // Default returns the built-in configuration.
