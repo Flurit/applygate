@@ -30,6 +30,9 @@ builds:
     flags:
       - -trimpath
     ldflags:
+      # To give a release a default telemetry endpoint (docs/telemetry.md), add:
+      #   -X github.com/Flurit/applygate/internal/telemetry.DefaultEndpoint=https://...
+      # No release carries one yet; telemetry stays off until a person turns it on.
       - -s -w -X github.com/Flurit/applygate/internal/hook.Version={{ .Version }}
     goos:
       - linux

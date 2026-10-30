@@ -65,4 +65,6 @@ protected_resources: []         # address globs whose destroy/replace is critica
 
 When a `.applygate.yaml` already exists at the root, its `mode`, `strict`, `on_error`, environments, `plan_gate.max_destroy`, `protected_resources` and `wrappers` are kept, and only directories it does not cover are proposed. `--out FILE` writes the proposal and refuses to overwrite an existing file; without it the YAML goes to stdout. The proposal is parsed as a config before anything is printed.
 
+Telemetry is not a config key, so a repository can never turn it on for its users: it is switched by `applygate telemetry on|off` and lives in `~/.config/applygate/telemetry.json` ([telemetry.md](telemetry.md)).
+
 The decision log is JSON Lines with mode 0600, stored outside the repository. Values that look like secrets (AWS keys, `*_SECRET*=`, tokens, bearer headers, private keys) are redacted before writing.

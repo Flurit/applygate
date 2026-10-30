@@ -25,7 +25,7 @@ applygate does two things a matcher cannot:
 1. **Shell-aware command analysis.** It parses commands the way bash does ([mvdan/sh](https://github.com/mvdan/sh)), tracks `cd`, variables, `export`, loops and functions, unwraps `bash -c`, `eval`, here-documents, `sudo`/`env`/`timeout`/`xargs`/`script`/`chroot`/`parallel`/`find -exec`, reads Makefile recipes and shell scripts, and decodes `echo … | base64 -d | sh`. It tells commands apart from text: `grep "terraform destroy"` is a grep. Anything it cannot resolve statically, such as fetched text piped into a shell, it **refuses** (ask) instead of guessing.
 2. **Preflight and plan-level checks.** It maps the working directory, workspace, backend and AWS profile to an environment tier. It flags a saved plan made in another workspace (read from the planfile itself), a backend block changed since `init`, stale or archived state files (optionally compared with the remote state's lineage and serial), and lock-file or module-source drift. For `apply <planfile>` it reads `show -json` and checks for destroyed or replaced stateful resources, removed protection (deletion protection, final snapshots, force-destroy, versioning), internet exposure, IAM wildcards, and changes to the state backend itself.
 
-It is not a sandbox and not an AI reviewer. No model is in the decision path, there is no telemetry, and it makes no network calls by default.
+It is not a sandbox and not an AI reviewer. No model is in the decision path, it makes no network calls by default, and telemetry is off unless you turn it on ([docs/telemetry.md](docs/telemetry.md): anonymous verdict counts, nothing else).
 
 ## Quickstart
 
@@ -125,6 +125,7 @@ Plan gate: in protected tiers critical findings block and high findings ask; in 
 | `applygate init [--no-hooks] [--scope user\|project]` | Write a starter config, detect installed agents, install their hooks (user scope by default) |
 | `applygate doctor`, `hook install/remove` | Setup checks (exit 1 on a problem) and manual hook management |
 | `applygate hosts` | What each agent host can do with the hook; the same table as [docs/hosts.md](docs/hosts.md) |
+| `applygate telemetry status\|on\|off\|send` | Anonymous usage counts, off by default; `status --payload` shows exactly what a report holds ([docs/telemetry.md](docs/telemetry.md)) |
 
 ## What happens when applygate fails
 
@@ -138,6 +139,10 @@ Hooks fail open by default in most agents, so this matters:
 - **Observe mode** never blocks, including on errors.
 
 See [docs/hosts.md](docs/hosts.md) for the per-host behaviour, [docs/limits.md](docs/limits.md) and [docs/threat-model.md](docs/threat-model.md).
+
+## Telemetry
+
+Off by default and off in every release. `applygate telemetry on --endpoint https://…` sends, at most once a day and after the verdict is already written, one report with the applygate version, OS and architecture, and decision counts per agent, mode and verdict. No commands, paths, names or identifiers of any kind; `applygate telemetry status --payload` prints the exact next report. `APPLYGATE_TELEMETRY=0` or `DO_NOT_TRACK=1` forces it off, and an agent that tries to flip the switch is blocked as guard tampering. Details in [docs/telemetry.md](docs/telemetry.md).
 
 ## Roadmap
 

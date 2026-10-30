@@ -26,6 +26,7 @@ import (
 	"github.com/Flurit/applygate/internal/policy"
 	"github.com/Flurit/applygate/internal/preflight"
 	"github.com/Flurit/applygate/internal/shell"
+	"github.com/Flurit/applygate/internal/telemetry"
 )
 
 const usage = `applygate: allow / ask / block for agent actions on Terraform and OpenTofu
@@ -52,6 +53,8 @@ Usage:
                                       install defaults to project scope; remove cleans both scopes
   applygate doctor                     check config, hooks, launch directory and versions (exit 1 on a problem)
   applygate hosts [--markdown]         what each agent host can do with the hook (same table as docs/hosts.md)
+  applygate telemetry status|on|off|send
+                                      anonymous usage counts, off unless you turn them on (docs/telemetry.md)
   applygate version
 `
 
@@ -88,6 +91,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdInit(args[1:], stdout, stderr)
 	case "doctor":
 		return cmdDoctor(stdout, stderr)
+	case "telemetry":
+		return cmdTelemetry(args[1:], stdout, stderr)
 	case "hosts":
 		if len(args) > 1 && args[1] == "--markdown" {
 			io.WriteString(stdout, hook.HostsMarkdown())
@@ -148,6 +153,11 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	o := hook.Run(a, stdin, opt)
 	stdout.Write(o.Stdout)
 	io.WriteString(stderr, o.Stderr)
+	// The verdict is out. Usage counts, if the person turned them on, go
+	// after it and are bounded, so they can neither delay nor change it.
+	if o.LogPath != "" {
+		telemetry.AfterDecision(o.LogPath, hook.Version, opt.Env)
+	}
 	return o.Exit
 }
 
@@ -833,6 +843,11 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 			}
 			return config.DefaultLogPath()
 		}())
+	}
+	if st := telemetry.Effective(hook.EnvMap()); st.On {
+		fmt.Fprintf(stdout, "     telemetry on: anonymous counts to %s at most once a day (applygate telemetry status)\n", st.Endpoint)
+	} else {
+		fmt.Fprintf(stdout, "     telemetry off (%s)\n", st.Reason)
 	}
 	found := 0
 	var where []string

@@ -18,6 +18,9 @@ type Output struct {
 	Stdout []byte
 	Stderr string
 	Exit   int
+	// LogPath is the decision log the run appended to ("" when logging was
+	// off), so the caller can do after-decision work such as telemetry.
+	LogPath string
 }
 
 // Adapter converts one agent's hook format.

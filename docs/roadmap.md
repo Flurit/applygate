@@ -9,7 +9,7 @@ applygate is a deterministic, local check that runs before a coding agent's infr
 - Judge plans, not only commands: `terraform apply` says little, the plan says what will be destroyed.
 - Fail closed in protected environments, and say so.
 - Roll out in observe mode first and count what would have been blocked.
-- Stay local: no telemetry, no network calls by default, secrets redacted from logs.
+- Stay local: no network calls by default, secrets redacted from logs. Telemetry exists only as an opt-in of anonymous verdict counts ([telemetry.md](telemetry.md)), off in every release.
 - State limits plainly. Never claim protection the design cannot give.
 
 **Not goals:** sandboxing, credential brokering or network isolation (pair applygate with plan-only credentials and an isolated runner); general MCP governance; drift detection, cost control or code review.
@@ -38,6 +38,7 @@ Done:
 - the plan gate in CI (GitHub Action, any runner) and as a Terragrunt `before_hook` ([ci.md](ci.md)), pulled forward from v2;
 - `applygate apply <planfile>`: the same verdict for a human at a terminal, with a typed confirmation on an ask;
 - `applygate suggest`: a proposed config from the observe-mode log, tiers guessed from names and nothing decided for a directory whose name says nothing.
+- opt-in telemetry ([telemetry.md](telemetry.md)): anonymous counts per version, agent, mode and verdict, off by default, the switch guarded against agents.
 
 Open:
 - an observe-mode trial with real teams;

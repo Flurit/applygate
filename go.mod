@@ -1,6 +1,6 @@
 module github.com/Flurit/applygate
 
-go 1.26.7
+go 1.26.10
 
 require (
 	github.com/hashicorp/terraform-json v0.29.0

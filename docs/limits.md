@@ -36,4 +36,4 @@ What each host can do with the hook, as verified live, is the generated table in
 
 ## Not in v1
 
-Backup isolation checks, plan-hash approval, CI mode, receipts, and GCP/Azure/Kubernetes/Pulumi rules. The only network calls are the optional STS identity check (`preflight.live_identity`) and the optional state pull for lineage comparison (`preflight.live_state`); only the user config can enable either.
+Backup isolation checks, plan-hash approval, CI mode, receipts, and GCP/Azure/Kubernetes/Pulumi rules. The only network calls are the optional STS identity check (`preflight.live_identity`), the optional state pull for lineage comparison (`preflight.live_state`), and, after a person runs `applygate telemetry on`, one anonymous usage report a day ([telemetry.md](telemetry.md)); only the user config or the person at the terminal can enable any of them.

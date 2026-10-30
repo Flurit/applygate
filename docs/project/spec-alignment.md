@@ -18,7 +18,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Judge plans, not only commands | done | `internal/plangate` on `show -json` |
 | Fail closed in protected environments, explicit fail-open | done | `on_error` (`docs/config.md`), deadline fails closed in every tier, `onFailure: block` for Claude Code; Codex fail-open on a non-starting binary is documented ([limits](../limits.md)) |
 | Observe mode first, count would-have-blocked | done | `mode: observe`, `applygate report` |
-| Local only: no telemetry, no network by default, redacted log | done | `internal/decisionlog`; the two network checks are opt-in and user-config-only |
+| Local only: no telemetry, no network by default, redacted log | done | `internal/decisionlog`; the two network checks are opt-in and user-config-only; telemetry (decision of 2026-10-29) is opt-in, anonymous counts only, off in every release, `internal/telemetry` and [telemetry.md](../telemetry.md) |
 | State limits plainly | done | `docs/limits.md`, `docs/threat-model.md` |
 | Non-goals: sandboxing, MCP governance, Kubernetes, Pulumi, GCP/Azure, drift, cost, review | done | not built; `kubectl delete` is classified as cloud-destructive as a courtesy, nothing more |
 
@@ -110,7 +110,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Self-protection: config, hook entries, log | done | `guard-tampering` class, `DefaultProtectedPaths` |
 | Managed-settings deployment for organizations | done (documented) | `docs/threat-model.md` |
 | Supply chain: signed releases, provenance, trusted publishing, pinned dependencies | done | v0.1.0 released by `release.yml`: cosign keyless bundle on `checksums.txt`, SBOMs, SLSA v1 build-provenance attestations; SHA-pinned actions, `go.sum`, `govulncheck` in CI ([ACCEPTANCE.md](ACCEPTANCE.md) item 7) |
-| Privacy: no telemetry, no network by default, redacted log outside the repo | done | `decisionlog` |
+| Privacy: no telemetry, no network by default, redacted log outside the repo | done, amended | `decisionlog`; telemetry exists but is off by default and opt-in by a person only (`applygate telemetry on`), carries version, host and verdict counts and nothing else, and its switch is guard-protected ([telemetry.md](../telemetry.md)) |
 | Honest limits in docs | done | `docs/limits.md` |
 | Language: Go with mvdan/sh and terraform-json | done | `go.mod` |
 | Distribution: install script, Homebrew, npm/pip wrapper, Claude Code plugin | partial | `install.sh` installs the real v0.1.0 release in 3 s on Linux; after v0.1.0 it also verifies the cosign signature on `checksums.txt` when cosign is installed (`APPLYGATE_VERIFY_SIGNATURE=require` makes it mandatory), and the README pins the installer URL to a tag; `plugin/claude-code` exists; the Homebrew tap (`brews:` in `.goreleaser.yaml`) is commented out until a tap repository exists; npm and pip wrappers are not started |

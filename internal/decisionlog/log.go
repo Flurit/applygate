@@ -19,21 +19,24 @@ import (
 
 // Entry is one logged decision.
 type Entry struct {
-	Time       time.Time             `json:"time"`
-	Version    string                `json:"applygate_version"`
-	Agent      string                `json:"agent"`
-	Session    string                `json:"session,omitempty"`
-	Tool       string                `json:"tool"`
-	Cwd        string                `json:"cwd"`
-	Command    string                `json:"command,omitempty"`
-	Paths      []string              `json:"paths,omitempty"`
-	Mode       string                `json:"mode"`
-	Verdict    policy.Verdict        `json:"verdict"`
-	Enforced   policy.Verdict        `json:"enforced"`
-	Actions    []policy.ActionResult `json:"actions,omitempty"`
-	Notes      []string              `json:"notes,omitempty"`
-	Error      string                `json:"error,omitempty"`
-	DurationMS float64               `json:"duration_ms"`
+	Time    time.Time `json:"time"`
+	Version string    `json:"applygate_version"`
+	// LegacyVersion is the key entries carried before the rename; Read
+	// folds it into Version so an older log keeps its version counts.
+	LegacyVersion string                `json:"seatbelt_version,omitempty"`
+	Agent         string                `json:"agent"`
+	Session       string                `json:"session,omitempty"`
+	Tool          string                `json:"tool"`
+	Cwd           string                `json:"cwd"`
+	Command       string                `json:"command,omitempty"`
+	Paths         []string              `json:"paths,omitempty"`
+	Mode          string                `json:"mode"`
+	Verdict       policy.Verdict        `json:"verdict"`
+	Enforced      policy.Verdict        `json:"enforced"`
+	Actions       []policy.ActionResult `json:"actions,omitempty"`
+	Notes         []string              `json:"notes,omitempty"`
+	Error         string                `json:"error,omitempty"`
+	DurationMS    float64               `json:"duration_ms"`
 }
 
 var secretPatterns = []*regexp.Regexp{
@@ -79,6 +82,8 @@ func redactEntry(e *Entry) {
 // Append writes e to path, creating the directory with private permissions.
 func Append(path string, e Entry) error {
 	redactEntry(&e)
+	e.LegacyVersion = ""
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -106,6 +111,9 @@ func Read(r io.Reader) ([]Entry, int) {
 		if json.Unmarshal(sc.Bytes(), &e) != nil {
 			bad++
 			continue
+		}
+		if e.Version == "" && e.LegacyVersion != "" {
+			e.Version, e.LegacyVersion = e.LegacyVersion, ""
 		}
 		out = append(out, e)
 	}

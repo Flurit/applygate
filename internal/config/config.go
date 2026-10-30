@@ -196,6 +196,10 @@ func UserPath() string {
 	return preferExisting(userPathFor("applygate"), userPathFor("seatbelt"))
 }
 
+// UserDir is the applygate user configuration directory. Unlike UserPath it
+// never falls back to the pre-rename seatbelt directory.
+func UserDir() string { return filepath.Dir(userPathFor("applygate")) }
+
 func userPathFor(name string) string {
 	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
 		return filepath.Join(d, name, "config.yaml")
