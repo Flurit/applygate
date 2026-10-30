@@ -75,7 +75,11 @@ running (the roots carry no lock files).
 [results/2026-10-30/summary.md](results/2026-10-30/summary.md), with
 applygate 0.3.0, Terraform 1.16.1 and LocalStack 4.14.0
 ([meta.txt](results/2026-10-30/meta.txt)). 166 roots; 84 produced a create
-plan and 64 day-2 plans, so 212 routine plans per tier.
+plan and 64 day-2 plans, so 212 routine plans per tier. The summary lists
+every routine prompt with its evidence and label; `roots.jsonl` records each
+root's steps and errors. The per-plan `verdicts.jsonl` and `labels.jsonl`
+(about 1 MB each) are not committed: rerun the study, or run
+[evaluate.py](evaluate.py) and [label.py](label.py) on its plans, to get them.
 
 | Tier | Prompted | Environment-only | Prompted outside LocalStack | Expected | False positives |
 |---|---|---|---|---|---|
