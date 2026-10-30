@@ -89,6 +89,18 @@ This is an **agent-driven trial, not a team trial**: Claude Code and Codex work 
 
 What each host does with the hook, as verified live, is the generated table `docs/hosts.md` (`seatbelt hosts`; `TestHostsDocCurrent` fails when the file is stale). Cells that were not verified say "not tested": the user-scope hook from a subdirectory (T3.9), the Codex fail-closed directory rule (T3.10) and the planfile search (T3.11) are written but not yet run live. Codex's fail-open path on a hook that does not start is printed by `seatbelt hook install --agent codex` and `seatbelt init` from the same table.
 
+### Live cases T3.9 to T3.11 on macOS (2026-10-30)
+
+macOS 26.7.1 (Intel, darwin/amd64), applygate 0.3.0 from the release, Claude Code 2.1.314 (default permission mode), Codex 0.166.0 (YOLO mode, so the hook was the only guard). Typed by hand, fixtures `terraform_data` only, nothing destroyed. `/tmp` is `/private/tmp` on macOS, so the log mixes both spellings; the path patterns matched either way.
+
+| Test | Agent | Result |
+|------|-------|--------|
+| T3.9 | Claude Code | **Pass.** With only the user-scope hook installed, claude launched in `/tmp/sb-live/envs/prod` logged `terraform state list` (allow) and `terraform destroy -input=false` (block, tier protected, environment prod); the destroy was shown as "action not run, permission denied". With only the project hook installed at `/tmp/sb-live`, `applygate doctor` from `envs/prod` printed the expected `FAIL claude: the project hook is in /tmp/sb-live, not here ...` and exited 1. |
+| T3.9 | Codex | **Partly verified.** Codex loaded the user-scope hooks file and the hook fired (entries logged), after the `/hooks` trust step. Sessions were launched from the fixture root, not from a subdirectory. |
+| T3.8 | Codex 0.166.0 | This build sends each command's directory in the hook `cwd` (session-root commands log `/private/tmp/sb-unknown`; `terraform init`, `plan`, `apply` and `destroy` in `examples/simple` log that subdirectory), so commands are judged in the real directory: environment `examples`, tier disposable. |
+| T3.10 | Codex | **Not reproduced.** Because 0.166.0 reports the directory, `terraform destroy -auto-approve` in `examples/simple` was allowed (disposable), not blocked, in two runs; the fail-closed rule for an unreported directory was not exercised on this build. Its `matched` line still reads "command directory not reported by codex; judged at the most protected tier under ...", which is misleading when the directory was reported. The `check --dir-unknown` forms give block and allow as specified. Not tried on Codex 0.141.0. |
+| T3.11 | Codex | **Not exercised.** In observe mode `terraform plan -out=simple.tfplan` (read-only) and `terraform apply simple.tfplan` (`apply-saved-plan`, disposable, `plan_sha256` present, no plan finding) ran in `examples/simple`, where the planfile is, so the search under the session root was not needed. The two-copy `plan-ambiguous` and `plan-missing` steps were not evidenced. |
+
 ## Assumed
 
 - Claude Code: a hook `allow` would skip the user's permission prompt, so seatbelt prints nothing on allow. Exit 2 blocks regardless of JSON.
