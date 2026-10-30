@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.2 (2026-10-30)
 
 - Plan gate: fewer false positives from `code-execution` and `exposure`, the two analyzer causes found by the plan-gate false-positive study (`review/fp-study`). `code-execution` flagged every provisioner and `external` data source in the configuration on every plan. It now flags a provisioner only for a resource instance the plan creates, replaces or destroys (a destroy counts because the plan JSON does not tell a destroy-time provisioner from a creation-time one), so a resource at count 0, an empty for_each or a resource the plan leaves alone is no longer reported. It flags an `external` data source only when the plan defers its read to apply; one read during `terraform plan` has already run. Evidence now names the instance (`module.m.null_resource.archive[0]: provisioner local-exec`). `exposure` on an in-place update now reports only exposure the update adds, so a tag change on a security group that was already open to the internet no longer asks; creates and replaces are judged on the planned value as before. On the study's 212 routine plans per tier, protected-tier false positives go from 17 to 0 and every expected prompt is kept; the standard tier stays at 0 prompts.
 

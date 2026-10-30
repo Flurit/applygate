@@ -12,7 +12,7 @@ A deterministic, local pre-execution check for coding agents (Claude Code, Codex
   <img src="docs/assets/demo.svg" alt="applygate blocking terraform destroy in prod, also when it is hidden in base64, while allowing a commit message that mentions it" width="820">
 </p>
 
-Status: pre-1.0 (v0.3.1), tested live with Claude Code and Codex. What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md). Upgrading from seatbelt, the project's old name: [docs/migration.md](docs/migration.md).
+Status: pre-1.0 (v0.3.2), tested live with Claude Code and Codex. What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md). Upgrading from seatbelt, the project's old name: [docs/migration.md](docs/migration.md).
 
 ## Try it in a minute
 
@@ -52,8 +52,8 @@ It is not a sandbox and not an AI reviewer. No model is in the decision path, it
 # Installer from a release tag, never from main. It verifies the cosign signature on checksums.txt
 # when cosign is installed and warns when it is not; APPLYGATE_VERIFY_SIGNATURE=require makes cosign
 # mandatory. Without cosign only the sha256 is checked, which does not detect a tampered release.
-curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.3.1/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
-# or: go install github.com/Flurit/applygate/cmd/applygate@v0.3.1
+curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.3.2/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
+# or: go install github.com/Flurit/applygate/cmd/applygate@v0.3.2
 # or: brew install Flurit/tap/applygate   (Homebrew checks the sha256 only, not the cosign signature)
 # or: go build -o bin/applygate ./cmd/applygate
 cd your-infra-repo
@@ -75,10 +75,10 @@ After a few days in observe mode, run `applygate report` to see what would have 
 
 ### Verify a download
 
-Download a release and check its signature before running anything. Replace `v0.3.1` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
+Download a release and check its signature before running anything. Replace `v0.3.2` with the release you want and `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
 
 ```bash
-tag=v0.3.1
+tag=v0.3.2
 base=https://github.com/Flurit/applygate/releases/download/$tag
 curl -fsSLO "$base/checksums.txt" -O "$base/checksums.txt.sigstore.json" -O "$base/applygate_${tag#v}_linux_amd64.tar.gz"
 cosign verify-blob --bundle checksums.txt.sigstore.json \
@@ -107,7 +107,7 @@ Outside a terminal an ask is refused unless `--yes` is given, and `--yes` never 
 The same plan gate runs in a pipeline between `plan -out` and `apply`, as a GitHub Action or a shell step, and as a Terragrunt `before_hook`; exit codes 0/4/3 are allow/ask/block. See [docs/ci.md](docs/ci.md).
 
 ```yaml
-- uses: Flurit/applygate@v0.3.1
+- uses: Flurit/applygate@v0.3.2
   with:
     plan: tfplan
     working-directory: envs/prod
