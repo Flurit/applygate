@@ -1,8 +1,11 @@
 # Changelog
 
-## v0.3.1 (2026-10-30)
+## v0.3.2 (2026-10-30)
 
 - Plan gate: fewer false positives from `code-execution` and `exposure`, the two analyzer causes found by the plan-gate false-positive study (`review/fp-study`). `code-execution` flagged every provisioner and `external` data source in the configuration on every plan. It now flags a provisioner only for a resource instance the plan creates, replaces or destroys (a destroy counts because the plan JSON does not tell a destroy-time provisioner from a creation-time one), so a resource at count 0, an empty for_each or a resource the plan leaves alone is no longer reported. It flags an `external` data source only when the plan defers its read to apply; one read during `terraform plan` has already run. Evidence now names the instance (`module.m.null_resource.archive[0]: provisioner local-exec`). `exposure` on an in-place update now reports only exposure the update adds, so a tag change on a security group that was already open to the internet no longer asks; creates and replaces are judged on the planned value as before. On the study's 212 routine plans per tier, protected-tier false positives go from 17 to 0 and every expected prompt is kept; the standard tier stays at 0 prompts.
+
+## v0.3.1 (2026-10-30)
+
 - Secrets runners: `dotenvx run` is unwrapped like `doppler run`; `sops exec-env` and `sops exec-file` have their command string analyzed as shell; so is the command string of `doppler run --command` and `infisical run --command`; and the secrets runners (`doppler`, `op`, `infisical`, `dotenvx`) find the command without `--`. Before this, `dotenvx run -- aws s3 rb …`, `sops exec-env f 'aws s3 rb …'`, `doppler run aws s3 rb …` and `doppler run --command '…'` were allowed in a protected tier. A credential or secrets runner in a shape applygate does not recognise now falls back to the unknown-wrapper backstop instead of being recorded alone. A flag with an unresolved inline value (`--project="$P"`) is no longer taken for the start of the wrapped command. Pack scenarios D103–D105 and B47.
 - `applygate version` now reports the module version for a binary built with `go install github.com/Flurit/applygate/cmd/applygate@vX.Y.Z`, which printed `dev` because only the release build sets the version; a local build still reports `dev`. The host capability table (`docs/hosts.md`) records the macOS runs of T3.9 on Claude Code 2.1.314 and Codex 0.166.0.
 

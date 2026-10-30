@@ -102,9 +102,11 @@ How often would a routine `terraform apply <planfile>` have prompted? `review/fp
   - **`code-execution` false positives (16):** the rule flags every provisioner and `external` data source in the configuration on every plan. That includes provisioners whose resource is not created or replaced, a provisioner with count 0, and reads already done at plan time.
   - **`exposure` false positive (1):** the rule re-flags an unchanged internet-open security group when only its tags change, because it reads the planned value without comparing it with the prior one.
 - **Control:** every destroy plan with deletes prompted, 63 of 63 in each tier.
-- **Findings (open):** the two analyzer false-positive causes above. Both are fixable in `internal/plangate`:
-  - `code-execution` should check the provisioner's resource actions and whether an `external` read is deferred;
-  - `exposure` should compare the planned value with the prior one on updates.
+- **Findings (fixed in v0.3.2, PR #61).** Both analyzer causes above are fixed in `internal/plangate`:
+  - `code-execution` now flags a provisioner only for a resource instance the plan creates, replaces or destroys, and an `external` data source only when its read is deferred to apply;
+  - `exposure` on an in-place update now reports only exposure the update adds.
+
+  Re-measured on the same plans with main at 3cbc0fb: protected tier 0 false positives, all 26 expected prompts kept; standard tier still 0 prompts; every destroy plan with deletes still prompts (63 of 63). v0.3.1 was tagged before the fix merged and still has the old behaviour; v0.3.2 is the first release with the fix.
 - **Limits:**
   - The only day-2 change measured is a tag change. Replace-heavy changes are not covered.
   - Plan-only roots gave 18 plans from 91 roots. govuk-infrastructure and cloud-platform-infrastructure need their real inputs and accounts, and 12 EKS patterns do not initialise at the pinned commit.
