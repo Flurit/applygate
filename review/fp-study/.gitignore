@@ -1,0 +1,7 @@
+work/
+results/*/raw/
+__pycache__/
+# Per-plan verdicts and labels (about 1 MB each per run); regenerate them
+# with evaluate.py and label.py from the plans in work/out.
+results/*/verdicts.jsonl
+results/*/labels.jsonl

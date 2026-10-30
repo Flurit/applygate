@@ -35,6 +35,7 @@ Done:
 - observe mode and the decision log;
 - signed releases with provenance (v0.1.0 to v0.1.4 as seatbelt, v0.2.0, v0.3.0 and v0.3.1 as applygate);
 - a static false-positive trial on 5 public repositories: 0.48% ([oss-corpus-trial.md](oss-corpus-trial.md)), then an agent-driven trial ([project/ACCEPTANCE.md](project/ACCEPTANCE.md));
+- a plan-gate false-positive study on 212 routine plans from public Terraform against LocalStack: standard tier 0%, protected 8.0% false positives, all from two analyzer rules ([project/ACCEPTANCE.md](project/ACCEPTANCE.md));
 - the plan gate in CI (GitHub Action, any runner) and as a Terragrunt `before_hook` ([ci.md](ci.md)), pulled forward from v2;
 - `applygate apply <planfile>`: the same verdict for a human at a terminal, with a typed confirmation on an ask;
 - `applygate suggest`: a proposed config from the observe-mode log, tiers guessed from names and nothing decided for a directory whose name says nothing.
