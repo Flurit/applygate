@@ -14,7 +14,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep",
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|mcp__.*",
         "hooks": [
           {
             "type": "command",

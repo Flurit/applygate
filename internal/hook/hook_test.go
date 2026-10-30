@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/policy"
@@ -423,6 +424,70 @@ func readLog(t *testing.T, path string) decisionlog.Entry {
 		t.Fatalf("entries %d bad %d", len(entries), bad)
 	}
 	return entries[0]
+}
+
+// MCP tool calls are logged with their (redacted) arguments and never judged:
+// even a destructive-sounding call in a protected directory in enforce mode
+// is allowed, and a broken repository config does not block it.
+func TestMCPCallsLoggedNotJudged(t *testing.T) {
+	root := setup(t, "enforce", "auto")
+	args := map[string]any{"workspace": "prod", "auto_approve": true, "token": "s3cr3t-value"}
+	for _, a := range []Adapter{Claude{}, Codex{}} {
+		log := filepath.Join(t.TempDir(), "log.jsonl")
+		in := event("mcp__terraform__destroy_workspace", filepath.Join(root, "prod"), args)
+		o := Run(a, strings.NewReader(in), Options{LogPath: log, NoGit: true, Env: map[string]string{}})
+		if o.Exit != 0 || len(o.Stdout) != 0 || o.Stderr != "" {
+			t.Fatalf("%s: an MCP call must pass untouched: %+v", a.Name(), o)
+		}
+		e := readLog(t, log)
+		if e.Tool != "mcp__terraform__destroy_workspace" || e.Verdict != policy.Allow || e.Enforced != policy.Allow || e.Mode != "enforce" {
+			t.Fatalf("%s: entry %+v", a.Name(), e)
+		}
+		if !strings.Contains(e.Command, `"workspace":"prod"`) || strings.Contains(e.Command, "s3cr3t-value") || !strings.Contains(e.Command, "[REDACTED]") {
+			t.Fatalf("%s: arguments should be logged with the token redacted: %s", a.Name(), e.Command)
+		}
+		if len(e.Notes) != 1 || !strings.Contains(e.Notes[0], "not judged") {
+			t.Fatalf("%s: notes %v", a.Name(), e.Notes)
+		}
+	}
+
+	// A broken repository config: Bash fails closed, the MCP call is still
+	// allowed and still logged, with the error.
+	os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte("version: 1\nnot: [valid"), 0o644)
+	log := filepath.Join(t.TempDir(), "log.jsonl")
+	o := Run(Claude{}, strings.NewReader(event("mcp__terraform__destroy_workspace", filepath.Join(root, "prod"), args)), Options{LogPath: log, NoGit: true, Env: map[string]string{}})
+	if o.Exit != 0 || len(o.Stdout) != 0 {
+		t.Fatalf("broken config must not block an MCP call: %+v", o)
+	}
+	if e := readLog(t, log); e.Verdict != policy.Allow || !strings.Contains(e.Error, "config error") {
+		t.Fatalf("broken config entry: %+v", e)
+	}
+}
+
+func TestMCPArgumentsCapped(t *testing.T) {
+	big := strings.Repeat("é", 5000) // multi-byte, so the cut must respect rune starts
+	ev, ok, err := Claude{}.Parse([]byte(event("mcp__docs__write", "/w", map[string]any{"body": big})))
+	if err != nil || !ok || ev.Kind != policy.KindMCP {
+		t.Fatalf("parse: %v %v %+v", err, ok, ev)
+	}
+	if len(ev.Command) > maxMCPArgs+40 || !strings.Contains(ev.Command, "truncated") || !utf8.ValidString(ev.Command) {
+		t.Fatalf("arguments not capped cleanly: %d bytes, valid utf8 %v", len(ev.Command), utf8.ValidString(ev.Command))
+	}
+	// A tool that only looks like MCP, and other tools applygate does not
+	// inspect, stay unlogged.
+	for _, tool := range []string{"mcp__", "WebFetch", "Task"} {
+		ev, _, _ := Claude{}.Parse([]byte(event(tool, "/w", map[string]any{})))
+		if ev.Kind != policy.KindOther {
+			t.Errorf("%s: kind %s", tool, ev.Kind)
+		}
+	}
+	log := filepath.Join(t.TempDir(), "log.jsonl")
+	if o := Run(Claude{}, strings.NewReader(event("WebFetch", "/w", map[string]any{"url": "https://x"})), Options{LogPath: log, NoGit: true, Env: map[string]string{}}); o.Exit != 0 || len(o.Stdout) != 0 {
+		t.Fatalf("WebFetch: %+v", o)
+	}
+	if _, err := os.Stat(log); !os.IsNotExist(err) {
+		t.Fatal("a tool applygate does not inspect was logged")
+	}
 }
 
 func TestCodexWorkdirDecidesTier(t *testing.T) {

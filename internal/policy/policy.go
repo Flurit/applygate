@@ -97,6 +97,9 @@ const (
 	KindShell EventKind = "shell"
 	KindWrite EventKind = "write"
 	KindRead  EventKind = "read"
+	// KindMCP is a call to an MCP server's tool (mcp__<server>__<tool>). It
+	// is logged with its arguments and never judged: the verdict is allow.
+	KindMCP   EventKind = "mcp"
 	KindOther EventKind = "other"
 )
 
