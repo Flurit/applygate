@@ -233,13 +233,17 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	if err != nil {
 		return fail(userCfg, "", err.Error())
 	}
+	pass := Output{}
+	if p, isPasser := a.(passer); isPasser {
+		pass = p.Pass()
+	}
 	if !ok {
-		return Output{} // not an event we check; nothing to log
+		return pass // not an event we check; nothing to log
 	}
 	entry.Session, entry.Tool, entry.Cwd, entry.Command, entry.Paths = ev.Session, ev.Tool, ev.Cwd, ev.Command, ev.Paths
 	dirKnown = ev.DirKnown
 	if ev.Kind == policy.KindOther {
-		return Output{} // tools applygate does not inspect are not logged
+		return pass // tools applygate does not inspect are not logged
 	}
 	cfg, err := config.Load(opt.UserConfig, ev.Cwd)
 	if err != nil {
@@ -270,5 +274,8 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		return fail(cfg, ev.Cwd, err.Error())
 	}
 	entry.Verdict, entry.Enforced, entry.Actions, entry.Notes = d.Verdict, d.Enforced, d.Actions, d.Notes
+	if er, isEventRenderer := a.(eventRenderer); isEventRenderer {
+		return finish(cfg, er.RenderEvent(ev, d))
+	}
 	return finish(cfg, a.Render(d))
 }

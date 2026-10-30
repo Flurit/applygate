@@ -6,13 +6,13 @@
 [![CI](https://github.com/Flurit/applygate/actions/workflows/ci.yml/badge.svg)](https://github.com/Flurit/applygate/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/Flurit/applygate)](LICENSE)
 
-A deterministic, local pre-execution check for coding agents (Claude Code, Codex, and others with pre-tool hooks) that touch Terraform or OpenTofu infrastructure. Before the agent runs a tool call, applygate returns **allow**, **ask** or **block**, with a reason and a next step the agent can act on.
+A deterministic, local pre-execution check for coding agents (Claude Code, Codex, Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode, Cline) that touch Terraform or OpenTofu infrastructure. Before the agent runs a tool call, applygate returns **allow**, **ask** or **block**, with a reason and a next step the agent can act on.
 
 <p align="center">
   <img src="docs/assets/demo.svg" alt="applygate blocking terraform destroy in prod, also when it is hidden in base64, while allowing a commit message that mentions it" width="820">
 </p>
 
-Status: pre-1.0 (v0.3.1), tested live with Claude Code and Codex. What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md). Upgrading from seatbelt, the project's old name: [docs/migration.md](docs/migration.md).
+Status: pre-1.0 (v0.3.1), tested live with Claude Code and Codex. Adapters for Cursor, GitHub Copilot CLI, Gemini CLI, Windsurf (Cascade), Devin, OpenCode and Cline are written from each host's documentation and source and are **not yet tested live** ([docs/hosts.md](docs/hosts.md)). What is and is not verified: [docs/project/ACCEPTANCE.md](docs/project/ACCEPTANCE.md). Upgrading from seatbelt, the project's old name: [docs/migration.md](docs/migration.md).
 
 ## Try it in a minute
 
@@ -63,11 +63,27 @@ applygate doctor
 applygate check "terraform -chdir=envs/prod destroy"
 ```
 
-`applygate init --no-hooks` writes the config only; `applygate init --scope project` keeps the hook inside this repository; `applygate hook install --agent claude|codex [--scope user]` adds a hook by hand (project scope by default), and `applygate hook remove --agent claude|codex` cleans both scopes. What each host can and cannot do with the hook is in [docs/hosts.md](docs/hosts.md) (`applygate hosts`). Releases are built by `.github/workflows/release.yml` from a tag: builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`), every archive carries a build-provenance attestation, and tags of published releases are never moved. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
+`applygate init --no-hooks` writes the config only; `applygate init --scope project` keeps the hook inside this repository; `applygate hook install --agent AGENT [--scope user]` adds a hook by hand (project scope by default), and `applygate hook remove --agent AGENT` cleans both scopes. What each host can and cannot do with the hook is in [docs/hosts.md](docs/hosts.md) (`applygate hosts`). Releases are built by `.github/workflows/release.yml` from a tag: builds are reproducible, `checksums.txt` is signed with cosign (keyless; the Sigstore bundle is `checksums.txt.sigstore.json`), every archive carries a build-provenance attestation, and tags of published releases are never moved. A Claude Code plugin manifest lives in [plugin/claude-code](plugin/claude-code) (`claude --plugin-dir plugin/claude-code` to try it); the binary itself still comes from a release or `go install`.
 
 Security issues: see [SECURITY.md](SECURITY.md).
 
 After a few days in observe mode, run `applygate report` to see what would have been blocked, then `applygate suggest` to turn the log into a proposed `.applygate.yaml`: environments from the directories, workspaces, backends and AWS profiles the engine was seen with, tiers guessed from their names, directories whose names say nothing left commented out (strict mode keeps them protected until you choose), and every ask or block listed with a note on what would change it. Review the tiers, then set `mode: enforce`.
+
+### Other agents
+
+applygate has adapters for Cursor, GitHub Copilot CLI, Gemini CLI, Windsurf (Cascade), Devin, OpenCode and Cline. They were written from each host's documentation and, where the host is open source, its code, and **none has been run inside its host yet**, so `applygate init` names them when it detects them but does not install them on its own. Install one by hand and check it once (ask the agent to run `terraform destroy -auto-approve` in an empty directory; applygate should block it):
+
+| Agent | Install | Hook file (project scope) | If the hook crashes or is missing |
+|---|---|---|---|
+| Cursor | `applygate hook install --agent cursor` | `.cursor/hooks.json` (`preToolUse`, `failClosed: true`) | blocks (failClosed) |
+| GitHub Copilot CLI | `applygate hook install --agent copilot` | `.github/hooks/applygate.json` | blocks; a timeout lets the call run |
+| Gemini CLI | `applygate hook install --agent gemini` | `.gemini/settings.json` (`BeforeTool`) | lets the call run |
+| Windsurf (Cascade) | `applygate hook install --agent windsurf` | `.windsurf/hooks.json` | lets the call run |
+| Devin | `applygate hook install --agent devin` | `.devin/config.json` (shell tool `exec` only) | lets the call run |
+| OpenCode | `applygate hook install --agent opencode` | `.opencode/plugins/applygate.js` (a plugin) | blocks while the plugin is loaded |
+| Cline | `applygate hook install --agent cline` | `.clinerules/hooks/PreToolUse` (a script) | blocks; a timeout lets the call run; a block cancels the whole task |
+
+Only Copilot CLI can show an approval prompt for an ask; on the other hosts an ask is enforced as a block. Copilot CLI, Windsurf and Devin do not tell the hook which directory a command runs in, so there applygate judges a command at the most protected tier under the directory it has, as it does for Codex. Cursor, Copilot CLI and Devin also load hooks from `.claude/settings.json`; applygate's Claude Code hook then judges their shell tool calls too, but install the host's own hook for coverage you can check. Every cell, with its source, is in [docs/hosts.md](docs/hosts.md); a live test result that contradicts it is a welcome issue.
 
 **Launch directory.** Claude Code and Codex load project settings only from the directory the session starts in, so a hook at `<repo>/.claude/settings.json` does not run if you launch the agent from a subdirectory. `applygate init` therefore installs the hook at user scope (`~/.claude/settings.json`, `~/.codex/hooks.json`), where it fires from any directory of any repository; repositories without a `.applygate.yaml` are then judged by your user config or the defaults. If you keep a project-scope hook, `applygate doctor` fails with the fix when you run it from a subdirectory the hook does not cover.
 
@@ -149,11 +165,12 @@ Plan gate: in protected tiers critical findings block and high findings ask; in 
 
 Hooks fail open by default in most agents, so this matters:
 
-- **Internal errors it can catch** (malformed event, config error, panic): with `on_error: auto` (the default) it **blocks** in protected or unknown tiers and allows elsewhere. Blocking uses exit code 2, which Claude Code and Codex both treat as a block.
+- **Internal errors it can catch** (malformed event, config error, panic): with `on_error: auto` (the default) it **blocks** in protected or unknown tiers and allows elsewhere. Blocking uses exit code 2, which Claude Code and Codex both treat as a block (Cline gets a cancel instead, since it ignores exit codes).
 - **The internal 25 s deadline**: if a decision does not finish in time (for example a slow `terraform show`), applygate cancels the in-flight work — including the `show` subprocess — and **blocks in every tier**, protected or not, regardless of `on_error`. A command that cannot be checked is not allowed through. Observe mode is the only exception.
 - **Crashes it cannot catch, or the agent's hook timeout** (process killed, binary missing): the agent decides. Claude Code proceeds unless the hook has `"onFailure": "block"`, which `applygate hook install` sets (it needs Claude Code v2.1.295 or later; older versions fail open).
 
   **Codex has no `onFailure` equivalent and fails open here.** A missing, killed or crashed Codex hook lets the tool call run (observed: exit 127 and a no-status-code exit both proceed). applygate now recovers panics inside its own process and turns them into a block, so the *only* remaining Codex fail-open case is the binary not starting at all. applygate cannot close that gap from inside the hook, so with Codex also rely on its sandbox and approval settings (`--sandbox workspace-write` or `read-only`, `approval_policy`/`--full-auto` off for infra work) as the backstop, keep plan-only credentials, and run `applygate doctor` to confirm the hook binary exists and is executable.
+- **The other hosts** differ: Cursor (with the `failClosed` applygate sets), Copilot CLI, OpenCode and Cline block when applygate is missing or crashes; Gemini CLI, Windsurf and Devin let the call run, like Codex. This is from their documentation and not tested live; the per-host cells are in [docs/hosts.md](docs/hosts.md).
 - **Observe mode** never blocks, including on errors.
 
 See [docs/hosts.md](docs/hosts.md) for the per-host behaviour, [docs/limits.md](docs/limits.md) and [docs/threat-model.md](docs/threat-model.md).
@@ -180,7 +197,7 @@ internal/config/      .applygate.yaml and tier resolution
 internal/preflight/   workspace, backend, stale state, lock-file drift, planfile workspace
 internal/plangate/    plan JSON rules; AWS resource lists in rules/aws.json (data, not code)
 internal/policy/      verdict table and Decide()
-internal/hook/        Claude Code and Codex adapters, error behavior
+internal/hook/        host adapters (Claude Code and Codex verified live; seven more from docs), error behavior
 internal/decisionlog/ JSONL log with redaction, report
 harness/              scenario pack, fixtures, Go regression test, run.py replay runner
 docs/                 policy, config, limits, hosts (generated), threat model, roadmap; docs/project/ for project records

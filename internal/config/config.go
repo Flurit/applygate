@@ -182,6 +182,13 @@ var DefaultProtectedPaths = []string{
 	// Names from before the rename stay guarded so an agent cannot edit a legacy file.
 	"**/.seatbelt.yaml", "**/.seatbelt.yml", "**/.config/seatbelt/**", "**/.local/state/seatbelt/**",
 	"**/.cursor/hooks.json",
+	// Hook files of the hosts whose adapters were written from their
+	// documentation (docs/hosts.md).
+	"**/.gemini/settings.json", "**/.github/hooks/**", "**/.github/copilot/settings*.json",
+	"**/.copilot/hooks/**", "**/.copilot/settings.json", "**/.windsurf/hooks.json", "**/.codeium/windsurf/hooks.json",
+	"**/.codeium/hooks.json", "**/.devin/config.json", "**/.devin/hooks.v1.json", "**/.config/devin/config.json",
+	"**/.opencode/plugins/**", "**/.config/opencode/plugins/**", "**/.clinerules/hooks/**", "**/.cline/hooks/**",
+	"**/Documents/Cline/Hooks/**",
 }
 
 // Default returns the built-in configuration.

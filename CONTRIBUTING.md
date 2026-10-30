@@ -20,7 +20,7 @@ applygate is small on purpose: a shell-aware analyzer, a classifier, preflight c
 
 ## Adding a guard to the comparison
 
-`harness/run.py --guard-cmd "<hook command>" --name <guard> --format claude|codex|cursor --guard-version <v> --config-label <label> --coverage command|plan-aware|context-aware --probes` replays the pack and writes a scorecard. Record the version and configuration; test the vendor's default and hardened configurations separately.
+`harness/run.py --guard-cmd "<hook command>" --name <guard> --format claude|codex|cursor|copilot|gemini|windsurf|devin|opencode|cline --guard-version <v> --config-label <label> --coverage command|plan-aware|context-aware --probes` replays the pack and writes a scorecard. Record the version and configuration; test the vendor's default and hardened configurations separately.
 
 ## Disclosure of comparison results
 

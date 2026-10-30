@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -32,7 +31,9 @@ import (
 const usage = `applygate: allow / ask / block for agent actions on Terraform and OpenTofu
 
 Usage:
-  applygate hook claude|codex          read one PreToolUse event on stdin (used by the agent)
+  applygate hook AGENT                 read one hook event on stdin (used by the agent); AGENT is
+                                      claude, codex, cursor, copilot, gemini, windsurf, devin, opencode
+                                      or cline (applygate hosts says what each was verified on)
   applygate check [--cwd DIR] [--dir-unknown] [--json] "<command>"
                                       dry-run a command through the policy
   applygate explain [--cwd DIR] [--dir-unknown] "<command>"
@@ -49,7 +50,7 @@ Usage:
   applygate selftest [-v]              run the scenario pack against this binary
   applygate init [--no-hooks] [--scope user|project]
                                       write a starter .applygate.yaml, detect agents, install their hooks (user scope)
-  applygate hook install|remove --agent claude|codex [--scope project|user]
+  applygate hook install|remove --agent AGENT [--scope project|user]
                                       install defaults to project scope; remove cleans both scopes
   applygate doctor                     check config, hooks, launch directory and versions (exit 1 on a problem)
   applygate hosts [--markdown]         what each agent host can do with the hook (same table as docs/hosts.md)
@@ -123,7 +124,7 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs.Var(&planJSON, "plan-json", "PLANFILE=JSON: use this JSON for a saved plan (replay/testing only)")
 	noLog := fs.Bool("no-log", false, "do not write the decision log (testing only)")
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "applygate hook: agent name required (claude or codex)")
+		fmt.Fprintf(stderr, "applygate hook: agent name required (%s)\n", strings.Join(hook.Agents, ", "))
 		return 2
 	}
 	agent := args[0]
@@ -166,7 +167,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 	fs.SetOutput(stderr)
 	cwd := fs.String("cwd", "", "working directory the command runs in (default: current)")
 	dirUnknown := fs.Bool("dir-unknown", false, "treat --cwd as the session root only, as a host that does not report the command directory would (Codex 0.165.0); see docs/hosts.md")
-	agent := fs.String("agent", "cli", "host name recorded in the decision (claude, codex)")
+	agent := fs.String("agent", "cli", "host name recorded in the decision (claude, codex, cursor, ...)")
 	asJSON := fs.Bool("json", false, "print the decision as JSON")
 	var planJSON multiFlag
 	fs.Var(&planJSON, "plan-json", "PLANFILE=JSON: use this JSON for a saved plan instead of running show")
@@ -450,18 +451,29 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "wrote %s (observe mode). Edit the environments to match this repository.\n", config.FileName)
 	if *noHooks {
-		fmt.Fprintln(stdout, "hooks not installed (--no-hooks). Later: applygate hook install --agent claude|codex")
+		fmt.Fprintln(stdout, "hooks not installed (--no-hooks). Later: applygate hook install --agent AGENT")
 		return 0
 	}
 	home, _ := os.UserHomeDir()
 	wd, _ := os.Getwd()
-	agents := detectAgents(home, wd, exec.LookPath)
-	if len(agents) == 0 {
-		fmt.Fprintln(stdout, "no coding agent detected (looked for Claude Code and Codex). Install a hook later with: applygate hook install --agent claude|codex")
+	detected := detectAgents(home, wd, exec.LookPath)
+	if len(detected) == 0 {
+		fmt.Fprintf(stdout, "no coding agent detected (looked for %s). Install a hook later with: applygate hook install --agent AGENT\n", strings.Join(hook.Agents, ", "))
 		return 0
 	}
-	fmt.Fprintf(stdout, "detected agents: %s\n", strings.Join(agents, ", "))
-	if *scope == "user" {
+	fmt.Fprintf(stdout, "detected agents: %s\n", strings.Join(detected, ", "))
+	// init installs only hooks verified live. An adapter written from a
+	// host's documentation is installed on request, so a mistake in it
+	// cannot block a host the person did not choose to guard.
+	var agents []string
+	for _, a := range detected {
+		if h, ok := hook.HostFor(a); ok && h.DocsOnly {
+			fmt.Fprintf(stdout, "%s: not installed by init, because its adapter was written from %s's documentation and not tested live. Install it with: applygate hook install --agent %s --scope %s\n", a, h.Name, a, *scope)
+			continue
+		}
+		agents = append(agents, a)
+	}
+	if *scope == "user" && len(agents) > 0 {
 		fmt.Fprintln(stdout, "installing the hooks at user scope (~/.claude/settings.json, ~/.codex/hooks.json): a project-scope hook is loaded only when the agent is launched from this directory, a user-scope hook fires from any directory of any repository. Repositories without a .applygate.yaml are judged by the user config or the defaults (enforce, strict). Use --scope project for a hook that lives in this repository only.")
 	}
 	rc := 0
@@ -489,15 +501,23 @@ func detectAgents(home, wd string, lookPath func(string) (string, error)) []stri
 		return err == nil && fi.IsDir()
 	}
 	var out []string
-	for _, a := range []struct{ name, dir, bin string }{{"claude", ".claude", "claude"}, {"codex", ".codex", "codex"}} {
-		found := isDir(filepath.Join(home, a.dir)) || isDir(filepath.Join(wd, a.dir))
-		if !found && lookPath != nil {
-			if _, err := lookPath(a.bin); err == nil {
-				found = true
+	for _, s := range installSpecs {
+		found := false
+		for _, d := range s.homeDirs {
+			found = found || isDir(filepath.Join(home, d))
+		}
+		for _, d := range s.projectDirs {
+			found = found || isDir(filepath.Join(wd, d))
+		}
+		for _, b := range s.bins {
+			if !found && lookPath != nil {
+				if _, err := lookPath(b); err == nil {
+					found = true
+				}
 			}
 		}
 		if found {
-			out = append(out, a.name)
+			out = append(out, s.agent)
 		}
 	}
 	return out
@@ -514,29 +534,14 @@ func selfPath() string {
 	return p
 }
 
-func settingsPath(agent, scope string) (string, error) {
-	home, _ := os.UserHomeDir()
-	switch agent + "/" + scope {
-	case "claude/project":
-		return filepath.Join(".claude", "settings.json"), nil
-	case "claude/user":
-		return filepath.Join(home, ".claude", "settings.json"), nil
-	case "codex/project":
-		return filepath.Join(".codex", "hooks.json"), nil
-	case "codex/user":
-		return filepath.Join(home, ".codex", "hooks.json"), nil
-	}
-	return "", fmt.Errorf("unsupported agent/scope %s/%s", agent, scope)
-}
-
 // cmdInstall installs or removes the hook entry. install defaults to project
 // scope (the settings file in the current directory; see docs/limits.md for
 // why init prefers user scope); remove without --scope cleans both scopes.
 func cmdInstall(verb string, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("hook "+verb, flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	agent := fs.String("agent", "claude", "claude or codex")
-	scope := fs.String("scope", "", "project (the settings file in this directory, the default for install) or user (~/.claude or ~/.codex, fires from any directory); remove without --scope cleans both")
+	agent := fs.String("agent", "claude", strings.Join(hook.Agents, ", "))
+	scope := fs.String("scope", "", "project (the hook file in this directory, the default for install) or user (the agent's home configuration, fires from any directory); remove without --scope cleans both")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -555,85 +560,6 @@ func cmdInstall(verb string, args []string, stdout, stderr io.Writer) int {
 	return hookEntry(verb, *agent, *scope, stdout, stderr)
 }
 
-func hookEntry(verb, agentName, scopeName string, stdout, stderr io.Writer) int {
-	agent, scope := &agentName, &scopeName
-	path, err := settingsPath(*agent, *scope)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
-	}
-	doc := map[string]any{}
-	if b, err := os.ReadFile(path); err == nil {
-		if err := json.Unmarshal(b, &doc); err != nil {
-			fmt.Fprintf(stderr, "%s is not valid JSON: %v\n", path, err)
-			return 1
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	hooks, _ := doc["hooks"].(map[string]any)
-	if hooks == nil {
-		hooks = map[string]any{}
-	}
-	pre, _ := hooks["PreToolUse"].([]any)
-	var kept []any
-	removed := 0
-	for _, e := range pre {
-		if isApplygateEntry(e) {
-			removed++
-			continue
-		}
-		kept = append(kept, e)
-	}
-	if verb == "install" {
-		cmd := fmt.Sprintf("%q hook %s", selfPath(), *agent)
-		h := map[string]any{"type": "command", "command": cmd, "timeout": 30}
-		matcher := "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep"
-		if *agent == "claude" {
-			// Block the tool call if the hook crashes or times out
-			// (Claude Code v2.1.295+; older versions fail open).
-			h["onFailure"] = "block"
-		} else {
-			matcher = "*"
-		}
-		kept = append(kept, map[string]any{"matcher": matcher, "hooks": []any{h}})
-	}
-	if len(kept) > 0 {
-		hooks["PreToolUse"] = kept
-	} else {
-		delete(hooks, "PreToolUse")
-	}
-	if len(hooks) > 0 {
-		doc["hooks"] = hooks
-	} else {
-		delete(doc, "hooks")
-	}
-	if verb != "install" && removed == 0 {
-		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-			return 0 // nothing to clean, nothing to write
-		}
-	}
-	b, _ := json.MarshalIndent(doc, "", "  ")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	if verb == "install" {
-		fmt.Fprintf(stdout, "installed applygate PreToolUse hook for %s in %s (replaced %d old entr%s)\n", *agent, path, removed, plural(removed))
-		for _, n := range hook.InstallNotes(*agent) {
-			fmt.Fprintln(stdout, n)
-		}
-	} else {
-		fmt.Fprintf(stdout, "removed %d applygate hook entr%s from %s\n", removed, plural(removed), path)
-	}
-	return 0
-}
-
 func plural(n int) string {
 	if n == 1 {
 		return "y"
@@ -641,30 +567,61 @@ func plural(n int) string {
 	return "ies"
 }
 
-func isApplygateEntry(e any) bool {
+// entryCommands returns the commands of a hook entry: the nested
+// hooks[].command form (Claude Code, Codex, Gemini CLI, Devin) and the flat
+// command, bash or powershell fields (Cursor, Copilot CLI, Windsurf).
+func entryCommands(e any) []string {
 	m, _ := e.(map[string]any)
+	var out []string
+	add := func(h map[string]any) {
+		for _, k := range []string{"command", "bash", "powershell"} {
+			if c, _ := h[k].(string); c != "" {
+				out = append(out, c)
+			}
+		}
+	}
+	add(m)
 	hs, _ := m["hooks"].([]any)
 	for _, h := range hs {
 		hm, _ := h.(map[string]any)
-		if c, _ := hm["command"].(string); (strings.Contains(c, "applygate") || strings.Contains(c, "seatbelt")) && strings.Contains(c, " hook ") {
+		add(hm)
+	}
+	return out
+}
+
+func isApplygateEntry(e any) bool {
+	for _, c := range entryCommands(e) {
+		if (strings.Contains(c, "applygate") || strings.Contains(c, "seatbelt")) && strings.Contains(c, " hook ") {
 			return true
 		}
 	}
 	return false
 }
 
-// settingsHasApplygate reports whether a settings file's PreToolUse hooks
-// include a applygate entry.
+// hookLists returns the event arrays of a settings document's hooks object.
+func hookLists(doc map[string]any) map[string][]any {
+	out := map[string][]any{}
+	hooks, _ := doc["hooks"].(map[string]any)
+	for event, v := range hooks {
+		if list, ok := v.([]any); ok {
+			out[event] = list
+		}
+	}
+	return out
+}
+
+// settingsHasApplygate reports whether a settings file's hooks include an
+// applygate entry, under any event.
 func settingsHasApplygate(b []byte) bool {
 	var doc map[string]any
 	if json.Unmarshal(b, &doc) != nil {
 		return false
 	}
-	hooks, _ := doc["hooks"].(map[string]any)
-	pre, _ := hooks["PreToolUse"].([]any)
-	for _, e := range pre {
-		if isApplygateEntry(e) {
-			return true
+	for _, list := range hookLists(doc) {
+		for _, e := range list {
+			if isApplygateEntry(e) {
+				return true
+			}
 		}
 	}
 	return false
@@ -747,28 +704,25 @@ func scanHooks(b []byte) (hookScan, bool) {
 		return hookScan{}, false
 	}
 	var s hookScan
-	hooks, _ := doc["hooks"].(map[string]any)
-	pre, _ := hooks["PreToolUse"].([]any)
-	for _, e := range pre {
-		if isApplygateEntry(e) {
-			s.applygateBins = append(s.applygateBins, entryBinary(e))
-			continue
+	for event, list := range hookLists(doc) {
+		for _, e := range list {
+			if isApplygateEntry(e) {
+				s.applygateBins = append(s.applygateBins, entryBinary(e))
+				continue
+			}
+			if event == "PreToolUse" {
+				s.unrecognised = append(s.unrecognised, entrySummary(e))
+			}
 		}
-		s.unrecognised = append(s.unrecognised, entrySummary(e))
 	}
 	return s, true
 }
 
-// entryBinary returns the binary of the first command hook in an entry.
+// entryBinary returns the binary of the first command in an entry.
 func entryBinary(e any) string {
-	m, _ := e.(map[string]any)
-	hs, _ := m["hooks"].([]any)
-	for _, h := range hs {
-		hm, _ := h.(map[string]any)
-		if c, _ := hm["command"].(string); c != "" {
-			if f := strings.Fields(c); len(f) > 0 {
-				return strings.Trim(f[0], `"`)
-			}
+	for _, c := range entryCommands(e) {
+		if f := strings.Fields(c); len(f) > 0 {
+			return strings.Trim(f[0], `"`)
 		}
 	}
 	return ""
@@ -851,22 +805,26 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 	}
 	found := 0
 	var where []string
-	for _, agent := range []string{"claude", "codex"} {
+	for _, agent := range hook.Agents {
 		for _, scope := range []string{"project", "user"} {
 			p, _ := settingsPath(agent, scope)
 			b, err := os.ReadFile(p)
 			if err != nil {
 				continue
 			}
-			scan, ok := scanHooks(b)
+			bins, ok := hookBinaries(agent, b)
 			if !ok {
 				say(false, "%s is not valid JSON", p)
 				continue
 			}
-			if len(scan.applygateBins) > 0 {
+			scan, _ := scanHooks(b)
+			if len(bins) > 0 {
 				found++
 				where = append(where, agent+" ("+p+")")
-				for _, bin := range scan.applygateBins {
+				if h, ok := hook.HostFor(agent); ok && h.DocsOnly {
+					fmt.Fprintf(stdout, "     %s: adapter written from %s's documentation, not tested live (applygate hosts)\n", agent, h.Name)
+				}
+				for _, bin := range bins {
 					ok, why := binExecutable(bin)
 					if ok {
 						say(true, "%s hook command binary is executable: %s", agent, bin)

@@ -264,6 +264,7 @@
 <span class="c">  # a few days later</span>
 <span class="p">$ </span>applygate report              <span class="c"># what it would have blocked</span>
 <span class="p">$ </span>applygate suggest             <span class="c"># a proposed config from the log; then set mode: enforce</span></pre>
+      <p>Using Cursor, GitHub Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode or Cline? Each has an adapter, written from the host's own documentation and <strong>not yet tested live</strong>, so <code>init</code> leaves it to you: <code>applygate hook install --agent cursor</code> (or <code>copilot</code>, <code>gemini</code>, <code>windsurf</code>, <code>devin</code>, <code>opencode</code>, <code>cline</code>). <a href="https://github.com/Flurit/applygate/blob/main/docs/hosts.md">What each host can and cannot do →</a></p>
       <p>Also as a signed installer, <code>go install</code>, a GitHub Action and a Terragrunt hook. Releases are reproducible, signed with cosign and carry build provenance. <a href="https://github.com/Flurit/applygate#install">Install options and signature checks →</a></p>
       <div class="limits">
         <p><strong>It is not a sandbox.</strong> applygate reduces the chance that a mistaken or manipulated agent damages infrastructure; it cannot guarantee it won't. Pair it with plan-only credentials and an isolated runner. <a href="https://github.com/Flurit/applygate/blob/main/docs/limits.md">What it cannot see</a> · <a href="https://github.com/Flurit/applygate/blob/main/docs/threat-model.md">Threat model</a></p>

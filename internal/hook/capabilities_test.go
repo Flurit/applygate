@@ -41,7 +41,7 @@ func TestHostsTableComplete(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	HostsText(&buf)
-	for _, want := range []string{"Claude Code (applygate hook claude)", "Codex (applygate hook codex)", "fails open", "Cursor, Copilot CLI, OpenCode: not supported"} {
+	for _, want := range []string{"Claude Code (applygate hook claude)", "Codex (applygate hook codex)", "fails open", "Cursor (applygate hook cursor, from docs, not tested live)"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("text table lacks %q:\n%s", want, buf.String())
 		}
@@ -50,7 +50,46 @@ func TestHostsTableComplete(t *testing.T) {
 	if len(notes) < 2 || !strings.Contains(strings.Join(notes, "\n"), "fails open") {
 		t.Errorf("codex install notes should state the fail-open path: %v", notes)
 	}
-	if n := InstallNotes("cursor"); n != nil {
-		t.Errorf("unsupported host should have no notes: %v", n)
+	if n := InstallNotes("no-such-host"); n != nil {
+		t.Errorf("unknown host should have no notes: %v", n)
+	}
+}
+
+// TestDocsOnlyHostsSayNotTested holds the rule that protection is never
+// claimed without a live test: every cell of a host whose adapter was written
+// from documentation says it was not tested, and its install notes say so.
+func TestDocsOnlyHostsSayNotTested(t *testing.T) {
+	seen := map[string]bool{}
+	for _, h := range Hosts {
+		if !h.DocsOnly {
+			continue
+		}
+		seen[h.Agent] = true
+		if !strings.HasPrefix(h.Verified, "not verified live") {
+			t.Errorf("%s: Verified must start with \"not verified live\": %q", h.Name, h.Verified)
+		}
+		for _, c := range cells {
+			switch c.label {
+			case "Verified on", "Evidence", "Live tests pending":
+				continue
+			}
+			if !strings.Contains(c.get(h), "not tested") {
+				t.Errorf("%s: cell %q does not say it was not tested: %q", h.Name, c.label, c.get(h))
+			}
+		}
+		if n := strings.Join(InstallNotes(h.Agent), "\n"); !strings.Contains(n, "not been tested live") {
+			t.Errorf("%s: install notes do not say the adapter is untested: %s", h.Name, n)
+		}
+		if _, err := ForAgent(h.Agent); err != nil {
+			t.Errorf("%s: no adapter: %v", h.Name, err)
+		}
+	}
+	for _, a := range Agents {
+		if _, ok := HostFor(a); !ok {
+			t.Errorf("adapter %s has no host row", a)
+		}
+	}
+	if len(seen) != 7 {
+		t.Errorf("want 7 documentation-only hosts, got %v", seen)
 	}
 }
