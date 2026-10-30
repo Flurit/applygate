@@ -35,7 +35,7 @@ Command-pattern matching is table stakes. We replayed the same 17 dangerous and 
 | A competent hand-written Rego/regex policy | 14 / 17 |
 | **applygate**, protected tier | **17 / 17** |
 
-The hand-written policy still missed base64, variable and `eval` obfuscation, and it blocked harmless text such as `git commit -m "never run terraform destroy"`. A matcher cannot do better than that, because it reads text, not commands, and it cannot see what a change will do. applygate asked on 1 of the 13 harmless scenarios (an apply of a planfile that does not exist yet). Reproduce its row with `python3 -I harness/replay_pack.py --guard bin/applygate --pack harness/pack_v0_original/scenarios.json --fixture harness/pack_v0_original/fixtures/protected`; the pack and runner are in [harness/](harness), and the larger v1 pack (87 dangerous, 46 harmless) runs with `applygate selftest`.
+The hand-written policy still missed base64, variable and `eval` obfuscation, and it blocked harmless text such as `git commit -m "never run terraform destroy"`. A matcher cannot do better than that, because it reads text, not commands, and it cannot see what a change will do. applygate asked on 1 of the 13 harmless scenarios (an apply of a planfile that does not exist yet). Reproduce its row with `python3 -I harness/replay_pack.py --guard bin/applygate --pack harness/pack_v0_original/scenarios.json --fixture harness/pack_v0_original/fixtures/protected`; the pack and runner are in [harness/](harness), and the larger v1 pack, with a scorecard of its dangerous and harmless scenarios, runs with `applygate selftest`.
 
 applygate does two things a matcher cannot:
 
