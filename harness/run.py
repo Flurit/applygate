@@ -212,6 +212,10 @@ def parse_codex(proc):
 
 
 def parse_cursor(proc):
+    # Exit 2 blocks (cursor.com/docs/hooks); other non-zero exits fail open
+    # unless the hook has failClosed, which a probe cannot assume.
+    if proc.returncode == 2:
+        return "block", proc.stderr
     if proc.returncode != 0:
         return "error", proc.stderr
     out = proc.stdout.strip()
