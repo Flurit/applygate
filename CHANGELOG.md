@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.1 (2026-10-30)
 
 - Secrets runners: `dotenvx run` is unwrapped like `doppler run`; `sops exec-env` and `sops exec-file` have their command string analyzed as shell; so is the command string of `doppler run --command` and `infisical run --command`; and the secrets runners (`doppler`, `op`, `infisical`, `dotenvx`) find the command without `--`. Before this, `dotenvx run -- aws s3 rb …`, `sops exec-env f 'aws s3 rb …'`, `doppler run aws s3 rb …` and `doppler run --command '…'` were allowed in a protected tier. A credential or secrets runner in a shape applygate does not recognise now falls back to the unknown-wrapper backstop instead of being recorded alone. A flag with an unresolved inline value (`--project="$P"`) is no longer taken for the start of the wrapped command. Pack scenarios D103–D105 and B47.
 - `applygate version` now reports the module version for a binary built with `go install github.com/Flurit/applygate/cmd/applygate@vX.Y.Z`, which printed `dev` because only the release build sets the version; a local build still reports `dev`. The host capability table (`docs/hosts.md`) records the macOS runs of T3.9 on Claude Code 2.1.314 and Codex 0.166.0.
