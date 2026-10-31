@@ -32,7 +32,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
       - run: terraform init -input=false && terraform plan -input=false -out=tfplan
         working-directory: envs/prod
-      - uses: Flurit/applygate@v0.4.0
+      - uses: Flurit/applygate@v0.5.0
         id: gate
         with:
           plan: tfplan
@@ -53,7 +53,7 @@ while a team is still tuning its config. An error (unreadable plan, config
 error, missing binary) always fails the job: the gate fails closed.
 
 Inputs: `plan` (required), `tier`, `fail-on`, `working-directory`,
-`terraform` (`tofu` for OpenTofu), `version` (release tag, default v0.4.0),
+`terraform` (`tofu` for OpenTofu), `version` (release tag, default v0.5.0),
 and `binary` to skip the download and use a binary already on the runner.
 `.github/workflows/action-check.yml` in this repository exercises the action
 on every push against two real AWS-provider plans.

@@ -34,11 +34,12 @@ Done:
 - Claude Code and Codex adapters, tested live;
 - adapters for Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode and Cline, written from each host's documentation and replayed against the pack in each format, not yet tested live ([hosts.md](hosts.md));
 - observe mode and the decision log;
-- signed releases with provenance (v0.1.0 to v0.1.4 as seatbelt, v0.2.0, v0.3.0, v0.3.1, v0.3.2 and v0.4.0 as applygate);
+- signed releases with provenance (v0.1.0 to v0.1.4 as seatbelt, v0.2.0, v0.3.0, v0.3.1, v0.3.2, v0.4.0 and v0.5.0 as applygate);
 - a static false-positive trial on 5 public repositories: 0.48% ([oss-corpus-trial.md](oss-corpus-trial.md)), then an agent-driven trial ([project/ACCEPTANCE.md](project/ACCEPTANCE.md));
 - a plan-gate false-positive study on 212 routine plans from public Terraform against LocalStack: standard tier 0%, protected 8.0% false positives with v0.3.0, all from two analyzer rules, and 0 with the fix in v0.3.2 ([project/ACCEPTANCE.md](project/ACCEPTANCE.md));
 - the plan gate in CI (GitHub Action, any runner) and as a Terragrunt `before_hook` ([ci.md](ci.md)), pulled forward from v2;
 - `applygate apply <planfile>`: the same verdict for a human at a terminal, with a typed confirmation on an ask;
+- one-time approvals (`applygate approve`): on agents that cannot ask, a person allows one asked call from a terminal, bound to the exact call, environment and plan SHA-256 (the plan-hash approval from v2, pulled forward);
 - `applygate suggest`: a proposed config from the observe-mode log, tiers guessed from names and nothing decided for a directory whose name says nothing.
 - opt-in telemetry ([telemetry.md](telemetry.md)): anonymous counts per version, agent, mode and verdict, off by default, the switch guarded against agents;
 - an install check on macOS (v0.3.0 on macOS 26.7.1, Intel: installer with signature verification in 7 s, selftest 133/133), recorded in [project/ACCEPTANCE.md](project/ACCEPTANCE.md).

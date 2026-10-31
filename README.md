@@ -41,7 +41,7 @@ On the same 17 dangerous Terraform scenarios:
 | A competent hand-written Rego/regex policy | 14 / 17 |
 | **applygate** (protected tier) | **17 / 17** |
 
-The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 137 scenarios against your binary.
+The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 141 scenarios against your binary.
 
 applygate is a check, not a sandbox. Pair it with plan-only credentials for agents; see [the threat model](docs/threat-model.md).
 
@@ -83,7 +83,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 **In CI**, the same plan gate runs between `plan -out` and `apply`, as a GitHub Action or as a Terragrunt `before_hook` ([docs/ci.md](docs/ci.md)):
 
 ```yaml
-- uses: Flurit/applygate@v0.4.0
+- uses: Flurit/applygate@v0.5.0
   with:
     plan: tfplan
     working-directory: envs/prod
@@ -114,7 +114,12 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 
 Known gaps: [docs/limits.md](docs/limits.md).
 
-## Upgrading to v0.4.0
+## Upgrading to v0.5.0
+
+- **Approvals:** on agents that cannot show you an ask prompt, the block now names an approval ID that you can allow once with `applygate approve ID`. Nothing to reinstall; `approvals: false` turns it off.
+- **Behaviour change:** commands run through `script` (for example `script -q /dev/null terraform destroy`) or `expect -c` used to go unchecked; they are now judged, so some will be blocked.
+
+From v0.3 or earlier, also:
 
 - **To log MCP tool calls from Claude Code,** reinstall its hook: re-run `applygate init`, or `applygate hook install --agent claude` with the `--scope` you used. `applygate doctor` flags a hook that needs this. MCP calls are logged, never blocked.
 - **Behaviour change:** Cursor, Copilot CLI and Devin also run the Claude Code hook from `.claude/settings.json`. Their shell commands through that hook used to be allowed unchecked; they are now judged, so some will be blocked.
