@@ -202,7 +202,7 @@ func (c call) toEvent(agent string) (policy.Event, error) {
 	switch {
 	case isMCPTool(c.tool):
 		raw, _ := json.Marshal(c.input)
-		ev.Kind, ev.Command = policy.KindMCP, mcpArguments(raw)
+		ev.Kind, ev.Command, ev.Args = policy.KindMCP, mcpArguments(raw), raw
 	case shellTools[c.tool]:
 		cmd := commandOf(c.input)
 		if strings.TrimSpace(cmd) == "" {

@@ -372,7 +372,8 @@ def replay(a, pack, tmp, repo, plans, home, env):
     for s in pack["scenarios"]:
         base = {"id": s["id"], "spec": s["spec"], "kind": s["kind"], "title": s["title"],
                 "expect": s["expect"], "bypass_class": s.get("bypass_class")}
-        ev = build(s, repo, home)
+        # MCP calls are replayed in the formats whose MCP event shape is known.
+        ev = None if s["tool"].startswith("mcp__") and a.format not in ("claude", "codex") else build(s, repo, home)
         if ev is None:
             results.append(dict(base, verdict="skipped", pass_=None, ms=None, message="not expressible in " + a.format))
             continue

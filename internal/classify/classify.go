@@ -160,6 +160,16 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 			out = append(out, a)
 		}
 		return out
+	case "helm":
+		if a, ok := helmArgs(base, args); ok {
+			out = append(out, a)
+		}
+		return out
+	case "az", "gcloud":
+		if a, ok := cloudCLIArgs(base, name, args); ok {
+			out = append(out, a)
+		}
+		return out
 	case "claude", "codex", "cursor-agent", "copilot", "gemini", "opencode":
 		if a, ok := agentFlags(base, name, args); ok {
 			out = append(out, a)

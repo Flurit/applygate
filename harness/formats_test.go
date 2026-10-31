@@ -235,7 +235,11 @@ func TestScenarioPackPerHost(t *testing.T) {
 					}
 					in[k] = v
 				}
-				ev := f.event(s, in, repo)
+				var ev map[string]any
+				// MCP calls are replayed in the Claude Code and Codex formats only.
+				if !strings.HasPrefix(s.Tool, "mcp__") {
+					ev = f.event(s, in, repo)
+				}
 				if ev == nil {
 					skipped++
 					continue

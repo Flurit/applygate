@@ -735,3 +735,34 @@ func TestApprovalNotOffered(t *testing.T) {
 		t.Fatal("approval offered with approvals: false")
 	}
 }
+
+func TestKnownMCPToolJudged(t *testing.T) {
+	root := setup(t, "enforce", "auto")
+	destroy := map[string]any{"command": "destroy", "working_directory": filepath.Join(root, "prod")}
+	for _, a := range []Adapter{Claude{}, Codex{}} {
+		log := filepath.Join(t.TempDir(), "log.jsonl")
+		o := Run(a, strings.NewReader(event("mcp__tf__ExecuteTerraformCommand", root, destroy)), Options{LogPath: log, NoGit: true, Env: map[string]string{}})
+		// The JSON answer, not exit 2, also in Claude Code.
+		if decision(t, o) != "deny" || !strings.Contains(string(o.Stdout), "judged as the equivalent of: terraform destroy -auto-approve") {
+			t.Fatalf("%s: want a JSON deny naming the command, got %s %s%s", a.Name(), decision(t, o), o.Stdout, o.Stderr)
+		}
+		if e := readLog(t, log); e.Tool != "mcp__tf__ExecuteTerraformCommand" || e.Enforced != policy.Block || !strings.Contains(e.Command, `"command":"destroy"`) {
+			t.Fatalf("%s: entry %+v", a.Name(), e)
+		}
+	}
+	// The same tool in the disposable directory is allowed.
+	dev := map[string]any{"command": "destroy", "working_directory": filepath.Join(root, "dev")}
+	if o := Run(Claude{}, strings.NewReader(event("mcp__tf__ExecuteTerraformCommand", root, dev)), Options{NoLog: true, NoGit: true, Env: map[string]string{}}); decision(t, o) != "allow" {
+		t.Fatalf("dev destroy: %s %s", decision(t, o), o.Stdout)
+	}
+	// A broken repository config: a known tool follows on_error (auto: the
+	// directory is protected, so it fails closed); an unknown one still passes.
+	os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte("version: 1\nnot: [valid"), 0o644)
+	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}}
+	if o := Run(Claude{}, strings.NewReader(event("mcp__tf__ExecuteTerraformCommand", root, destroy)), opt); o.Exit != 2 {
+		t.Fatalf("known tool with a broken config must fail closed: %+v", o)
+	}
+	if o := Run(Claude{}, strings.NewReader(event("mcp__github__create_issue", root, map[string]any{"title": "x"})), opt); o.Exit != 0 || len(o.Stdout) != 0 {
+		t.Fatalf("unknown tool with a broken config must pass: %+v", o)
+	}
+}

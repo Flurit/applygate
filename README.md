@@ -54,7 +54,7 @@ applygate is a check, not a sandbox. Pair it with plan-only credentials for agen
 | Unreviewed apply | `apply -auto-approve` without a plan | block | ask | allow |
 | Destroy | destroy, `apply -destroy`, `-replace`, a plan that deletes | block | ask | allow |
 | State surgery | state rm/mv/push, force-unlock, taint, `-migrate-state` | block | ask | ask |
-| Destructive cloud CLI | `aws … delete-*`, `s3 rb`, `kubectl delete` | block | ask | ask |
+| Destructive cloud CLI | `aws … delete-*`, `s3 rb`, `kubectl delete`, `helm uninstall`, `az`/`gcloud … delete` | block | ask | ask |
 | Disabling the guard | skip-permission flags, edits to hooks, applygate config or logs | block | block | block |
 | Unresolvable | `eval "$(curl …)"`, `curl … \| bash` | ask | ask | allow |
 
@@ -75,6 +75,8 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 | Cline | Preview | blocks; a block cancels the whole task |
 
 `applygate init` installs the hooks for Claude Code and Codex. **Preview** hooks follow each agent's documentation but have not yet been tested inside the agent. Install one with `applygate hook install --agent NAME`, then check it: ask the agent to run `terraform destroy -auto-approve` in an empty directory, and applygate should block it. Only Claude Code and Copilot CLI can show you an "ask" prompt; the other agents block instead, and the block names an approval ID. Run `applygate approve ID` in your own terminal, type the environment name, and the agent's next identical call is allowed once. Approvals apply only to asks, never to blocks, and an agent cannot approve its own call. For every agent's details, see [docs/hosts.md](docs/hosts.md) (also `applygate hosts`).
+
+**MCP servers.** In Claude Code and Codex, a call to a known infrastructure MCP tool (AWS, HCP Terraform, Kubernetes, Helm, gcloud, az, or a server that runs shell commands) is judged as the command it is equivalent to, so a Terraform server's `destroy` gets the same verdict as `terraform destroy`. Other MCP calls are logged and allowed. The list of servers is in [docs/mcp.md](docs/mcp.md).
 
 ## Beyond agents
 

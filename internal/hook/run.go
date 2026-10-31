@@ -14,6 +14,7 @@ import (
 	"github.com/Flurit/applygate/internal/approval"
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
+	"github.com/Flurit/applygate/internal/mcpmap"
 	"github.com/Flurit/applygate/internal/policy"
 	"github.com/Flurit/applygate/internal/preflight"
 )
@@ -250,19 +251,36 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	if ev.Kind == policy.KindOther {
 		return pass // tools applygate does not inspect are not logged
 	}
+	var mcpNote string
 	if ev.Kind == policy.KindMCP {
-		// MCP calls are recorded, not judged, so nothing about them may
-		// block: a broken repository config still logs (to the user-level
-		// or default log) and allows.
-		cfg, err := config.Load(opt.UserConfig, ev.Cwd)
-		if err != nil {
-			cfg = userCfg
-			entry.Error = "config error (MCP call logged, not judged): " + err.Error()
+		tr, known := mcpmap.Rules().Translate(ev.Tool, ev.Args, ev.Cwd)
+		if !known {
+			// Other MCP calls are recorded, not judged, so nothing about
+			// them may block: a broken repository config still logs (to
+			// the user-level or default log) and allows.
+			cfg, err := config.Load(opt.UserConfig, ev.Cwd)
+			if err != nil {
+				cfg = userCfg
+				entry.Error = "config error (MCP call logged, not judged): " + err.Error()
+			}
+			entry.Mode = cfg.Mode
+			entry.Verdict, entry.Enforced = policy.Allow, policy.Allow
+			entry.Notes = []string{"MCP tool call: logged, not judged"}
+			return finish(cfg, pass)
 		}
-		entry.Mode = cfg.Mode
-		entry.Verdict, entry.Enforced = policy.Allow, policy.Allow
-		entry.Notes = []string{"MCP tool call: logged, not judged"}
-		return finish(cfg, pass)
+		// A known infrastructure tool is judged as the command it runs.
+		// The server runs it in its own working directory, so without a
+		// directory argument the command's directory is unknown.
+		ev.Kind, ev.Command = policy.KindShell, tr.Command
+		ev.DirKnown = tr.Dir != ""
+		if tr.Dir != "" {
+			ev.Cwd = tr.Dir
+		}
+		dirKnown = ev.DirKnown
+		mcpNote = fmt.Sprintf("MCP tool %s (%s) judged as the equivalent of: %s", mcpmap.ToolName(ev.Tool), tr.Server, tr.Command)
+		if tr.Note != "" {
+			mcpNote += " (" + tr.Note + ")"
+		}
 	}
 	cfg, err := config.Load(opt.UserConfig, ev.Cwd)
 	if err != nil {
@@ -271,7 +289,11 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	recoverCfg = cfg
 	entry.Mode = cfg.Mode
 	d, err := policy.Run(opt.Timeout, func(ctx context.Context) policy.Decision {
-		return policy.Decide(ev, cfg, Deps(ctx, cfg, opt))
+		d := policy.Decide(ev, cfg, Deps(ctx, cfg, opt))
+		if mcpNote != "" {
+			d = withMCPNote(d, mcpNote)
+		}
+		return d
 	})
 	if err != nil {
 		if errors.Is(err, policy.ErrTimeout) {
@@ -331,5 +353,16 @@ func withApproval(path string, ev policy.Event, d policy.Decision, now time.Time
 	}
 	d.Notes = append(d.Notes, "approval requested: "+rec.ID)
 	d.Message += fmt.Sprintf("\nApproval: if the user wants this to run, they can allow this exact call once by running `applygate approve %s` in their own terminal within the next hour. Tell the user that, and after they confirm, retry the same call unchanged. You cannot approve it yourself; applygate blocks that.", rec.ID)
+	return d
+}
+
+// withMCPNote records that the decision is for an MCP call and, when the call
+// is stopped, says so first in the message, so the agent knows which tool was
+// judged.
+func withMCPNote(d policy.Decision, note string) policy.Decision {
+	d.Notes = append([]string{note}, d.Notes...)
+	if d.Message != "" {
+		d.Message += "\nNote: " + note
+	}
 	return d
 }

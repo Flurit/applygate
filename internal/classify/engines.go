@@ -395,6 +395,89 @@ func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 	return a, true
 }
 
+// helmArgs classifies a helm command by its subcommand: uninstall deletes a
+// release and everything it created, install, upgrade and rollback change the
+// cluster, and the rest only read or work locally.
+func helmArgs(base Action, args []shell.Word) (Action, bool) {
+	a := base
+	a.Engine = "helm"
+	pos, dynamic := positionals(args, map[string]bool{"-n": true, "--namespace": true, "--kube-context": true, "--kubeconfig": true,
+		"-f": true, "--values": true, "--set": true, "--set-string": true, "--version": true, "-o": true, "--output": true, "--repo": true})
+	if dynamic {
+		a.Class, a.Why = Dynamic, "helm subcommand cannot be resolved"
+		return a, true
+	}
+	if len(pos) == 0 {
+		return a, false
+	}
+	a.Sub = pos[0]
+	switch pos[0] {
+	case "uninstall", "delete", "del", "un":
+		a.Class, a.Why = CloudDestructive, "helm "+strings.Join(pos, " ")+" deletes a release and its resources"
+	case "list", "ls", "status", "get", "history", "hist", "show", "inspect", "template", "search", "repo", "version", "lint",
+		"env", "dependency", "dep", "pull", "fetch", "verify", "help", "completion", "create", "package", "plugin", "registry", "test":
+		a.Class, a.Why = ReadOnly, "helm "+pos[0]+" does not change the cluster"
+	default:
+		a.Class, a.Why = CloudWrite, "helm "+pos[0]+" changes the cluster"
+	}
+	return a, true
+}
+
+// cloudCLIArgs classifies az and gcloud commands by their verbs: any command
+// group ending in delete or purge removes resources; list, show, describe
+// and get only read; anything else changes something.
+func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
+	a := base
+	a.Engine = name
+	pos, dynamic := positionals(args, map[string]bool{"-n": true, "--name": true, "-g": true, "--resource-group": true, "--subscription": true,
+		"--query": true, "-o": true, "--output": true, "--project": true, "--zone": true, "--region": true, "--format": true, "--filter": true,
+		"--account": true, "--configuration": true, "-l": true, "--location": true})
+	if dynamic {
+		a.Class, a.Why = Dynamic, name+" command cannot be resolved"
+		return a, true
+	}
+	if len(pos) == 0 {
+		return a, false
+	}
+	a.Sub = strings.Join(pos, " ")
+	read := false
+	for _, p := range pos {
+		switch {
+		case p == "delete" || p == "purge" || strings.HasSuffix(p, "-delete"):
+			a.Class, a.Why = CloudDestructive, name+" "+strings.Join(pos, " ")+" deletes resources"
+			return a, true
+		case p == "list" || p == "show" || p == "describe" || p == "get" || p == "version" || p == "help" ||
+			strings.HasPrefix(p, "list-") || strings.HasPrefix(p, "get-") || p == "login" || p == "info":
+			read = true
+		}
+	}
+	if read || pos[0] == "config" || pos[0] == "account" || pos[0] == "auth" {
+		a.Class, a.Why = ReadOnly, name+" "+strings.Join(pos, " ")+" does not change resources"
+		return a, true
+	}
+	a.Class, a.Why = CloudWrite, name+" "+strings.Join(pos, " ")+" changes resources"
+	return a, true
+}
+
+// positionals returns the non-flag words; flags in valued take the next word.
+// dynamic is true when the first positional cannot be resolved.
+func positionals(args []shell.Word, valued map[string]bool) (pos []string, dynamic bool) {
+	for i := 0; i < len(args); i++ {
+		t := args[i].Text
+		if strings.HasPrefix(t, "-") {
+			if valued[t] && !strings.Contains(t, "=") && i+1 < len(args) {
+				i++
+			}
+			continue
+		}
+		if !args[i].Resolved && len(pos) == 0 {
+			return nil, true
+		}
+		pos = append(pos, t)
+	}
+	return pos, false
+}
+
 func agentFlags(base Action, name string, args []shell.Word) (Action, bool) {
 	a := base
 	a.Engine = "agent"

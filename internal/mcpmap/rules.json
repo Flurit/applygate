@@ -1,0 +1,306 @@
+{
+  "servers": [
+    {
+      "name": "awslabs aws-api-mcp-server",
+      "source": "github.com/awslabs/mcp@c6951b9 src/aws-api-mcp-server/awslabs/aws_api_mcp_server/server.py:249-261 (cli_command: one 'aws ...' string or a list of up to 20), core/parser/lexer.py:41-51 (shlex split, must start with aws)",
+      "tools": [
+        {"names": ["call_aws"], "requires": ["cli_command"], "shell": "cli_command",
+         "note": "the server runs each aws command itself, without a shell"}
+      ]
+    },
+    {
+      "name": "awslabs terraform-mcp-server",
+      "source": "github.com/awslabs/mcp@780e3f1 (last tree before removal in 092e7ca) src/terraform-mcp-server/awslabs/terraform_mcp_server/impl/tools/execute_terraform_command.py:152-163 and execute_terragrunt_command.py:212-260: apply, destroy and run-all always get -auto-approve; no saved planfile",
+      "tools": [
+        {"names": ["ExecuteTerraformCommand"], "requires": ["command", "working_directory"], "dir": "working_directory",
+         "cases": [
+           {"when": {"command": ["apply", "destroy"]}, "command": "terraform {command} -auto-approve"},
+           {"when": {"command": ["init", "plan", "validate"]}, "command": "terraform {command}"}
+         ]},
+        {"names": ["ExecuteTerragruntCommand"], "requires": ["command", "working_directory"], "dir": "working_directory",
+         "cases": [
+           {"when": {"command": ["run-all"]}, "command": "terragrunt run-all apply -auto-approve"},
+           {"when": {"command": ["apply", "destroy"]}, "command": "terragrunt {command} -auto-approve"},
+           {"when": {"command": ["init", "plan", "validate", "output"]}, "command": "terragrunt {command}"}
+         ]}
+      ]
+    },
+    {
+      "name": "awslabs cfn-mcp-server / ccapi-mcp-server (Cloud Control API)",
+      "source": "github.com/awslabs/mcp@780e3f1 src/cfn-mcp-server/awslabs/cfn_mcp_server/server.py:154-314; @c6951b9 src/ccapi-mcp-server/awslabs/ccapi_mcp_server/server.py:353-449",
+      "tools": [
+        {"names": ["delete_resource"], "requires": ["resource_type", "identifier"],
+         "cases": [{"command": "aws cloudcontrol delete-resource --type-name {resource_type} --identifier {identifier} --region={region}"}]},
+        {"names": ["update_resource"], "requires": ["resource_type", "identifier"],
+         "cases": [{"command": "aws cloudcontrol update-resource --type-name {resource_type} --identifier {identifier} --region={region}"}]},
+        {"names": ["create_resource"], "requires": ["resource_type"],
+         "cases": [{"command": "aws cloudcontrol create-resource --type-name {resource_type} --region={region}"}]}
+      ]
+    },
+    {
+      "name": "awslabs eks-mcp-server",
+      "source": "github.com/awslabs/mcp@c6951b9 src/eks-mcp-server/awslabs/eks_mcp_server/k8s_handler.py:92-108,324-358, models.py:46-53, eks_stack_handler.py:116-125,402-599, iam_handler.py:150-156; stack name eks-<cluster>-stack (consts.py:24)",
+      "tools": [
+        {"names": ["manage_k8s_resource"], "requires": ["operation", "cluster_name", "kind"],
+         "cases": [
+           {"when": {"operation": ["delete"]}, "command": "kubectl delete {kind} {name} --namespace={namespace}"},
+           {"when": {"operation": ["create", "replace", "patch"]}, "command": "kubectl {operation} {kind} {name} --namespace={namespace}"},
+           {"when": {"operation": ["read"]}, "command": "kubectl get {kind} {name} --namespace={namespace}"}
+         ]},
+        {"names": ["apply_yaml"], "requires": ["yaml_path", "cluster_name"],
+         "cases": [{"command": "kubectl apply -f {yaml_path} --namespace={namespace}"}]},
+        {"names": ["manage_eks_stacks"], "requires": ["operation"],
+         "cases": [
+           {"when": {"operation": ["delete"]}, "command": "aws cloudformation delete-stack --stack-name eks-{cluster_name}-stack"},
+           {"when": {"operation": ["deploy"]}, "command": "aws cloudformation deploy --stack-name eks-{cluster_name}-stack --template-file {template_file}"},
+           {"when": {"operation": ["generate", "describe"]}, "command": "aws cloudformation describe-stacks --stack-name eks-{cluster_name}-stack"}
+         ]},
+        {"names": ["add_inline_policy"], "requires": ["policy_name", "role_name", "permissions"],
+         "cases": [{"command": "aws iam put-role-policy --role-name {role_name} --policy-name {policy_name}"}]}
+      ]
+    },
+    {
+      "name": "awslabs ecs-mcp-server",
+      "source": "github.com/awslabs/mcp@c6951b9 src/ecs-mcp-server/awslabs/ecs_mcp_server/modules/resource_management.py:40-42 (api_operation, api_params; boto3 ECS operation in CamelCase), modules/express.py:243-253 and api/express.py:223-277 (delete_app deletes the service and stack <app_name>-ecr-infrastructure)",
+      "tools": [
+        {"names": ["ecs_resource_management"], "requires": ["api_operation"],
+         "cases": [{"command": "aws ecs {api_operation|kebab}"}]},
+        {"names": ["delete_app"], "requires": ["service_arn", "app_name"],
+         "cases": [{"command": "aws ecs delete-express-gateway-service --service-arn {service_arn} ; aws cloudformation delete-stack --stack-name {app_name}-ecr-infrastructure"}]}
+      ]
+    },
+    {
+      "name": "awslabs aws-serverless-mcp-server",
+      "source": "github.com/awslabs/mcp@c6951b9 src/aws-serverless-mcp-server/awslabs/aws_serverless_mcp_server/tools/sam/sam_deploy.py: runs sam deploy --stack-name <application_name> --no-confirm-changeset",
+      "tools": [
+        {"names": ["sam_deploy"], "requires": ["application_name"],
+         "note": "sam deploy, judged as the CloudFormation deploy it performs",
+         "cases": [{"command": "aws cloudformation deploy --stack-name {application_name} --region={region} --profile={profile}"}]}
+      ]
+    },
+    {
+      "name": "hashicorp terraform-mcp-server (HCP Terraform / Terraform Enterprise)",
+      "source": "github.com/hashicorp/terraform-mcp-server@062700d pkg/tools/tfe/create_run.go:136-212 (run_type is_destroy sets IsDestroy, auto_approve sets AutoApply; plan_and_apply waits for confirmation), action_run.go:63-72, delete_workspace_safely.go:55, force_unlock_workspace.go:64",
+      "tools": [
+        {"names": ["create_run"], "requires": ["terraform_org_name", "workspace_name"],
+         "note": "a run on HCP Terraform, judged as the terraform command on that workspace",
+         "cases": [
+           {"when": {"run_type": ["is_destroy"]}, "command": "TF_WORKSPACE={workspace_name} terraform destroy"},
+           {"when": {"run_type": ["auto_approve", "allow_empty_apply"]}, "command": "TF_WORKSPACE={workspace_name} terraform apply -auto-approve"},
+           {"when": {"run_type": ["refresh_state"]}, "command": "TF_WORKSPACE={workspace_name} terraform apply -refresh-only"},
+           {"when": {"run_type": ["plan_and_apply", "plan_only", ""]}, "command": "TF_WORKSPACE={workspace_name} terraform plan"},
+           {"command": "?creates a run of type {run_type} on workspace {workspace_name}"}
+         ]},
+        {"names": ["action_run"], "requires": ["run_action", "run_id"],
+         "cases": [
+           {"when": {"run_action": ["apply"]}, "command": "?applies HCP Terraform run {run_id}, whose plan applygate cannot read"},
+           {"when": {"run_action": ["discard", "cancel"]}, "command": "true"}
+         ]},
+        {"names": ["delete_workspace_safely"], "requires": ["workspace_id"],
+         "cases": [{"command": "terraform workspace delete {workspace_id}"}]},
+        {"names": ["force_unlock_workspace"], "requires": ["workspace_id"],
+         "cases": [{"command": "terraform force-unlock {workspace_id}"}]}
+      ]
+    },
+    {
+      "name": "severity1 terraform-cloud-mcp",
+      "source": "github.com/severity1/terraform-cloud-mcp@2e78655 terraform_cloud_mcp/server.py:55-139, tools/runs.py:24-100 (create_run params with aliases is-destroy/is_destroy, auto-apply/auto_apply), tools/workspaces.py:184-212",
+      "tools": [
+        {"names": ["create_run"], "requires": ["workspace_id", "params"],
+         "note": "a run on HCP Terraform, judged as the terraform command on that workspace",
+         "cases": [
+           {"when": {"params.is-destroy": ["true"]}, "command": "terraform destroy"},
+           {"when": {"params.is_destroy": ["true"]}, "command": "terraform destroy"},
+           {"when": {"params.auto-apply": ["true"]}, "command": "terraform apply -auto-approve"},
+           {"when": {"params.auto_apply": ["true"]}, "command": "terraform apply -auto-approve"},
+           {"command": "terraform plan"}
+         ]},
+        {"names": ["apply_run", "force_execute_run"], "requires": ["run_id"],
+         "cases": [{"command": "?applies HCP Terraform run {run_id}, whose plan applygate cannot read"}]},
+        {"names": ["delete_workspace", "safe_delete_workspace"], "requires": ["workspace_name"],
+         "cases": [{"command": "TF_WORKSPACE={workspace_name} terraform workspace delete {workspace_name}"}]},
+        {"names": ["force_unlock_workspace", "unlock_workspace"], "requires": ["workspace_id"],
+         "cases": [{"command": "terraform force-unlock {workspace_id}"}]}
+      ]
+    },
+    {
+      "name": "nwiizo tfmcp",
+      "source": "github.com/nwiizo/tfmcp@3f6324f src/mcp/types/terraform.rs, src/terraform/saved_plan.rs:131-293, refresh.rs:86-100, taint.rs:57-60, import_helper.rs:56-63, workspace.rs:225-272; HCP tools src/mcp/types/tfe/runs.rs:14-29, src/tfe/client/mod.rs:515-707. Commands run in TERRAFORM_DIR, which the call does not name",
+      "tools": [
+        {"names": ["apply_terraform"], "requires": ["plan_id"],
+         "cases": [{"command": "?applies saved plan {plan_id} from the server's own plan store, which applygate cannot read"}]},
+        {"names": ["destroy_terraform"], "requires": ["plan_id"],
+         "cases": [{"command": "terraform destroy"}]},
+        {"names": ["terraform_refresh"],
+         "cases": [{"command": "terraform apply -refresh-only -auto-approve -target={target}"}]},
+        {"names": ["terraform_import"], "requires": ["resource_type", "resource_id", "name"],
+         "cases": [
+           {"when": {"execute": ["true"]}, "command": "terraform import {resource_type}.{name} {resource_id}"},
+           {"command": "true"}
+         ]},
+        {"names": ["terraform_taint"], "requires": ["action", "address"],
+         "cases": [{"when": {"action": ["taint", "untaint"]}, "command": "terraform {action} {address}"}]},
+        {"names": ["terraform_workspace"], "requires": ["action"],
+         "cases": [
+           {"when": {"action": ["delete"]}, "command": "terraform workspace delete {name}"},
+           {"when": {"action": ["list", "show", "new", "select"]}, "command": "terraform workspace {action} {name}"}
+         ]},
+        {"names": ["create_run"], "requires": ["workspace_id"],
+         "note": "a run on HCP Terraform, judged as the terraform command on that workspace",
+         "cases": [
+           {"when": {"is_destroy": ["true"]}, "command": "terraform destroy"},
+           {"when": {"operation": ["destroy"]}, "command": "terraform destroy"},
+           {"when": {"auto_apply": ["true"]}, "command": "terraform apply -auto-approve"},
+           {"command": "terraform plan"}
+         ]},
+        {"names": ["action_run"], "requires": ["run_id", "action"],
+         "cases": [
+           {"when": {"action": ["apply", "force-execute", "force_execute"]}, "command": "?applies HCP Terraform run {run_id}, whose plan applygate cannot read"},
+           {"when": {"action": ["discard", "cancel", "force-cancel", "force_cancel"]}, "command": "true"}
+         ]},
+        {"names": ["delete_workspace_safely"], "requires": ["organization", "workspace_name"],
+         "cases": [{"command": "TF_WORKSPACE={workspace_name} terraform workspace delete {workspace_name}"}]}
+      ]
+    },
+    {
+      "name": "containers kubernetes-mcp-server",
+      "source": "github.com/containers/kubernetes-mcp-server@425e74a pkg/toolsets/core/pods.go:117-313, resources.go:126-193, helm/helm.go:18-95, kubevirt/vm/lifecycle/tool.go:30-46; the cluster is the server's kubeconfig context, or the optional context argument",
+      "tools": [
+        {"names": ["pods_delete"], "requires": ["name"],
+         "cases": [{"command": "kubectl delete pod {name} --namespace={namespace} --context={context}"}]},
+        {"names": ["pods_exec"], "requires": ["name", "command"],
+         "cases": [{"command": "kubectl exec {name} --namespace={namespace} --context={context} -- {command...}"}]},
+        {"names": ["pods_run"], "requires": ["name", "image"],
+         "cases": [{"command": "kubectl run {name} --image={image} --namespace={namespace} --context={context}"}]},
+        {"names": ["resources_create_or_update"], "requires": ["resource"],
+         "cases": [{"command": "kubectl apply -f - --context={context}"}]},
+        {"names": ["resources_delete"], "requires": ["kind", "name"],
+         "cases": [{"command": "kubectl delete {kind} {name} --namespace={namespace} --context={context}"}]},
+        {"names": ["resources_scale"], "requires": ["kind", "name"],
+         "cases": [
+           {"when": {"scale": ["*"]}, "command": "kubectl scale {kind} {name} --replicas={scale} --namespace={namespace} --context={context}"},
+           {"command": "kubectl get {kind} {name} --namespace={namespace} --context={context}"}
+         ]},
+        {"names": ["helm_install"], "requires": ["chart"],
+         "cases": [{"command": "helm install {name} {chart} --namespace={namespace} --kube-context={context}"}]},
+        {"names": ["helm_uninstall"], "requires": ["name"],
+         "cases": [{"command": "helm uninstall {name} --namespace={namespace} --kube-context={context}"}]},
+        {"names": ["vm_lifecycle"], "requires": ["name", "action"],
+         "cases": [{"command": "kubectl patch virtualmachine {name} --namespace={namespace} --context={context}"}]}
+      ]
+    },
+    {
+      "name": "Flux159 mcp-server-kubernetes",
+      "source": "github.com/Flux159/mcp-server-kubernetes@5536776 src/tools/kubectl-generic.ts:16-173, kubectl-delete.ts:16-67, kubectl-scale.ts:11-36, exec_in_pod.ts:29-133, node-management.ts:28-89, kubectl-context.ts:263-322, helm-operations.ts:39-139; kubectl runs via execFileSync, no shell",
+      "tools": [
+        {"names": ["kubectl_generic"], "requires": ["command"],
+         "cases": [{"command": "kubectl {command} {subCommand} {resourceType} {name} --namespace={namespace} --context={context} {args...}"}]},
+        {"names": ["kubectl_delete"],
+         "cases": [{"command": "kubectl delete {resourceType} {name} --namespace={namespace} --selector={labelSelector} --filename={filename} --context={context}"}]},
+        {"names": ["kubectl_apply"],
+         "cases": [
+           {"when": {"dryRun": ["true"]}, "command": "kubectl apply --dry-run=client -f -"},
+           {"command": "kubectl apply -f - --namespace={namespace} --context={context}"}
+         ]},
+        {"names": ["kubectl_create"],
+         "cases": [{"command": "kubectl create {resourceType} {name} --namespace={namespace} --context={context}"}]},
+        {"names": ["kubectl_scale"], "requires": ["name", "replicas"],
+         "cases": [{"command": "kubectl scale {resourceType} {name} --replicas={replicas} --namespace={namespace} --context={context}"}]},
+        {"names": ["kubectl_patch"], "requires": ["name"],
+         "cases": [{"command": "kubectl patch {resourceType} {name} --namespace={namespace} --context={context}"}]},
+        {"names": ["kubectl_rollout"], "requires": ["subCommand", "name"],
+         "cases": [{"command": "kubectl rollout {subCommand} {resourceType} {name} --namespace={namespace} --context={context}"}]},
+        {"names": ["exec_in_pod"], "requires": ["name", "command"],
+         "cases": [{"command": "kubectl exec {name} --namespace={namespace} --context={context} -- {command...}"}]},
+        {"names": ["node_management"], "requires": ["operation"],
+         "cases": [{"when": {"operation": ["cordon", "drain", "uncordon"]}, "command": "kubectl {operation} {nodeName} --context={context}"}]},
+        {"names": ["install_helm_chart", "upgrade_helm_chart"], "requires": ["name", "chart"],
+         "cases": [{"command": "helm upgrade --install {name} {chart} --namespace={namespace} --kube-context={context}"}]},
+        {"names": ["uninstall_helm_chart"], "requires": ["name"],
+         "cases": [{"command": "helm uninstall {name} --namespace={namespace} --kube-context={context}"}]}
+      ]
+    },
+    {
+      "name": "Azure aks-mcp (with Azure/mcp-kubernetes and Azure/azure-api-mcp)",
+      "source": "github.com/Azure/aks-mcp@af02b0b internal/server/server.go:160-437, internal/components/azaks/registry.go:14-150, fleet/registry.go:34-50, compute/azcommands.go:19-100; Azure/mcp-kubernetes@v0.0.14 pkg/kubectl/registry.go:54-582 (call_kubectl, call_helm: a full command string, split and run without a shell); Azure/azure-api-mcp@v0.0.10 pkg/azcli/registry.go:7-20 (call_az)",
+      "tools": [
+        {"names": ["call_kubectl", "call_helm", "call_cilium", "call_hubble"], "requires": ["command"], "shell": "command",
+         "note": "the server runs the command itself, without a shell"},
+        {"names": ["call_az"], "requires": ["cli_command"], "shell": "cli_command",
+         "note": "the server runs the az command itself, without a shell"},
+        {"names": ["kubectl_resources", "kubectl_workloads", "kubectl_metadata", "kubectl_diagnostics", "kubectl_cluster", "kubectl_config"], "requires": ["operation", "resource"],
+         "cases": [{"command": "kubectl {operation} {resource} {args...}"}]},
+        {"names": ["az_aks_operations"], "requires": ["operation"],
+         "cases": [{"command": "az aks {operation} {args...}"}]},
+        {"names": ["az_compute_operations"], "requires": ["operation"],
+         "cases": [{"command": "az vm {operation} {args...}"}]},
+        {"names": ["az_fleet"], "requires": ["operation", "resource"],
+         "cases": [{"command": "az fleet {resource} {operation} {args...}"}]}
+      ]
+    },
+    {
+      "name": "GoogleCloudPlatform gke-mcp",
+      "source": "github.com/GoogleCloudPlatform/gke-mcp@7f9bc2b pkg/tools/k8s/tools.go:37-125, delete.go:27-33, apply.go:33-37, patch.go:29-35, pkg/tools/cluster/tools.go:44-150, nodepool.go:27-46; the cluster is project_id, location and cluster_name",
+      "tools": [
+        {"names": ["delete_k8s_resource"], "requires": ["resourceType", "name", "cluster_name"],
+         "cases": [
+           {"when": {"dryRun": ["true"]}, "command": "kubectl get {resourceType} {name} --namespace={namespace}"},
+           {"command": "kubectl delete {resourceType} {name} --namespace={namespace}"}
+         ]},
+        {"names": ["apply_k8s_manifest"], "requires": ["yamlManifest", "cluster_name"],
+         "cases": [
+           {"when": {"dryRun": ["true"]}, "command": "kubectl apply --dry-run=server -f -"},
+           {"command": "kubectl apply -f -"}
+         ]},
+        {"names": ["patch_k8s_resource"], "requires": ["resourceType", "name", "cluster_name"],
+         "cases": [{"command": "kubectl patch {resourceType} {name} --namespace={namespace}"}]},
+        {"names": ["delete_cluster"], "requires": ["project_id", "location", "cluster_name"],
+         "cases": [{"command": "gcloud container clusters delete {cluster_name} --project={project_id} --location={location}"}]},
+        {"names": ["delete_node_pool"], "requires": ["project_id", "cluster_name", "node_pool_name"],
+         "cases": [{"command": "gcloud container node-pools delete {node_pool_name} --cluster={cluster_name} --project={project_id}"}]},
+        {"names": ["create_cluster", "create_node_pool"], "requires": ["project_id", "location"],
+         "cases": [{"command": "gcloud container clusters create {cluster_name} --project={project_id}"}]},
+        {"names": ["update_cluster", "update_node_pool"], "requires": ["project_id", "location"],
+         "cases": [{"command": "gcloud container clusters update {cluster_name} --project={project_id}"}]}
+      ]
+    },
+    {
+      "name": "googleapis gcloud-mcp",
+      "source": "github.com/googleapis/gcloud-mcp@238728f packages/gcloud-mcp/src/tools/run_gcloud_command.ts:36-105 (args: the gcloud argv without gcloud, spawned without a shell); storage-mcp delete_bucket",
+      "tools": [
+        {"names": ["run_gcloud_command"], "requires": ["args"],
+         "cases": [{"command": "gcloud {args...}"}]},
+        {"names": ["delete_bucket"], "requires": ["bucket_name"],
+         "cases": [{"command": "gcloud storage buckets delete gs://{bucket_name}"}]}
+      ]
+    },
+    {
+      "name": "shell command servers",
+      "source": "wonderwhy-er/DesktopCommanderMCP@9a171d1 src/tools/schemas.ts:27-181 (start_process runs <shell> -c command; interact_with_process writes input to a running shell); g0t4/mcp-server-commands@bc62283 src/tools.ts:25-57 (run_process command_line through a shell, or argv) and @fb52a13 src/index.ts:97-120 (run_command); tumf/mcp-shell-server@c1c8059 server.py:151-190 (command argv, a bare | starts a pipeline); MladenSU/cli-mcp-server@5d30d70 server.py:343-360 (run_command); rusiaaman/wcgw@339201a src/wcgw/types_.py:145-241 (BashCommand into a persistent bash); oraios/serena@ede329a src/serena/tools/cmd_tools.py:27-54; ferrislucas/iterm-mcp@936182b src/index.ts:29-82 (types into the active terminal)",
+      "tools": [
+        {"names": ["start_process"], "requires": ["command", "timeout_ms"], "shell": "command"},
+        {"names": ["interact_with_process"], "requires": ["pid", "input"], "shell": "input",
+         "note": "input typed into a running process, judged as a shell command"},
+        {"names": ["run_process"], "requires": ["command_line"], "shell": "command_line", "dir": "cwd"},
+        {"names": ["run_process"], "requires": ["argv"], "dir": "cwd",
+         "cases": [{"command": "{argv...}"}]},
+        {"names": ["run_command"], "requires": ["command"], "shell": "command", "dir": "workdir"},
+        {"names": ["shell_execute"], "requires": ["command"], "dir": "directory",
+         "cases": [{"command": "{command...}"}]},
+        {"names": ["BashCommand"],
+         "note": "typed into a persistent bash session",
+         "cases": [
+           {"when": {"type": ["command"]}, "command": "{command|raw}"},
+           {"when": {"type": ["send_text"]}, "command": "{send_text|raw}"},
+           {"when": {"action_json.type": ["command"]}, "command": "{action_json.command|raw}"},
+           {"when": {"action_json.type": ["send_text"]}, "command": "{action_json.send_text|raw}"},
+           {"when": {"type": ["status_check", "send_specials", "send_ascii"]}, "command": "true"},
+           {"when": {"action_json.type": ["status_check", "send_specials", "send_ascii"]}, "command": "true"}
+         ]},
+        {"names": ["execute_shell_command"], "requires": ["command"], "shell": "command", "dir": "cwd"},
+        {"names": ["write_to_terminal"], "requires": ["command"], "shell": "command",
+         "note": "typed into the active iTerm tab"}
+      ]
+    }
+  ]
+}
