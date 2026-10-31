@@ -43,6 +43,8 @@ Usage:
   applygate apply [--cwd DIR] [--engine terraform|tofu] [--yes] <planfile> [args]
                                       judge a saved plan as the hooks would, confirm an ask by typing the
                                       environment name, then run the engine's apply (the human door)
+  applygate approve [ID]               allow one call an agent was stopped on because it could not ask you;
+                                      without ID, list the pending requests (a person at a terminal only)
   applygate report [--log FILE]        summarize the decision log
   applygate suggest [--log FILE] [--root DIR] [--out FILE]
                                       propose a .applygate.yaml from the observe-mode log: environments
@@ -82,6 +84,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdPlanCheck(args[1:], stdout, stderr)
 	case "apply":
 		return cmdApply(args[1:], os.Stdin, os.Stdout, os.Stderr)
+	case "approve":
+		return cmdApprove(args[1:], stdin, stdout, stderr)
 	case "report":
 		return cmdReport(args[1:], stdout, stderr)
 	case "suggest":
@@ -137,6 +141,9 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	opt := hook.Options{UserConfig: config.UserPath(), Env: hook.EnvMap(), NoLog: *noLog}
+	if !*noLog {
+		opt.Approvals = config.ApprovalsPath()
+	}
 	if len(planJSON) > 0 {
 		m := map[string]string{}
 		for _, kv := range planJSON {

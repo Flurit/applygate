@@ -67,6 +67,10 @@ type Config struct {
 	// tighten this to most_protected but not loosen it.
 	UnknownDir string            `yaml:"unknown_dir"`
 	Aliases    map[string]string `yaml:"aliases"`
+	// Approvals lets a person allow one asked command with `applygate
+	// approve` on agents that cannot show an ask prompt (default true). A
+	// repository config may turn it off but not on.
+	Approvals *bool `yaml:"approvals"`
 
 	Environments   []Environment `yaml:"environments"`
 	PlanGate       PlanGate      `yaml:"plan_gate"`
@@ -151,6 +155,7 @@ func (c *Config) UnknownDirMostProtected() bool {
 	return c.UnknownDir != UnknownDirSessionRoot
 }
 func (c *Config) UseNameHints() bool    { return on(c.NameHints, true) }
+func (c *Config) ApprovalsOn() bool     { return on(c.Approvals, true) }
 func (c *Config) Observe() bool         { return c.Mode == "observe" }
 func (c *Config) StaleStateCheck() bool { return on(c.Preflight.StaleState, true) }
 func (c *Config) LockfileCheck() bool   { return on(c.Preflight.Lockfile, true) }
@@ -226,6 +231,12 @@ func userPathFor(name string) string {
 // new location, so "report" keeps seeing one history.
 func DefaultLogPath() string {
 	return preferExisting(logPathFor("applygate"), logPathFor("seatbelt"))
+}
+
+// ApprovalsPath is where pending and granted one-time approvals are kept,
+// next to the default decision log. It is a guard path.
+func ApprovalsPath() string {
+	return filepath.Join(filepath.Dir(logPathFor("applygate")), "approvals.json")
 }
 
 func logPathFor(name string) string {
@@ -325,6 +336,10 @@ func merge(cfg *Config, path string, repo bool) error {
 	}
 	if c.NameHints != nil {
 		cfg.NameHints = c.NameHints
+	}
+	if c.Approvals != nil && (!repo || !*c.Approvals) {
+		// A repository may turn approvals off, never back on.
+		cfg.Approvals = c.Approvals
 	}
 	switch c.UnknownDir {
 	case "":
@@ -452,7 +467,7 @@ func (c *Config) GuardPaths() []string {
 	if c.LogPath != "" {
 		out = append(out, c.LogPath)
 	}
-	return out
+	return append(out, ApprovalsPath())
 }
 
 // Signals are what preflight knows about where a command runs.

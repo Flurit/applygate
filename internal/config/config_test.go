@@ -289,3 +289,21 @@ func TestLegacyConfigFileName(t *testing.T) {
 	}
 	t.Fatal("legacy config name is not in DefaultProtectedPaths")
 }
+
+func TestRepoConfigCanOnlyDisableApprovals(t *testing.T) {
+	if c := load(t, "approvals: false\n"); c.ApprovalsOn() {
+		t.Fatal("repo config could not turn approvals off")
+	}
+	off := false
+	c := Default()
+	c.Approvals = &off
+	dir := t.TempDir()
+	p := filepath.Join(dir, FileName)
+	os.WriteFile(p, []byte("version: 1\napprovals: true\n"), 0o644)
+	if err := merge(c, p, true); err != nil {
+		t.Fatal(err)
+	}
+	if c.ApprovalsOn() {
+		t.Fatal("repo config turned approvals back on")
+	}
+}

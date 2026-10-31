@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Flurit/applygate/internal/approval"
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/policy"
@@ -54,6 +55,10 @@ type Options struct {
 	PlanJSON func(engine, dir, planfile string) ([]byte, error)
 	// NoGit disables the git lockfile check (tests).
 	NoGit bool
+	// Approvals is the one-time approval store ("" disables approvals).
+	Approvals string
+	// Now is the clock for approvals (tests); nil means time.Now.
+	Now func() time.Time
 }
 
 // EnvMap returns the process environment as a map.
@@ -287,9 +292,44 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		}
 		return fail(cfg, ev.Cwd, err.Error())
 	}
+	if opt.Approvals != "" && d.Verdict == policy.Ask && !cfg.Observe() && cfg.ApprovalsOn() {
+		now := time.Now
+		if opt.Now != nil {
+			now = opt.Now
+		}
+		d = withApproval(opt.Approvals, ev, d, now())
+	}
 	entry.Verdict, entry.Enforced, entry.Actions, entry.Notes = d.Verdict, d.Enforced, d.Actions, d.Notes
 	if er, isEventRenderer := a.(eventRenderer); isEventRenderer {
 		return finish(cfg, er.RenderEvent(ev, d))
 	}
 	return finish(cfg, a.Render(d))
+}
+
+// withApproval applies a person's one-time approval to an asked decision, or,
+// when the ask is enforced as a block, records a request the person can
+// approve and tells the agent how. A store error leaves the decision as it is.
+func withApproval(path string, ev policy.Event, d policy.Decision, now time.Time) policy.Decision {
+	key := approval.Key(ev, d)
+	rec, ok, err := approval.Consume(path, key, now)
+	if err != nil {
+		d.Notes = append(d.Notes, "approvals unavailable: "+err.Error())
+		return d
+	}
+	if ok {
+		d.Enforced, d.Message = policy.Allow, ""
+		d.Notes = append(d.Notes, fmt.Sprintf("allowed once: a person approved this exact call with `applygate approve %s` at %s", rec.ID, rec.ApprovedAt.UTC().Format(time.RFC3339)))
+		return d
+	}
+	if d.Enforced != policy.Block {
+		return d // the host shows its own prompt
+	}
+	rec, err = approval.Request(path, approval.NewRequest(ev, d), now)
+	if err != nil {
+		d.Notes = append(d.Notes, "approvals unavailable: "+err.Error())
+		return d
+	}
+	d.Notes = append(d.Notes, "approval requested: "+rec.ID)
+	d.Message += fmt.Sprintf("\nApproval: if the user wants this to run, they can allow this exact call once by running `applygate approve %s` in their own terminal within the next hour. Tell the user that, and after they confirm, retry the same call unchanged. You cannot approve it yourself; applygate blocks that.", rec.ID)
+	return d
 }

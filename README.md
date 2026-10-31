@@ -74,7 +74,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 | OpenCode | Preview | blocks |
 | Cline | Preview | blocks; a block cancels the whole task |
 
-`applygate init` installs the hooks for Claude Code and Codex. **Preview** hooks follow each agent's documentation but have not yet been tested inside the agent. Install one with `applygate hook install --agent NAME`, then check it: ask the agent to run `terraform destroy -auto-approve` in an empty directory, and applygate should block it. Only Claude Code and Copilot CLI can show you an "ask" prompt; the other agents block instead. For every agent's details, see [docs/hosts.md](docs/hosts.md) (also `applygate hosts`).
+`applygate init` installs the hooks for Claude Code and Codex. **Preview** hooks follow each agent's documentation but have not yet been tested inside the agent. Install one with `applygate hook install --agent NAME`, then check it: ask the agent to run `terraform destroy -auto-approve` in an empty directory, and applygate should block it. Only Claude Code and Copilot CLI can show you an "ask" prompt; the other agents block instead, and the block names an approval ID. Run `applygate approve ID` in your own terminal, type the environment name, and the agent's next identical call is allowed once. Approvals apply only to asks, never to blocks, and an agent cannot approve its own call. For every agent's details, see [docs/hosts.md](docs/hosts.md) (also `applygate hosts`).
 
 ## Beyond agents
 
@@ -96,6 +96,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 | `applygate init` | Write a starter config and install hooks for the agents it finds |
 | `applygate check "<cmd>"` | Dry-run a command (exit 0 allow, 4 ask, 3 block); `explain` shows the reasoning |
 | `applygate apply <planfile>` | Judge a saved plan, confirm, then apply |
+| `applygate approve [ID]` | Allow once a call an agent was stopped on because it could not ask you; without ID, list pending requests |
 | `applygate plan-check plan.json` | Judge `terraform show -json` output |
 | `applygate report` / `suggest` | Summarize the decision log / propose a config from it |
 | `applygate doctor` | Check config, hooks and versions |

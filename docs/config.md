@@ -10,6 +10,7 @@ default_tier: standard   # tier for unknown environments when strict is false
 on_error: auto           # auto (block in protected/unknown, allow elsewhere) | block | allow
 name_hints: true         # treat prod/production/prd/live as a whole word in names (paths, workspaces, profiles, backend bucket/key/workspace_key_prefix/dynamodb_table/address) as protected; non-/not-/no-/pre- before the word and -like/-test/-sandbox after it cancel the hint (docs/policy.md step 4)
 unknown_dir: most_protected   # most_protected | session_root: how a command is judged when the host does not report its directory (Codex 0.165.0); a repository config may set most_protected but not session_root
+approvals: true          # on agents that cannot show an ask prompt, let a person allow one asked call with `applygate approve ID` (docs/policy.md step 8); a repository config may turn this off but not on
 log_path: ~/.local/state/applygate/decisions.jsonl   # user config only
 aliases: {tf: terraform}
 
