@@ -12,6 +12,27 @@ applygate is small on purpose: a shell-aware analyzer, a classifier, preflight c
 - **Rule lists are data.** Add resource types, protections and admin policies to `internal/plangate/rules/aws.json`, not to Go code.
 - **Document deviations.** Anything that differs from the [roadmap](docs/roadmap.md) goes in `docs/project/spec-alignment.md` and, if it changes a verdict, in `docs/policy.md`.
 
+## Repository layout
+
+```
+cmd/applygate/        CLI
+internal/shell/       shell-aware analyzer (parse, resolve, unwrap; refuses what it cannot resolve)
+internal/classify/    command classes for terraform/tofu/terragrunt, aws, kubectl, agents, guard files
+internal/config/      .applygate.yaml and tier resolution
+internal/preflight/   workspace, backend, stale state, lock-file drift, planfile workspace
+internal/plangate/    plan JSON rules; AWS resource lists in rules/aws.json (data, not code)
+internal/policy/      verdict table and Decide()
+internal/hook/        agent adapters, host capability table, error behavior
+internal/decisionlog/ JSONL log with redaction, report
+harness/              scenario pack, fixtures, Go regression test, run.py replay runner
+docs/                 install, policy, config, limits, hosts (generated), threat model, roadmap; docs/project/ for project records
+review/               live-agent test write-ups, host research and the open-source corpus trial
+plugin/claude-code/   Claude Code plugin: hooks and a launcher that finds or fetches the pinned release
+site/                 project page, published to https://flurit.github.io/applygate/ by .github/workflows/pages.yml
+.goreleaser.yaml      release builds: reproducible archives, checksums, cosign signature, SBOMs
+install.sh            installer: verifies the cosign signature (when cosign is installed) and the sha256
+```
+
 ## Adding a scenario
 
 1. Append it to `harness/pack/scenarios.json` with an `id`, `spec` (S1–S14, `plan` or `benign`), `kind`, `title`, `cwd` (relative to `pack/fixtures/repo`), `tool`, `tool_input`, `expect`, and `must_mention` strings the message must contain. S3 cases take a `bypass_class`.
