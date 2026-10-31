@@ -143,7 +143,7 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 		ev.Kind, ev.Paths = policy.KindRead, nonEmpty(ti.FilePath, ti.Path)
 	default:
 		if isMCPTool(in.ToolName) {
-			ev.Kind, ev.Command = policy.KindMCP, mcpArguments(in.ToolInput)
+			ev.Kind, ev.Command, ev.Args = policy.KindMCP, mcpArguments(in.ToolInput), in.ToolInput
 			return ev, true, nil
 		}
 		// Cursor, Copilot CLI and Devin also load hooks from
@@ -171,9 +171,10 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 var claudeTools = toolSet("Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Read", "Grep", "Glob")
 
 // RenderEvent blocks a call from another host that loaded the Claude hook
-// with exit 2, since that host may not read Claude Code's JSON.
+// with exit 2, since that host may not read Claude Code's JSON. MCP calls
+// (mcp__<server>__<tool>) get Claude Code's JSON answer like its own tools.
 func (c Claude) RenderEvent(ev policy.Event, d policy.Decision) Output {
-	if d.Enforced == policy.Block && !claudeTools[ev.Tool] {
+	if d.Enforced == policy.Block && !claudeTools[ev.Tool] && !isMCPTool(ev.Tool) {
 		return exit2(d.Message)
 	}
 	return c.Render(d)
@@ -267,7 +268,7 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 	default:
 		ev.Kind = policy.KindOther
 		if isMCPTool(in.ToolName) {
-			ev.Kind, ev.Command = policy.KindMCP, mcpArguments(in.ToolInput)
+			ev.Kind, ev.Command, ev.Args = policy.KindMCP, mcpArguments(in.ToolInput), in.ToolInput
 		}
 	}
 	return ev, true, nil

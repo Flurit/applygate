@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -123,6 +124,9 @@ type Event struct {
 	// cd or -chdir inside the command establishes the directory for that
 	// invocation. The zero value fails closed on purpose.
 	DirKnown bool `json:"dir_known"`
+	// Args are an MCP call's raw arguments (KindMCP); Command then holds
+	// the compact copy kept in the log.
+	Args json.RawMessage `json:"-"`
 }
 
 // Deps are the effects Decide may use. Tests replace them.
