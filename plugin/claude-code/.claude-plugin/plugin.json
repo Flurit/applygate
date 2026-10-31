@@ -1,6 +1,6 @@
 {
   "name": "applygate",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Pre-execution allow/ask/block check for agent actions on Terraform and OpenTofu infrastructure (uses applygate on PATH, or downloads the pinned release with its sha256 checked).",
   "author": { "name": "Flurit" },
   "homepage": "https://github.com/Flurit/applygate",
