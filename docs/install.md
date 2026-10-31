@@ -7,13 +7,13 @@ Pick one:
 ```bash
 # Installer, from a release tag (never from main). It checks the sha256 and, when cosign is
 # installed, the signature; APPLYGATE_VERIFY_SIGNATURE=require makes the signature check mandatory.
-curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.4.0/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
+curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.5.0/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
 
 # Homebrew (checks the sha256 only, not the signature)
 brew install Flurit/tap/applygate
 
 # Go
-go install github.com/Flurit/applygate/cmd/applygate@v0.4.0
+go install github.com/Flurit/applygate/cmd/applygate@v0.5.0
 
 # From source
 go build -o bin/applygate ./cmd/applygate
@@ -45,7 +45,7 @@ After a few days in observe mode, `applygate report` shows what would have been 
 Check the signature before running anything. Set `tag` to the release you want and replace `linux_amd64` with your platform (`linux|darwin` × `amd64|arm64`):
 
 ```bash
-tag=v0.4.0
+tag=v0.5.0
 base=https://github.com/Flurit/applygate/releases/download/$tag
 curl -fsSLO "$base/checksums.txt" -O "$base/checksums.txt.sigstore.json" -O "$base/applygate_${tag#v}_linux_amd64.tar.gz"
 cosign verify-blob --bundle checksums.txt.sigstore.json \

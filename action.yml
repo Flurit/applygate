@@ -31,7 +31,7 @@ inputs:
   version:
     description: applygate release tag to install (ignored when binary is set).
     required: false
-    default: v0.4.0
+    default: v0.5.0
   binary:
     description: Path to an existing applygate binary. Skips the release download; for this repository's own CI.
     required: false

@@ -1,9 +1,9 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 (2026-10-31)
 
 - One-time approvals: `applygate approve [ID]`. On the seven agents that cannot show an ask prompt (and Claude Code in `dontAsk`), an ask used to end as a plain block. The block now names an approval ID; a person runs `applygate approve ID` in their own terminal, types the environment name, and the agent's next identical call is allowed once within 15 minutes (requests expire after an hour). The approval is bound to the agent, session, directory, command and every action's class, environment, tier, workspace, backend, AWS profile and plan SHA-256, so a changed call or plan is judged again. Only asks can be approved; blocks cannot. Without an ID the command lists pending requests. The store is `approvals.json` next to the decision log, a guard path. `approvals: false` in the user or repository config turns it off; a repository config cannot turn it on. Verified end to end with the Codex hook format on macOS: request, wrong word refused, right word approved, one retry allowed, the next one blocked again; not yet tried inside a live agent.
-- Guard tampering, found while testing approvals: `script` in its BSD/macOS form (`script -q file command…`) is now unwrapped, so the command it runs is judged; before, `script -q /dev/null <cmd>` hid any command. `expect -c` is analyzed like other interpreters, and code in another language that names an applygate command only a person may run (`approve`, `telemetry on`/`off`, `init`, `disable`, `hook remove`) is guard tampering in every tier.
+- Guard tampering, found while testing approvals: `script` in its BSD/macOS form (`script -q file command…`) is now unwrapped, so the command it runs is judged; before, `script -q /dev/null <cmd>` hid any command. `expect -c` is analyzed like other interpreters, and code in another language that names an applygate command only a person may run (`approve`, `telemetry on`/`off`, `init`, `disable`, `hook remove`) is guard tampering in every tier. Pack scenarios D106 to D108 and B48; v0.4.0 misses D106 to D108.
 - `applygate apply` and `applygate approve` check for a terminal with isatty, so stdin from `/dev/null` or another character device no longer counts as one.
 
 ## v0.4.0 (2026-10-31)
