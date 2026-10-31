@@ -42,8 +42,12 @@ type Env struct {
 	Workspaces []string
 	Backends   []string
 	Profiles   []string
-	Evidence   []string // "12 in examples/simple": engine commands per directory
-	Existing   bool     // carried over from Options.Existing
+	// Clusters and clouds: kube contexts, GCP projects, Azure subscriptions.
+	KubeContexts       []string
+	GCPProjects        []string
+	AzureSubscriptions []string
+	Evidence           []string // "12 in examples/simple": engine commands per directory
+	Existing           bool     // carried over from Options.Existing
 }
 
 // DirUse is a directory where the engine ran.
@@ -205,6 +209,15 @@ func Build(entries []decisionlog.Entry, opts Options) *Proposal {
 			if a.Profile != "" {
 				sigs[sig{"profile", a.Profile, rel}]++
 			}
+			if a.KubeContext != "" {
+				sigs[sig{"kube context", a.KubeContext, rel}]++
+			}
+			if a.GCPProject != "" {
+				sigs[sig{"GCP project", a.GCPProject, rel}]++
+			}
+			if a.AzureSubscription != "" {
+				sigs[sig{"Azure subscription", a.AzureSubscription, rel}]++
+			}
 			if a.Verdict != policy.Allow {
 				k := flagKey{a.Class, a.Verdict, shorten(a.Command, 100)}
 				f := flags[k]
@@ -269,6 +282,9 @@ func Build(entries []decisionlog.Entry, opts Options) *Proposal {
 			e.Workspaces = appendUnique(e.Workspaces, x.Match.Workspaces...)
 			e.Backends = appendUnique(e.Backends, x.Match.Backends...)
 			e.Profiles = appendUnique(e.Profiles, x.Match.AWSProfiles...)
+			e.KubeContexts = appendUnique(e.KubeContexts, x.Match.KubeContexts...)
+			e.GCPProjects = appendUnique(e.GCPProjects, x.Match.GCPProjects...)
+			e.AzureSubscriptions = appendUnique(e.AzureSubscriptions, x.Match.AzureSubscriptions...)
 		}
 	}
 
@@ -354,6 +370,12 @@ func Build(entries []decisionlog.Entry, opts Options) *Proposal {
 			e.Backends = appendUnique(e.Backends, s.value)
 		case "profile":
 			e.Profiles = appendUnique(e.Profiles, s.value)
+		case "kube context":
+			e.KubeContexts = appendUnique(e.KubeContexts, s.value)
+		case "GCP project":
+			e.GCPProjects = appendUnique(e.GCPProjects, s.value)
+		case "Azure subscription":
+			e.AzureSubscriptions = appendUnique(e.AzureSubscriptions, s.value)
 		}
 	}
 
@@ -503,6 +525,15 @@ func (p *Proposal) YAML() string {
 			if len(e.Profiles) > 0 {
 				w("      aws_profiles: %s\n", list(e.Profiles))
 			}
+			if len(e.KubeContexts) > 0 {
+				w("      kube_contexts: %s\n", list(e.KubeContexts))
+			}
+			if len(e.GCPProjects) > 0 {
+				w("      gcp_projects: %s\n", list(e.GCPProjects))
+			}
+			if len(e.AzureSubscriptions) > 0 {
+				w("      azure_subscriptions: %s\n", list(e.AzureSubscriptions))
+			}
 		}
 	} else if len(p.Unclassified) > 0 {
 		w("environments:   # none proposed; the directories below need a tier from you\n")
@@ -525,7 +556,8 @@ func (p *Proposal) YAML() string {
 	}
 	if len(p.Loose) > 0 {
 		w("# Signals seen without a name hint; add the ones that identify an environment\n")
-		w("# to its match (workspaces, backends, aws_profiles):\n")
+		w("# to its match (workspaces, backends, aws_profiles, kube_contexts, gcp_projects,\n")
+		w("# azure_subscriptions):\n")
 		for _, l := range p.Loose {
 			w("#   %s\n", l)
 		}

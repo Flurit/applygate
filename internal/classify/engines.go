@@ -362,6 +362,7 @@ func awsArgs(base Action, args []shell.Word) (Action, bool) {
 func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 	a := base
 	a.Engine = "kubectl"
+	a.Target = flagValue(args, "--context")
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		t := args[i].Text
@@ -401,6 +402,7 @@ func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 func helmArgs(base Action, args []shell.Word) (Action, bool) {
 	a := base
 	a.Engine = "helm"
+	a.Target = flagValue(args, "--kube-context")
 	pos, dynamic := positionals(args, map[string]bool{"-n": true, "--namespace": true, "--kube-context": true, "--kubeconfig": true,
 		"-f": true, "--values": true, "--set": true, "--set-string": true, "--version": true, "-o": true, "--output": true, "--repo": true})
 	if dynamic {
@@ -429,6 +431,11 @@ func helmArgs(base Action, args []shell.Word) (Action, bool) {
 func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
 	a := base
 	a.Engine = name
+	if name == "gcloud" {
+		a.Target = flagValue(args, "--project")
+	} else {
+		a.Target = flagValue(args, "--subscription")
+	}
 	pos, dynamic := positionals(args, map[string]bool{"-n": true, "--name": true, "-g": true, "--resource-group": true, "--subscription": true,
 		"--query": true, "-o": true, "--output": true, "--project": true, "--zone": true, "--region": true, "--format": true, "--filter": true,
 		"--account": true, "--configuration": true, "-l": true, "--location": true})
@@ -457,6 +464,21 @@ func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
 	}
 	a.Class, a.Why = CloudWrite, name+" "+strings.Join(pos, " ")+" changes resources"
 	return a, true
+}
+
+// flagValue returns the value of a flag given as "--name value" or
+// "--name=value"; the last one wins, as in the CLIs.
+func flagValue(args []shell.Word, name string) string {
+	v := ""
+	for i, w := range args {
+		switch {
+		case w.Text == name && i+1 < len(args):
+			v = args[i+1].Text
+		case strings.HasPrefix(w.Text, name+"="):
+			v = strings.TrimPrefix(w.Text, name+"=")
+		}
+	}
+	return v
 }
 
 // positionals returns the non-flag words; flags in valued take the next word.

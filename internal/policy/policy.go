@@ -148,23 +148,27 @@ type Deps struct {
 
 // ActionResult is the decision for one classified action.
 type ActionResult struct {
-	Class      classify.Class      `json:"class"`
-	Engine     string              `json:"engine,omitempty"`
-	Command    string              `json:"command"`
-	Why        string              `json:"why"`
-	Via        []string            `json:"via,omitempty"`
-	Dir        string              `json:"dir,omitempty"`
-	Tier       config.Tier         `json:"tier,omitempty"`
-	Env        string              `json:"environment,omitempty"`
-	Matched    []string            `json:"matched,omitempty"`
-	Workspace  string              `json:"workspace,omitempty"`
-	Backend    string              `json:"backend,omitempty"`
-	Profile    string              `json:"aws_profile,omitempty"`
-	PlanFile   string              `json:"plan_file,omitempty"`
-	PlanSHA256 string              `json:"plan_sha256,omitempty"`
-	Findings   []preflight.Finding `json:"findings,omitempty"`
-	Verdict    Verdict             `json:"verdict"`
-	NextStep   string              `json:"next_step,omitempty"`
+	Class     classify.Class `json:"class"`
+	Engine    string         `json:"engine,omitempty"`
+	Command   string         `json:"command"`
+	Why       string         `json:"why"`
+	Via       []string       `json:"via,omitempty"`
+	Dir       string         `json:"dir,omitempty"`
+	Tier      config.Tier    `json:"tier,omitempty"`
+	Env       string         `json:"environment,omitempty"`
+	Matched   []string       `json:"matched,omitempty"`
+	Workspace string         `json:"workspace,omitempty"`
+	Backend   string         `json:"backend,omitempty"`
+	Profile   string         `json:"aws_profile,omitempty"`
+	// The cluster or cloud a kubectl, helm, gcloud or az command targets.
+	KubeContext       string              `json:"kube_context,omitempty"`
+	GCPProject        string              `json:"gcp_project,omitempty"`
+	AzureSubscription string              `json:"azure_subscription,omitempty"`
+	PlanFile          string              `json:"plan_file,omitempty"`
+	PlanSHA256        string              `json:"plan_sha256,omitempty"`
+	Findings          []preflight.Finding `json:"findings,omitempty"`
+	Verdict           Verdict             `json:"verdict"`
+	NextStep          string              `json:"next_step,omitempty"`
 }
 
 // Decision is the outcome for one event.
@@ -338,6 +342,24 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		sig.AWSProfile = p
 	}
 	r.Profile = sig.AWSProfile
+	// A kubectl, helm, gcloud or az command targets the cluster, project or
+	// subscription its command line names, else the one the CLI's own local
+	// configuration selects.
+	switch a.Engine {
+	case "kubectl", "helm":
+		if sig.KubeContext = a.Target; sig.KubeContext == "" {
+			sig.KubeContext = preflight.KubeContext(env, deps.ReadFile)
+		}
+	case "gcloud":
+		if sig.GCPProject = a.Target; sig.GCPProject == "" {
+			sig.GCPProject = preflight.GCPProject(env, deps.ReadFile)
+		}
+	case "az":
+		if sig.AzureSubscription = a.Target; sig.AzureSubscription == "" {
+			sig.AzureSubscription, sig.AzureSubscriptionID = preflight.AzureSubscription(env, deps.ReadFile)
+		}
+	}
+	r.KubeContext, r.GCPProject, r.AzureSubscription = sig.KubeContext, sig.GCPProject, sig.AzureSubscription
 	if deps.Account != nil && (tf || a.Engine == "aws") && a.Class != classify.ReadOnly {
 		if acct, err := deps.Account(sig.AWSProfile); err == nil {
 			sig.AWSAccount = acct

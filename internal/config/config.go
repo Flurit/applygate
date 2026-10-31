@@ -119,6 +119,10 @@ type Match struct {
 	Backends    []string `yaml:"backends"` // "s3://bucket/key-glob"
 	AWSProfiles []string `yaml:"aws_profiles"`
 	AWSAccounts []string `yaml:"aws_accounts"`
+	// The cluster or cloud a kubectl, helm, gcloud or az command targets.
+	KubeContexts       []string `yaml:"kube_contexts"`
+	GCPProjects        []string `yaml:"gcp_projects"`
+	AzureSubscriptions []string `yaml:"azure_subscriptions"` // names or ids
 }
 
 // PlanGate configures plan rules.
@@ -477,6 +481,13 @@ type Signals struct {
 	Backend    string // "s3://bucket/key" or "local" or ""
 	AWSProfile string
 	AWSAccount string
+	// KubeContext, GCPProject and AzureSubscription are what a kubectl or
+	// helm, gcloud or az command targets; AzureSubscriptionID is the id of
+	// the subscription when its name is known too.
+	KubeContext         string
+	GCPProject          string
+	AzureSubscription   string
+	AzureSubscriptionID string
 	// BackendConfig is the -backend-config file or value an init in the
 	// same command points at; only used for name hints.
 	BackendConfig string
@@ -574,6 +585,24 @@ func (c *Config) Resolve(s Signals) Resolution {
 				consider(e.Name, e.Tier, "AWS account "+s.AWSAccount)
 			}
 		}
+		for _, k := range m.KubeContexts {
+			if s.KubeContext != "" && globEq(k, s.KubeContext) {
+				consider(e.Name, e.Tier, "kube context "+s.KubeContext)
+			}
+		}
+		for _, g := range m.GCPProjects {
+			if s.GCPProject != "" && globEq(g, s.GCPProject) {
+				consider(e.Name, e.Tier, "GCP project "+s.GCPProject)
+			}
+		}
+		for _, z := range m.AzureSubscriptions {
+			for _, v := range []string{s.AzureSubscription, s.AzureSubscriptionID} {
+				if v != "" && globEq(z, v) {
+					consider(e.Name, e.Tier, "Azure subscription "+v)
+					break
+				}
+			}
+		}
 	}
 	if c.UseNameHints() {
 		rel := s.Dir
@@ -582,7 +611,8 @@ func (c *Config) Resolve(s Signals) Resolution {
 				rel = r
 			}
 		}
-		hints := []struct{ what, v string }{{"path", rel}, {"workspace", s.Workspace}, {"backend", s.Backend}, {"AWS profile", s.AWSProfile}, {"backend config", s.BackendConfig}}
+		hints := []struct{ what, v string }{{"path", rel}, {"workspace", s.Workspace}, {"backend", s.Backend}, {"AWS profile", s.AWSProfile}, {"backend config", s.BackendConfig},
+			{"kube context", s.KubeContext}, {"GCP project", s.GCPProject}, {"Azure subscription", s.AzureSubscription}}
 		for _, k := range BackendHintKeys {
 			// Values already in the backend URL were checked above.
 			if v := s.BackendValues[k]; v != "" && !strings.Contains(s.Backend, v) {

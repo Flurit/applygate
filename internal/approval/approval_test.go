@@ -79,12 +79,14 @@ func TestKeyBindsContext(t *testing.T) {
 	ev, d := asked("aaa")
 	base := Key(ev, d)
 	for name, change := range map[string]func(*policy.Event, *policy.Decision){
-		"command": func(e *policy.Event, _ *policy.Decision) { e.Command += " -lock=false" },
-		"cwd":     func(e *policy.Event, _ *policy.Decision) { e.Cwd = "/r/envs/prod" },
-		"session": func(e *policy.Event, _ *policy.Decision) { e.Session = "s2" },
-		"agent":   func(e *policy.Event, _ *policy.Decision) { e.Agent = "cursor" },
-		"tier":    func(_ *policy.Event, d *policy.Decision) { d.Actions[0].Tier = config.Protected },
-		"profile": func(_ *policy.Event, d *policy.Decision) { d.Actions[0].Profile = "prod-admin" },
+		"command":      func(e *policy.Event, _ *policy.Decision) { e.Command += " -lock=false" },
+		"cwd":          func(e *policy.Event, _ *policy.Decision) { e.Cwd = "/r/envs/prod" },
+		"session":      func(e *policy.Event, _ *policy.Decision) { e.Session = "s2" },
+		"agent":        func(e *policy.Event, _ *policy.Decision) { e.Agent = "cursor" },
+		"tier":         func(_ *policy.Event, d *policy.Decision) { d.Actions[0].Tier = config.Protected },
+		"profile":      func(_ *policy.Event, d *policy.Decision) { d.Actions[0].Profile = "prod-admin" },
+		"kube context": func(_ *policy.Event, d *policy.Decision) { d.Actions[0].KubeContext = "prod-eks" },
+		"gcp project":  func(_ *policy.Event, d *policy.Decision) { d.Actions[0].GCPProject = "acme-prod" },
 	} {
 		e, dd := asked("aaa")
 		change(&e, &dd)
