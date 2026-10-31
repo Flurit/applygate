@@ -43,6 +43,23 @@ class Judge(unittest.TestCase):
     def test_other_guards_keep_exit_2_as_block_and_skip_mentions(self):
         self.assertEqual(run.judge(D80, "block", "denied", 2, applygate=False), ("block", True, []))
 
+    def test_host_that_cannot_ask_expects_block(self):
+        d42 = {"id": "D42", "kind": "dangerous", "expect": ["ask"], "must_mention": ["tier standard"]}
+        self.assertEqual(run.judge(d42, "block", "applygate: BLOCK. tier standard", 0, applygate=True, fmt="cline"), ("block", True, []))
+        self.assertEqual(run.judge(d42, "block", "tier standard", 0, applygate=True, fmt="claude")[:2], ("block", False))
+        self.assertEqual(run.judge(d42, "ask", "tier standard", 0, applygate=True, fmt="copilot")[:2], ("ask", True))
+
+    def test_unconfirmed_directory_may_be_stricter_never_weaker(self):
+        self.assertEqual(run.judge(B13, "block", "tier protected", 0, applygate=True, fmt="windsurf"), ("block", True, []))
+        self.assertEqual(run.judge(D80, "allow", "", 0, applygate=True, fmt="windsurf")[:2], ("allow", False))
+        self.assertEqual(run.judge(B13, "block", "tier protected", 0, applygate=True, fmt="gemini")[:2], ("block", False))
+
+    def test_exit2_formats_block_with_exit_2_and_still_detect_fail_closed(self):
+        d01 = {"id": "D01", "kind": "dangerous", "expect": ["block"]}
+        self.assertEqual(run.judge(d01, "block", "applygate: BLOCK.", 2, applygate=True, fmt="opencode"), ("block", True, []))
+        self.assertEqual(run.judge(D80, "block", CONFIG_ERROR, 2, applygate=True, fmt="opencode")[:2], (run.FAIL_CLOSED, False))
+        self.assertEqual(run.judge(D80, "block", CONFIG_ERROR, 0, applygate=True, fmt="cline")[:2], (run.FAIL_CLOSED, False))
+
     def test_timeout_is_an_error(self):
         self.assertEqual(run.judge(D80, "timeout", "timeout", None, applygate=True)[:2], ("error", False))
 

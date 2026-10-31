@@ -131,7 +131,7 @@ var (
 	// The directory names need a path boundary, so provider.aws and
 	// module.aws in HCL text are not credential files and applygate matches
 	// only as a path segment or the config file.
-	guardText = regexp.MustCompile(`(?i)\.applygate\.ya?ml|\.seatbelt\.ya?ml|(?:^|` + pathEdge + `)(?:applygate|seatbelt)/|\.claude/settings[\w.]*|managed-settings[\w.]*|\.codex/(?:hooks\.json|config\.toml)|\.cursor/hooks\.json|(?:^|` + pathEdge + `|~)\.aws/(?:credentials|config)\b|~/\.aws\b|\.terraform\.d/credentials\.tfrc\.json|\.terraformrc\b|decisions\.jsonl|(?:^|` + pathEdge + `)\.(?:claude|codex|cursor|aws|terraform\.d)(?:$|` + pathEdge + `)|\.git/hooks`)
+	guardText = regexp.MustCompile(`(?i)\.applygate\.ya?ml|\.seatbelt\.ya?ml|(?:^|` + pathEdge + `)(?:applygate|seatbelt)/|\.claude/settings[\w.]*|managed-settings[\w.]*|\.codex/(?:hooks\.json|config\.toml)|\.cursor/hooks\.json|\.gemini/settings\.json|\.github/hooks/|\.github/copilot/settings[\w.]*|\.copilot/(?:hooks/|settings\.json)|\.windsurf/hooks\.json|\.codeium/(?:windsurf/)?hooks\.json|\.devin/(?:config|hooks\.v1)\.json|devin/config\.json|opencode/plugins/|\.clinerules/hooks/|\.cline/hooks/|Cline/Hooks/|(?:^|` + pathEdge + `|~)\.aws/(?:credentials|config)\b|~/\.aws\b|\.terraform\.d/credentials\.tfrc\.json|\.terraformrc\b|decisions\.jsonl|(?:^|` + pathEdge + `)\.(?:claude|codex|cursor|aws|terraform\.d)(?:$|` + pathEdge + `)|\.git/hooks`)
 	// stateTarget matches state, lock and provider cache files: editing
 	// those is state surgery, not a file edit.
 	stateTarget = regexp.MustCompile(`\.tfstate|\.terraform/|\.terraform\.lock\.hcl`)

@@ -33,7 +33,17 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 PACK = os.path.join(HERE, "pack")
 
-FORMATS = ("claude", "codex", "cursor")
+FORMATS = ("claude", "codex", "cursor", "copilot", "gemini", "windsurf", "devin", "opencode", "cline")
+# Hosts that cannot show an approval prompt: an expected ask is enforced as a block.
+CANNOT_ASK = {"codex", "cursor", "gemini", "windsurf", "devin", "opencode", "cline"}
+# Formats whose event does not carry the command's directory (Codex 0.165.0
+# and 0.166.0, Cursor's beforeShellExecution, Copilot CLI, Windsurf, Devin): applygate judges at the
+# most protected tier under the directory it has, so a stricter verdict than
+# expected is correct there and the reason, which names the tier, is not compared.
+DIR_UNCONFIRMED = {"codex", "cursor", "copilot", "windsurf", "devin"}
+# Formats whose block is exit 2 with the reason on stderr, not a JSON decision.
+EXIT2_BLOCKS = {"windsurf", "devin", "opencode"}
+RANK = {"allow": 0, "ask": 1, "block": 2}
 COVERAGES = ("command", "plan-aware", "context-aware")
 PROBE_COMMAND = "terraform destroy -auto-approve"
 PROBE_BIG_BYTES = 2 * 1024 * 1024
@@ -81,6 +91,9 @@ def event_claude(s, repo, home):
 
 def event_codex(s, repo, home):
     # Codex PreToolUse: same keys as Claude Code (tool_name, tool_input.command, cwd, session_id).
+    # Codex has no read tool (it reads files through shell commands), so a Read cannot be replayed.
+    if s["tool"] == "Read":
+        return None
     return {
         "session_id": "replay-" + s["id"],
         "cwd": os.path.join(repo, s.get("cwd", "")),
@@ -103,6 +116,74 @@ def event_cursor(s, repo, home):
         "cwd": os.path.join(repo, s.get("cwd", "")),
         "workspace_roots": [repo],
     }
+
+
+def _path(s, repo, home):
+    return _tool_input(s, repo, home).get("file_path", "")
+
+
+def event_copilot(s, repo, home):
+    # Copilot CLI preToolUse: camelCase, toolArgs as a JSON string.
+    ti = _tool_input(s, repo, home)
+    tool, args = {"Read": ("view", {"path": ti.get("file_path")}),
+                  "Write": ("create", {"path": ti.get("file_path"), "file_text": ti.get("content")}),
+                  "Edit": ("edit", {"path": ti.get("file_path")})}.get(s["tool"], ("bash", {"command": ti.get("command")}))
+    return {"sessionId": "replay-" + s["id"], "timestamp": 1, "cwd": os.path.join(repo, s.get("cwd", "")),
+            "toolName": tool, "toolArgs": json.dumps(args)}
+
+
+def event_gemini(s, repo, home):
+    # Gemini CLI BeforeTool: cwd is the project root, the shell command's directory is dir_path.
+    ti = _tool_input(s, repo, home)
+    tool, args = {"Read": ("read_file", {"file_path": ti.get("file_path")}),
+                  "Write": ("write_file", {"file_path": ti.get("file_path"), "content": ti.get("content")}),
+                  "Edit": ("replace", {"file_path": ti.get("file_path")})}.get(
+        s["tool"], ("run_shell_command", {"command": ti.get("command"), "dir_path": s.get("cwd", "")}))
+    return {"session_id": "replay-" + s["id"], "cwd": repo, "hook_event_name": "BeforeTool", "tool_name": tool, "tool_input": args}
+
+
+def event_windsurf(s, repo, home):
+    # Windsurf Cascade: agent_action_name and tool_info.
+    ti = _tool_input(s, repo, home)
+    action, info = {"Read": ("pre_read_code", {"file_path": ti.get("file_path")}),
+                    "Write": ("pre_write_code", {"file_path": ti.get("file_path"), "edits": []}),
+                    "Edit": ("pre_write_code", {"file_path": ti.get("file_path"), "edits": []})}.get(
+        s["tool"], ("pre_run_command", {"command_line": ti.get("command"), "cwd": os.path.join(repo, s.get("cwd", ""))}))
+    return {"agent_action_name": action, "trajectory_id": "replay-" + s["id"], "tool_info": info}
+
+
+def event_devin(s, repo, home):
+    # Devin PreToolUse: shell tool exec, no directory in the event; the
+    # project directory reaches the hook as DEVIN_PROJECT_DIR (the "_env" key
+    # is passed as environment, not sent). File tool names are not documented.
+    if s["tool"] != "Bash":
+        return None
+    return {"hook_event_name": "PreToolUse", "tool_name": "exec", "session_id": "replay-" + s["id"],
+            "tool_input": {"command": _tool_input(s, repo, home).get("command")},
+            "_env": {"DEVIN_PROJECT_DIR": os.path.join(repo, s.get("cwd", ""))}}
+
+
+def event_opencode(s, repo, home):
+    # What applygate's OpenCode plugin sends: the instance directory as cwd,
+    # the shell tool's workdir relative to it.
+    ti = _tool_input(s, repo, home)
+    tool, args = {"Read": ("read", {"filePath": ti.get("file_path")}),
+                  "Write": ("write", {"filePath": ti.get("file_path"), "content": ti.get("content")}),
+                  "Edit": ("edit", {"filePath": ti.get("file_path")})}.get(s["tool"], ("bash", {"command": ti.get("command")}))
+    if tool == "bash" and s.get("cwd"):
+        args["workdir"] = s["cwd"]
+    return {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": args, "cwd": repo, "session_id": "replay-" + s["id"]}
+
+
+def event_cline(s, repo, home):
+    # Cline (VS Code) PreToolUse: parameters are strings; commands run in the first workspace root.
+    ti = _tool_input(s, repo, home)
+    tool, params = {"Read": ("read_file", {"path": ti.get("file_path", "")}),
+                    "Write": ("write_to_file", {"path": ti.get("file_path", ""), "content": ti.get("content", "")}),
+                    "Edit": ("replace_in_file", {"path": ti.get("file_path", ""), "diff": "x"})}.get(
+        s["tool"], ("execute_command", {"command": ti.get("command", ""), "requires_approval": "false"}))
+    return {"clineVersion": "4.1.26", "hookName": "PreToolUse", "taskId": "replay-" + s["id"],
+            "workspaceRoots": [os.path.join(repo, s.get("cwd", ""))], "preToolUse": {"toolName": tool, "parameters": params}}
 
 
 # ---------------------------------------------------------- output parsers
@@ -131,6 +212,10 @@ def parse_codex(proc):
 
 
 def parse_cursor(proc):
+    # Exit 2 blocks (cursor.com/docs/hooks); other non-zero exits fail open
+    # unless the hook has failClosed, which a probe cannot assume.
+    if proc.returncode == 2:
+        return "block", proc.stderr
     if proc.returncode != 0:
         return "error", proc.stderr
     out = proc.stdout.strip()
@@ -146,8 +231,57 @@ def parse_cursor(proc):
     return {"deny": "block", "ask": "ask", "allow": "allow"}.get(p, "error"), o.get("user_message") or o.get("agent_message") or ""
 
 
-FORMAT_EVENT = {"claude": event_claude, "codex": event_codex, "cursor": event_cursor}
-FORMAT_PARSE = {"claude": parse_claude, "codex": parse_codex, "cursor": parse_cursor}
+def _exit2_or(proc, json_parse):
+    if proc.returncode == 2:
+        return "block", proc.stderr
+    if proc.returncode != 0:
+        return "error", proc.stderr
+    return json_parse(proc.stdout.strip())
+
+
+def _json_decision(out, key, verdicts, *msg_keys):
+    if not out:
+        return "allow", ""
+    try:
+        o = json.loads(out)
+    except json.JSONDecodeError:
+        return "error", out
+    if not isinstance(o, dict):
+        return "error", out
+    v = verdicts.get(json.dumps(o.get(key)).strip('"'), "error")
+    return v, next((o[k] for k in msg_keys if o.get(k)), "")
+
+
+def parse_copilot(proc):
+    return _exit2_or(proc, lambda out: _json_decision(out, "permissionDecision", {"allow": "allow", "deny": "block", "ask": "ask"}, "permissionDecisionReason"))
+
+
+def parse_gemini(proc):
+    # JSON on stdout governs whatever the exit code.
+    if proc.returncode not in (0, 2):
+        return "error", proc.stderr
+    if not proc.stdout.strip() and proc.returncode == 2:
+        return "block", proc.stderr
+    return _json_decision(proc.stdout.strip(), "decision", {"allow": "allow", "deny": "block", "block": "block"}, "reason")
+
+
+def parse_exit2(proc):
+    # Windsurf, Devin, applygate's OpenCode plugin: exit 2 blocks, exit 0 proceeds.
+    return _exit2_or(proc, lambda out: ("allow", ""))
+
+
+def parse_cline(proc):
+    if proc.returncode != 0:
+        return "error", proc.stderr
+    return _json_decision(proc.stdout.strip(), "cancel", {"false": "allow", "true": "block"}, "errorMessage")
+
+
+FORMAT_EVENT = {"claude": event_claude, "codex": event_codex, "cursor": event_cursor, "copilot": event_copilot,
+                "gemini": event_gemini, "windsurf": event_windsurf, "devin": event_devin, "opencode": event_opencode,
+                "cline": event_cline}
+FORMAT_PARSE = {"claude": parse_claude, "codex": parse_codex, "cursor": parse_cursor, "copilot": parse_copilot,
+                "gemini": parse_gemini, "windsurf": parse_exit2, "devin": parse_exit2, "opencode": parse_exit2,
+                "cline": parse_cline}
 
 
 # --------------------------------------------------------- guard execution
@@ -199,7 +333,7 @@ def guard_version(a, env, tmp):
 FAIL_CLOSED = "fail-closed"
 
 
-def judge(s, verdict, msg, code, applygate):
+def judge(s, verdict, msg, code, applygate, fmt="claude"):
     """Final verdict and pass/fail for one scenario.
 
     For applygate itself (--guard), exit 2 is never a policy decision: its
@@ -211,14 +345,23 @@ def judge(s, verdict, msg, code, applygate):
     a right verdict for the wrong reason fails. Other guards (--guard-cmd)
     are judged on the verdict alone: their exit 2 is a real block and their
     messages differ.
+    In the exit-2 formats (Windsurf, Devin, OpenCode) exit 2 is also how
+    applygate blocks, so there its fail-closed message marks the failure. On a
+    host that cannot ask, an expected ask is expected as a block; where the
+    event does not carry the command's directory, a stricter verdict passes
+    and the reason is not compared (see DIR_UNCONFIRMED).
     Returns (verdict, passed, missing_mentions).
     """
     if verdict == "timeout":
         verdict = "error"
-    if applygate and code == 2:
+    if applygate and ((code == 2 and fmt not in EXIT2_BLOCKS) or "(applygate fails closed here" in (msg or "")):
         verdict = FAIL_CLOSED
-    if verdict not in s["expect"]:
-        return verdict, False, []
+    expect = ["block" if e == "ask" and fmt in CANNOT_ASK else e for e in s["expect"]]
+    if verdict not in expect:
+        stricter = fmt in DIR_UNCONFIRMED and RANK.get(verdict, -1) > RANK.get(expect[-1], 3)
+        return verdict, stricter, []
+    if fmt in DIR_UNCONFIRMED:
+        return verdict, True, []
     missing = [m for m in (s.get("must_mention") or []) if m not in (msg or "")] if applygate else []
     return verdict, not missing, missing
 
@@ -233,9 +376,9 @@ def replay(a, pack, tmp, repo, plans, home, env):
         if ev is None:
             results.append(dict(base, verdict="skipped", pass_=None, ms=None, message="not expressible in " + a.format))
             continue
-        e = dict(env, **(s.get("env") or {}))
+        e = dict(env, **(s.get("env") or {}), **ev.pop("_env", {}))
         verdict, msg, code, ms = run_guard(guard_command(a, plans, s), json.dumps(ev), e, a.timeout, tmp, parse)
-        verdict, passed, missing = judge(s, verdict, msg, code, bool(a.guard))
+        verdict, passed, missing = judge(s, verdict, msg, code, bool(a.guard), a.format)
         results.append(dict(base, verdict=verdict, pass_=passed, ms=ms, message=msg, missing_mentions=missing))
     # keep the historical key name "pass" in the JSON output
     for r in results:
@@ -248,26 +391,27 @@ def replay(a, pack, tmp, repo, plans, home, env):
 # hook semantics: exit 0 without deny/ask -> the action proceeds; exit 2 ->
 # blocked; any other non-zero exit -> non-blocking error, so it proceeds.
 
+# The key whose absence makes an event unreadable, per format.
+PROBE_TOOL_KEY = {"cursor": "command", "copilot": "toolName", "windsurf": "agent_action_name", "cline": "preToolUse"}
+
+
 def probe_inputs(a, repo, home):
     d01 = {"id": "probe", "spec": "probe", "kind": "probe", "title": "", "cwd": "envs/prod",
            "tool": "Bash", "tool_input": {"command": PROBE_COMMAND}}
     build = FORMAT_EVENT[a.format]
-    tool_key = "command" if a.format == "cursor" else "tool_name"
+    tool_key = PROBE_TOOL_KEY.get(a.format, "tool_name")
 
     no_tool = build(d01, repo, home)
     del no_tool[tool_key]
+    no_tool.pop("_env", None)
 
-    bad_cwd = build(d01, repo, home)
-    bad_cwd["cwd"] = os.path.join(repo, "envs", "does-not-exist-" + d01["id"])
+    bad_cwd = build(dict(d01, cwd="envs/does-not-exist-" + d01["id"]), repo, home)
+    bad_cwd.pop("_env", None)
 
-    big = dict(d01, tool_input={"command": ""})
-    big_ev = build(big, repo, home)
     unit = PROBE_COMMAND + "; "
     big_cmd = unit * (PROBE_BIG_BYTES // len(unit) + 1)
-    if a.format == "cursor":
-        big_ev["command"] = big_cmd
-    else:
-        big_ev["tool_input"]["command"] = big_cmd
+    big_ev = build(dict(d01, tool_input={"command": big_cmd}), repo, home)
+    big_ev.pop("_env", None)
 
     return [
         ("malformed JSON", "{not json"),

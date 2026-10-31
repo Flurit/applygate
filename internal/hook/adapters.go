@@ -44,9 +44,39 @@ func ForAgent(name string) (Adapter, error) {
 		return Claude{}, nil
 	case "codex":
 		return Codex{}, nil
+	case "cursor":
+		return Cursor{}, nil
+	case "copilot":
+		return Copilot{}, nil
+	case "gemini":
+		return Gemini{}, nil
+	case "windsurf":
+		return Windsurf{}, nil
+	case "devin":
+		return Devin{}, nil
+	case "opencode":
+		return OpenCode{}, nil
+	case "cline":
+		return Cline{}, nil
 	}
-	return nil, fmt.Errorf("unknown agent %q (supported: claude, codex)", name)
+	return nil, fmt.Errorf("unknown agent %q (supported: %s)", name, strings.Join(Agents, ", "))
 }
+
+// Agents are the adapter names, in the order `applygate hosts` lists them.
+var Agents = []string{"claude", "codex", "cursor", "copilot", "gemini", "windsurf", "devin", "opencode", "cline"}
+
+// eventRenderer is implemented by an adapter whose output depends on the
+// event as well as the decision.
+type eventRenderer interface {
+	RenderEvent(ev policy.Event, d policy.Decision) Output
+}
+
+// passer is implemented by an adapter whose host needs output even for an
+// event applygate does not check (Cursor under failClosed, Cline).
+type passer interface{ Pass() Output }
+
+func (Cursor) Pass() Output { return Output{Stdout: []byte(`{"permission":"allow"}` + "\n")} }
+func (Cline) Pass() Output  { return Output{Stdout: clineOut(false, "")} }
 
 type hookInput struct {
 	SessionID      string          `json:"session_id"`
@@ -112,12 +142,41 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 	case "Read", "Grep", "Glob":
 		ev.Kind, ev.Paths = policy.KindRead, nonEmpty(ti.FilePath, ti.Path)
 	default:
-		ev.Kind = policy.KindOther
 		if isMCPTool(in.ToolName) {
 			ev.Kind, ev.Command = policy.KindMCP, mcpArguments(in.ToolInput)
+			return ev, true, nil
 		}
+		// Cursor, Copilot CLI and Devin also load hooks from
+		// .claude/settings.json and send their own tool names (Shell,
+		// exec, ...). Such a call is judged like that host's own: no ask,
+		// the directory confirmed only by a working_directory field, and a
+		// block rendered as exit 2, which all of them honour.
+		c := call{tool: in.ToolName, input: argObject(in.ToolInput), cwd: in.Cwd, session: in.SessionID, mode: in.PermissionMode}
+		if c.input == nil {
+			c.input = map[string]json.RawMessage{}
+		}
+		fev, err := c.toEvent("claude")
+		if err != nil {
+			return policy.Event{}, false, err
+		}
+		if fev.Kind == policy.KindShell {
+			fev.Cwd, fev.DirKnown = workDir(c.input, in.Cwd)
+		}
+		return fev, true, nil
 	}
 	return ev, true, nil
+}
+
+// claudeTools are the Claude Code tools the Claude adapter judges natively.
+var claudeTools = toolSet("Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "Read", "Grep", "Glob")
+
+// RenderEvent blocks a call from another host that loaded the Claude hook
+// with exit 2, since that host may not read Claude Code's JSON.
+func (c Claude) RenderEvent(ev policy.Event, d policy.Decision) Output {
+	if d.Enforced == policy.Block && !claudeTools[ev.Tool] {
+		return exit2(d.Message)
+	}
+	return c.Render(d)
 }
 
 func (Claude) Render(d policy.Decision) Output {

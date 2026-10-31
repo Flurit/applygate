@@ -84,7 +84,11 @@ func Invocations(res *shell.Result, opt Options) []Action {
 
 func isGuardMention(m string) bool {
 	return strings.Contains(m, ".claude/settings") || strings.Contains(m, "managed-settings") ||
-		strings.Contains(m, ".codex/") || strings.Contains(m, ".applygate.") || strings.Contains(m, ".seatbelt.")
+		strings.Contains(m, ".codex/") || strings.Contains(m, ".applygate.") || strings.Contains(m, ".seatbelt.") ||
+		strings.Contains(m, ".cursor/hooks") || strings.Contains(m, ".gemini/settings") || strings.Contains(m, ".github/hooks") ||
+		strings.Contains(m, ".copilot/") || strings.Contains(m, "hooks.json") || strings.Contains(m, ".devin/") ||
+		strings.Contains(m, "devin/config") || strings.Contains(m, "opencode/plugins") || strings.Contains(m, "/hooks/PreToolUse") ||
+		strings.Contains(m, "Cline/Hooks")
 }
 
 func words(inv shell.Invocation) []string {

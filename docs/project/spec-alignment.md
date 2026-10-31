@@ -12,7 +12,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 |---|---|---|
 | Single local binary with hook adapters, shell-aware analyzer, preflight, plan gate, local log | done | `cmd/applygate`, `internal/*` |
 | Engine-neutral (Terraform and OpenTofu share plan JSON) | done | `internal/classify/engines.go`; the planfile workspace parser was verified on Terraform 1.16.1 only ([limits](../limits.md)) |
-| Agent-neutral with per-agent limits documented | done for Claude Code and Codex | Claude Code and Codex adapters (`internal/hook/adapters.go`); per-host limits are the generated capability table [hosts.md](../hosts.md) (`applygate hosts`, `internal/hook/capabilities.go`, kept current by `TestHostsDocCurrent`), with "not tested" where nothing was verified; a host that does not report the command directory is judged fail-closed ([policy.md](../policy.md) step 4). Cursor, Copilot CLI and OpenCode are listed as not supported. `harness/run.py --format cursor` can replay the pack against a Cursor-format guard |
+| Agent-neutral with per-agent limits documented | done for Claude Code and Codex; adapters from documentation, not tested live, for Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode and Cline | Claude Code and Codex adapters (`internal/hook/adapters.go`), the others in `internal/hook/hosts.go` from the hosts' documentation (`review/host-research/2026-10-31-hook-contracts.md`); per-host limits are the generated capability table [hosts.md](../hosts.md) (`applygate hosts`, `internal/hook/capabilities.go`, kept current by `TestHostsDocCurrent`), with "not tested" where nothing was verified; a host that does not report the command directory is judged fail-closed ([policy.md](../policy.md) step 4). Every cell of a documentation-only host says it was not tested live (`TestDocsOnlyHostsSayNotTested`), and `init` does not install those hooks on its own |
 | Deterministic rules, no model in the decision path | done | no model call anywhere; `docs/threat-model.md` |
 | Parse commands the way the shell does | done | `internal/shell` on mvdan/sh; property and fuzz tests |
 | Judge plans, not only commands | done | `internal/plangate` on `show -json` |
@@ -32,7 +32,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | Stretch S13 (destructive call through a Terraform MCP tool) | partly | MCP calls are logged with their arguments and counted by `report`, not judged; documented in [limits](../limits.md) |
 | Stretch S14 (instruction hidden in a README) | open | needs an end-to-end agent run; the T3 suite exercised live agents but not this case |
 | Ten benign controls | done | B01–B12 cover the spec list; B13–B30 add text-mention, cleanup and S6/S12 controls |
-| Adapters per agent format (Claude Code, Cursor, Codex) | done | `run.py --format claude|codex|cursor` |
+| Adapters per agent format (Claude Code, Cursor, Codex) | done; six more formats from documentation | `run.py --format claude|codex|cursor|copilot|gemini|windsurf|devin|opencode|cline`; `go test ./harness` replays the pack through every adapter |
 | Safe fixtures, no credentials | done | `harness/pack/fixtures/repo`, `terraform_data`-only planfile |
 | Two configurations per guard (default, hardened) | partial | `--config-label` records which configuration ran; no second guard has been run on this pack yet (the v0 comparison numbers come from the original pack, see [harness/README.md](../../harness/README.md)) |
 | Break each guard: malformed event, slow response, crash | partial | `run.py --probes` sends malformed JSON, empty input, missing tool name, missing cwd and a 2 MB command and records whether the action would proceed; Go chaos tests cover timeout, panic and config errors. A deliberately slow guard is not simulated |
@@ -147,4 +147,4 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 
 CI mode as a GitHub Action, planned for v2, shipped early as `action.yml` and `docs/ci.md` (plan-check on a saved plan between plan and apply; also a Terragrunt `before_hook`).
 
-Backup-isolation checks, plan-hash approval with typed confirmation, more agents (Cursor, Copilot CLI, OpenCode), signed receipts, session capture, CloudTrail stamping and `applygate who`. The plan SHA-256 in every plan-gate message is the hook for v2 approval.
+Backup-isolation checks, plan-hash approval with typed confirmation, live tests of the documentation-only adapters (Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode, Cline), signed receipts, session capture, CloudTrail stamping and `applygate who`. The plan SHA-256 in every plan-gate message is the hook for v2 approval.
