@@ -12,6 +12,7 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true
 var foreignInterpreters = map[string]string{
 	"python": "-c", "python3": "-c", "python2": "-c", "perl": "-e", "ruby": "-e",
 	"node": "-e", "deno": "eval", "php": "-r", "pwsh": "-c", "powershell": "-c", "osascript": "-e",
+	"expect": "-c",
 }
 
 func base(name string) string { return filepath.Base(name) }
@@ -225,6 +226,12 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 				a.reparse(rest[i+1:i+2], st, via, "script -c", depth)
 				return
 			}
+		}
+		// BSD and macOS: script [-adkpqr] [-F pipe] [-t time] file command...
+		// runs the trailing argv in a new pseudo-terminal.
+		if r := skipFlags(rest, map[string]bool{"-F": true, "-t": true, "-T": true}); len(r) > 1 {
+			a.call(r[1:], redirs, cmdSt, st, append(via, "script"), depth+1, in)
+			return
 		}
 		record()
 		return
@@ -649,7 +656,7 @@ func joinWords(ws []Word) string {
 	return strings.Join(parts, " ")
 }
 
-var mentionRe = regexp.MustCompile(`(?i)\b(terraform|tofu|terragrunt|kubectl)\b|\baws\s+[a-z0-9-]+\s+[a-z0-9-]+|\.claude/settings|managed-settings|\.codex/(hooks\.json|config\.toml)|\.applygate\.ya?ml|\.seatbelt\.ya?ml|\.aws/credentials|\.tfstate\b|\b(boto3|botocore|aws-sdk)\b|@aws-sdk/|github\.com/aws/aws-sdk-go`)
+var mentionRe = regexp.MustCompile(`(?i)\bapplygate\W+(approve|telemetry\W+o(n|ff)|init|disable|hook\W+(remove|uninstall))\b|\b(terraform|tofu|terragrunt|kubectl)\b|\baws\s+[a-z0-9-]+\s+[a-z0-9-]+|\.claude/settings|managed-settings|\.codex/(hooks\.json|config\.toml)|\.applygate\.ya?ml|\.seatbelt\.ya?ml|\.aws/credentials|\.tfstate\b|\b(boto3|botocore|aws-sdk)\b|@aws-sdk/|github\.com/aws/aws-sdk-go`)
 
 // Mentions returns the infrastructure or guard-file words found in text.
 func Mentions(text string) []string {

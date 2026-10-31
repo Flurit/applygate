@@ -10,8 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
+	"github.com/Flurit/applygate/internal/approval"
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/hook"
@@ -45,13 +48,16 @@ var applyExec = func(bin string, args []string, dir string, stdin io.Reader, std
 }
 
 // isTerminal reports whether r is an interactive terminal; tests replace it.
+// It asks the terminal driver (isatty), so /dev/null and other character
+// devices do not count.
 var isTerminal = func(r io.Reader) bool {
 	f, ok := r.(*os.File)
 	if !ok {
 		return false
 	}
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	var t syscall.Termios
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(ioctlGetTermios), uintptr(unsafe.Pointer(&t)))
+	return errno == 0
 }
 
 func cmdApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -140,7 +146,7 @@ func cmdApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		logIt("")
 		return 3
 	case policy.Ask:
-		token, tier := confirmToken(d)
+		token, tier := approval.ConfirmToken(d)
 		switch {
 		case isTerminal(stdin):
 			fmt.Fprintf(stderr, "\napplygate: this apply needs your confirmation. Type the environment name %q to continue, anything else to abort: ", token)
@@ -170,31 +176,6 @@ func cmdApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		logIt("")
 	}
 	return applyExec(*engine, engineArgs, dir, stdin, stdout, stderr)
-}
-
-// confirmToken is what the person must type: the environment name of the
-// action that asked, or its tier when the environment is unnamed; and the
-// most protected tier among the actions that asked.
-func confirmToken(d policy.Decision) (string, config.Tier) {
-	token := ""
-	var tier config.Tier
-	for _, a := range d.Actions {
-		if a.Verdict == policy.Allow {
-			continue
-		}
-		if tier == "" || a.Tier.Rank() > tier.Rank() {
-			tier = a.Tier
-			if a.Env != "" && !strings.HasPrefix(a.Env, "unknown") {
-				token = a.Env
-			} else {
-				token = string(a.Tier)
-			}
-		}
-	}
-	if token == "" {
-		token = "yes"
-	}
-	return token, tier
 }
 
 // quoteCommand renders argv as a shell command line the analyzer parses back

@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Flurit/applygate/internal/approval"
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/policy"
 )
@@ -668,5 +669,69 @@ func TestCodexProtectedWorkdirUnderDisposableRoot(t *testing.T) {
 		Options{NoLog: true, NoGit: true, Env: map[string]string{}})
 	if got := decision(t, o); got != "allow" {
 		t.Fatalf("destroy at a disposable root: got %s", got)
+	}
+}
+
+func TestApprovalFlow(t *testing.T) {
+	// Codex cannot ask, so a state rm in a disposable tier (ask) is enforced
+	// as a block that names an approval ID; once a person approves it, the
+	// identical retry is allowed exactly once.
+	root := setup(t, "enforce", "auto")
+	store := filepath.Join(t.TempDir(), "approvals.json")
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}, Approvals: store, Now: func() time.Time { return now }}
+	in := event("Bash", filepath.Join(root, "dev"), map[string]any{"command": "terraform state rm aws_s3_bucket.logs"})
+	call := func(a Adapter) Output { return Run(a, strings.NewReader(in), opt) }
+
+	o := call(Codex{})
+	msg := string(o.Stdout) + o.Stderr
+	if decision(t, o) == "allow" || !strings.Contains(msg, "applygate approve ") {
+		t.Fatalf("want a block naming an approval, got %s: %s", decision(t, o), msg)
+	}
+	recs, _ := approval.List(store, now)
+	if len(recs) != 1 || !strings.Contains(msg, recs[0].ID) {
+		t.Fatalf("request not recorded or ID not shown: %+v\n%s", recs, msg)
+	}
+	if _, err := approval.Approve(store, recs[0].ID, now); err != nil {
+		t.Fatal(err)
+	}
+	if o := call(Codex{}); decision(t, o) != "allow" {
+		t.Fatalf("approved retry: %s %s%s", decision(t, o), o.Stdout, o.Stderr)
+	}
+	if o := call(Codex{}); decision(t, o) == "allow" {
+		t.Fatal("approval was used twice")
+	}
+}
+
+func TestApprovalNotOffered(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "approvals.json")
+	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}, Approvals: store}
+	root := setup(t, "enforce", "auto")
+	cases := map[string]struct {
+		a   Adapter
+		dir string
+		cmd string
+	}{
+		// A block is never approvable.
+		"block": {Codex{}, "prod", "terraform destroy -auto-approve"},
+		// Claude Code shows its own prompt for an ask.
+		"host asks": {Claude{}, "dev", "terraform state rm aws_s3_bucket.logs"},
+	}
+	for name, c := range cases {
+		o := Run(c.a, strings.NewReader(event("Bash", filepath.Join(root, c.dir), map[string]any{"command": c.cmd})), opt)
+		if msg := string(o.Stdout) + o.Stderr; strings.Contains(msg, "applygate approve") {
+			t.Errorf("%s: approval offered: %s", name, msg)
+		}
+	}
+	if recs, _ := approval.List(store, time.Now()); len(recs) != 0 {
+		t.Fatalf("requests recorded: %+v", recs)
+	}
+	// A repository config can switch approvals off.
+	cfg := filepath.Join(root, ".applygate.yaml")
+	b, _ := os.ReadFile(cfg)
+	os.WriteFile(cfg, append(b, []byte("approvals: false\n")...), 0o644)
+	o := Run(Codex{}, strings.NewReader(event("Bash", filepath.Join(root, "dev"), map[string]any{"command": "terraform state rm x"})), opt)
+	if strings.Contains(string(o.Stdout)+o.Stderr, "applygate approve") {
+		t.Fatal("approval offered with approvals: false")
 	}
 }

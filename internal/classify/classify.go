@@ -83,7 +83,7 @@ func Invocations(res *shell.Result, opt Options) []Action {
 }
 
 func isGuardMention(m string) bool {
-	return strings.Contains(m, ".claude/settings") || strings.Contains(m, "managed-settings") ||
+	return strings.HasPrefix(m, "applygate") || strings.Contains(m, ".claude/settings") || strings.Contains(m, "managed-settings") ||
 		strings.Contains(m, ".codex/") || strings.Contains(m, ".applygate.") || strings.Contains(m, ".seatbelt.") ||
 		strings.Contains(m, ".cursor/hooks") || strings.Contains(m, ".gemini/settings") || strings.Contains(m, ".github/hooks") ||
 		strings.Contains(m, ".copilot/") || strings.Contains(m, "hooks.json") || strings.Contains(m, ".devin/") ||
@@ -176,6 +176,11 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 			// Only a person turns usage reporting on or off.
 			a := base
 			a.Class, a.Engine, a.Why = Tampering, "applygate", "changes applygate's telemetry setting, which only a person may do"
+			out = append(out, a)
+		case len(args) >= 1 && args[0].Text == "approve":
+			// An agent may not approve its own blocked call.
+			a := base
+			a.Class, a.Engine, a.Why = Tampering, "applygate", "approves a call applygate stopped, which only a person may do"
 			out = append(out, a)
 		}
 		return out
