@@ -62,7 +62,7 @@ on every push against two real AWS-provider plans.
 
 `scripts/ci-plan-check.sh` is what the action runs and has no GitHub-specific
 dependency beyond writing `$GITHUB_OUTPUT` and `$GITHUB_STEP_SUMMARY` when
-they exist. Install the release (the README's verify steps, or `install.sh`
+they exist. Install the release (the verify steps in [install.md](install.md#verify-a-download), or `install.sh`
 with `APPLYGATE_VERIFY_SIGNATURE=require`), then:
 
 ```bash

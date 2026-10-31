@@ -40,4 +40,4 @@ applygate is pre-1.0. Only the latest release receives security fixes.
 
 ## Verifying releases
 
-Every release publishes `checksums.txt`, signed keylessly with cosign (`checksums.txt.sigstore.json`), plus a GitHub build-provenance attestation for each archive. See [Verify a download](README.md#verify-a-download).
+Every release publishes `checksums.txt`, signed keylessly with cosign (`checksums.txt.sigstore.json`), plus a GitHub build-provenance attestation for each archive. See [Verify a download](docs/install.md#verify-a-download).
