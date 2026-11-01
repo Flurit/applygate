@@ -6,7 +6,7 @@
 [![CI](https://github.com/Flurit/applygate/actions/workflows/ci.yml/badge.svg)](https://github.com/Flurit/applygate/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/Flurit/applygate)](LICENSE)
 
-applygate checks every command a coding agent is about to run against your Terraform or OpenTofu infrastructure and answers **allow**, **ask** or **block**, with a reason the agent can act on. It runs locally as the agent's pre-tool-call hook. No model is involved in the decision, and by default nothing leaves your machine.
+applygate checks every command a coding agent is about to run against your Terraform or OpenTofu infrastructure and answers **allow**, **ask** or **block**, with a reason the agent can act on. It runs locally as the agent's pre-tool-call hook. By default no model is involved in the decision and nothing leaves your machine; an opt-in [model judge](docs/judge.md) can add a prompt for calls the rules do not recognize, never remove one.
 
 <p align="center">
   <img src="docs/assets/demo.svg" alt="applygate blocking terraform destroy in prod, also when it is hidden in base64, while allowing a commit message that mentions it" width="820">
