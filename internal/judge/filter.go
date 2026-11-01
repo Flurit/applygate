@@ -16,9 +16,9 @@ import (
 //
 //   - MCP calls always go: a tool the table does not know is what the judge
 //     is for.
-//   - File writes go only when the path is one that acts later without the
-//     agent: CI and scheduled jobs, deployment configuration, and
-//     instructions for agents and reviewers.
+//   - File writes and edits always go: what a write sets up (a hook, a
+//     config, a script, instructions for later agents) cannot be told from
+//     its path. File reads never go.
 //   - Shell commands go unless every program the shell would start is known
 //     safe and nothing in the command is unresolved.
 func Relevant(in Input) bool {
@@ -26,12 +26,7 @@ func Relevant(in Input) bool {
 		return true
 	}
 	if in.Command == "" {
-		for _, p := range in.Paths {
-			if stagedPath.MatchString(path.Clean("/" + p)) {
-				return true
-			}
-		}
-		return false
+		return in.Write || writeTools[in.Tool]
 	}
 	res := shell.Analyze(in.Command, shell.Options{Dir: in.Cwd, ReadFile: noFiles})
 	if len(res.Problems) > 0 || len(res.Invocations) == 0 {
@@ -55,12 +50,9 @@ func (e filterErr) Error() string { return string(e) }
 
 const errNoFiles = filterErr("the filter reads no files")
 
-// stagedPath matches files whose content runs or deploys later: CI
-// pipelines, scheduled jobs, deployment manifests and values, and the
-// instruction files agents and reviewers read.
-var stagedPath = regexp.MustCompile(`(?i)(/\.github/workflows/|/\.gitlab-ci\.ya?ml$|/\.circleci/|/jenkinsfile$|/azure-pipelines\.ya?ml$|/bitbucket-pipelines\.ya?ml$|/\.buildkite/|/\.drone\.ya?ml$|/crontab$|/cron\.d/|` +
-	`/(deploy|deployment|deployments|k8s|kube|kubernetes|manifests|charts|helm|argocd|flux|gitops|kustomize|overlays)/|/values[^/]*\.ya?ml$|/kustomization\.ya?ml$|/(fly|app|render|vercel|netlify|railway|heroku|serverless|skaffold|tilt)\.(toml|ya?ml|json)$|/procfile$|` +
-	`/agents\.md$|/claude\.md$|/gemini\.md$|/\.cursorrules$|/\.cursor/rules/|/\.windsurfrules$|/copilot-instructions\.md$|/\.clinerules)`)
+// writeTools are Claude Code's and Codex's file-writing tools, for inputs
+// that do not carry the hook's classification.
+var writeTools = map[string]bool{"Write": true, "Edit": true, "MultiEdit": true, "NotebookEdit": true, "apply_patch": true}
 
 // localOnly are programs that read, transform or write files in the working
 // tree and start nothing else.

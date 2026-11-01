@@ -134,6 +134,7 @@ func decide(it *item, env map[string]string) {
 		it.Input.Command, it.Input.Args = "", it.Event.Args
 	}
 	it.Input.Content = it.Content
+	it.Input.Write = it.Event.Kind == policy.KindWrite
 }
 
 // writeContent is what a Write or Edit call puts in the file, as the hook

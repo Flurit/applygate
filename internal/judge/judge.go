@@ -36,6 +36,7 @@ type Input struct {
 	Command string          `json:"command,omitempty"`
 	Paths   []string        `json:"paths,omitempty"`   // file reads and writes
 	Content string          `json:"content,omitempty"` // what a write puts in the file, or an edit's replacement
+	Write   bool            `json:"-"`                 // the hook classified the call as a file write, whatever the agent calls the tool
 	Args    json.RawMessage `json:"arguments,omitempty"`
 	Cwd     string          `json:"cwd"`
 	Env     string          `json:"environment"`
