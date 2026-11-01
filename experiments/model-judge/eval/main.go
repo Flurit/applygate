@@ -52,6 +52,7 @@ func main() {
 	parallel := flag.Int("parallel", 6, "concurrent judge calls")
 	only := flag.String("datasets", "pack,longtail,trial", "datasets to run")
 	repeat := flag.Int("repeat", 1, "judge every call this many times (repeats 2+ are cached separately) to measure consistency")
+	prefilter := flag.Bool("prefilter", false, "judge only residual calls that pass the pre-filter (the mode we would ship), and report only that mode")
 	flag.Parse()
 
 	tmp, err := os.MkdirTemp("", "judge-eval-")
@@ -94,10 +95,10 @@ func main() {
 			if r > 1 {
 				tag = fmt.Sprintf("#%d", r)
 			}
-			runs = append(runs, runJudge(j, tag, items, cache, *limit, *parallel))
+			runs = append(runs, runJudge(j, tag, items, cache, *limit, *parallel, *prefilter))
 			saveCache(cache)
 		}
-		report(j, items, runs[0])
+		report(j, items, runs[0], *prefilter)
 		if len(runs) > 1 {
 			consistency(j, items, runs)
 		}
@@ -221,14 +222,14 @@ func saveCache(c *cacheT) {
 	check(os.WriteFile(filepath.Join(base, "results", "cache.json"), b, 0o644))
 }
 
-func runJudge(j judge.CLI, tag string, items []item, c *cacheT, limit, parallel int) map[int]judge.Result {
+func runJudge(j judge.CLI, tag string, items []item, c *cacheT, limit, parallel int, prefilter bool) map[int]judge.Result {
 	out := map[int]judge.Result{}
 	var mu sync.Mutex
 	sem := make(chan struct{}, parallel)
 	var wg sync.WaitGroup
 	calls := 0
 	for i, it := range items {
-		if !judge.Residual(it.Rule) {
+		if !judge.Residual(it.Rule) || (prefilter && !judge.Relevant(it.Input)) {
 			continue
 		}
 		k := judge.Key(j.Name()+tag, it.Input)
@@ -272,7 +273,7 @@ type row struct {
 	APIms, WallMS, Cost                      float64
 }
 
-func report(j judge.CLI, items []item, res map[int]judge.Result) {
+func report(j judge.CLI, items []item, res map[int]judge.Result, prefilter bool) {
 	var rows []row
 	for i, it := range items {
 		r := row{Dataset: it.Dataset, ID: it.ID, Kind: it.Kind, Expect: it.Expect, Note: it.Note, Rule: it.Rule.Verdict,
@@ -294,7 +295,11 @@ func report(j judge.CLI, items []item, res map[int]judge.Result) {
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## %s\n\n", j.Name())
-	for _, filtered := range []bool{false, true} {
+	modes := []bool{false, true}
+	if prefilter {
+		modes = []bool{true}
+	}
+	for _, filtered := range modes {
 		mode := "every residual call goes to the judge"
 		if filtered {
 			mode = "only residual calls that pass the pre-filter go to the judge"
