@@ -58,7 +58,10 @@ var ErrNotFound = errors.New("no pending request with that ID (it may have expir
 
 // Key binds an approval to the event and to the decision's findings.
 func Key(ev policy.Event, d policy.Decision) string {
-	type act struct{ Class, Engine, Command, Dir, Tier, Env, Workspace, Backend, Profile, PlanSHA256 string }
+	type act struct {
+		Class, Engine, Command, Dir, Tier, Env, Workspace, Backend, Profile, PlanSHA256 string
+		KubeContext, GCPProject, AzureSubscription                                      string
+	}
 	b := struct {
 		Agent, Session, Tool, Kind, Cwd, Command string
 		DirKnown                                 bool
@@ -66,7 +69,8 @@ func Key(ev policy.Event, d policy.Decision) string {
 		Actions                                  []act
 	}{ev.Agent, ev.Session, ev.Tool, string(ev.Kind), ev.Cwd, ev.Command, ev.DirKnown, ev.Paths, nil}
 	for _, a := range d.Actions {
-		b.Actions = append(b.Actions, act{string(a.Class), a.Engine, a.Command, a.Dir, string(a.Tier), a.Env, a.Workspace, a.Backend, a.Profile, a.PlanSHA256})
+		b.Actions = append(b.Actions, act{string(a.Class), a.Engine, a.Command, a.Dir, string(a.Tier), a.Env, a.Workspace, a.Backend, a.Profile, a.PlanSHA256,
+			a.KubeContext, a.GCPProject, a.AzureSubscription})
 	}
 	js, _ := json.Marshal(b)
 	sum := sha256.Sum256(js)

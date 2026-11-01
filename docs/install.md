@@ -26,7 +26,7 @@ The installer takes `APPLYGATE_VERSION` and `APPLYGATE_INSTALL_DIR`. Releases ar
 ```bash
 cd your-infra-repo
 applygate init                 # .applygate.yaml in observe mode, plus hooks for the agents it finds
-$EDITOR .applygate.yaml        # map directories, workspaces, backends and AWS profiles to tiers
+$EDITOR .applygate.yaml        # map directories, workspaces, backends, profiles and clusters to tiers
 applygate doctor               # check config, hooks and versions
 ```
 

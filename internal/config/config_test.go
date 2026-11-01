@@ -307,3 +307,31 @@ func TestRepoConfigCanOnlyDisableApprovals(t *testing.T) {
 		t.Fatal("repo config turned approvals back on")
 	}
 }
+
+func TestClusterAndCloudMatchers(t *testing.T) {
+	c := load(t, `environments:
+  - name: prod
+    tier: protected
+    match: {kube_contexts: ["eks-blue", "arn:aws:eks:*:111111111111:cluster/*"], gcp_projects: ["acme-payments-9f2"], azure_subscriptions: ["2222"]}
+  - name: dev
+    tier: disposable
+    match: {paths: ["dev/**"], kube_contexts: ["kind-*"]}
+`)
+	dev := filepath.Join(c.Root, "dev")
+	for _, s := range []Signals{
+		{Dir: dev, KubeContext: "eks-blue"},
+		{Dir: dev, KubeContext: "arn:aws:eks:us-east-1:111111111111:cluster/payments"},
+		{Dir: dev, GCPProject: "acme-payments-9f2"},
+		{Dir: dev, AzureSubscription: "Payments", AzureSubscriptionID: "2222"},
+	} {
+		if r := c.Resolve(s); r.Tier != Protected || r.Env != "prod" {
+			t.Errorf("%+v: %+v", s, r)
+		}
+	}
+	if r := c.Resolve(Signals{Dir: dev, KubeContext: "kind-dev"}); r.Tier != Disposable {
+		t.Errorf("kind-dev: %+v", r)
+	}
+	if r := c.Resolve(Signals{Dir: dev, KubeContext: "gke_acme_us-east1_prod"}); r.Tier != Protected || r.Env != "prod (name hint)" {
+		t.Errorf("name hint: %+v", r)
+	}
+}

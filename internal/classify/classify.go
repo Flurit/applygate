@@ -29,13 +29,17 @@ const (
 
 // Action is one classified, policy-relevant operation.
 type Action struct {
-	Class    Class
-	Engine   string // terraform, tofu, terragrunt, aws, kubectl, agent, file, ""
-	Command  string // the resolved command, for messages
-	Why      string
-	Dir      string
-	Env      map[string]string
-	Profile  string // AWS profile from --profile or the environment
+	Class   Class
+	Engine  string // terraform, tofu, terragrunt, aws, kubectl, agent, file, ""
+	Command string // the resolved command, for messages
+	Why     string
+	Dir     string
+	Env     map[string]string
+	Profile string // AWS profile from --profile or the environment
+	// Target is the cluster or cloud named on the command line: the kube
+	// context of kubectl (--context) and helm (--kube-context), the gcloud
+	// project (--project), the az subscription (--subscription).
+	Target   string
 	PlanFile string // for apply of a saved plan
 	Sub      string // engine subcommand, e.g. "destroy", "state rm"
 	Via      []string

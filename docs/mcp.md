@@ -48,6 +48,6 @@ From each server's source code at the commit named in `rules.json`, **not tested
 - **AWS Lambda tool server.** It names one tool after each Lambda function, so the tool names cannot be known in advance.
 - **SQL.** Database MCP tools (`run_query` and similar) are logged, not judged.
 - **Calls whose effect lives elsewhere.** Applying an HCP Terraform run is asked about but not tied to the run's plan; changing a workspace's auto-apply setting, its variables or team access is logged, not judged.
-- **Retargeting.** Tools that switch the kube context or fetch credentials (`kubectl_context` with `set`, `get_kubeconfig`, `az aks get-credentials`) are read-only to applygate, and the kube context does not pick a tier yet.
+- **Retargeting.** Tools that switch the kube context or fetch credentials (`kubectl_context` with `set`, `get_kubeconfig`, `az aks get-credentials`) are read-only to applygate. A Kubernetes server that runs with its own kubeconfig is judged by the context the call names, else by the current context of the kubeconfig the hook sees (`KUBECONFIG` or `~/.kube/config`), which is the server's only when both use the same file.
 - **Input to a running REPL.** Text that Desktop Commander's `interact_with_process` or wcgw's `send_text` types into a running process is judged as a shell command, so code typed into a Python or Node session that is not shell may be asked about.
 - **Other agents.** Only Claude Code and Codex are known to send MCP calls to the hook; the replay pack sends them in those two formats only.

@@ -10,6 +10,9 @@ environments:
       workspaces: ["prod", "production"]
       backends: ["s3://acme-tf-state-prod/*"]
       aws_profiles: ["prod-admin", "prod-*"]
+      kube_contexts: ["eks-blue"]
+      gcp_projects: ["acme-payments-9f2"]
+      azure_subscriptions: ["Payments"]
   - name: staging
     tier: standard
     match:
@@ -21,6 +24,7 @@ environments:
     match:
       paths: ["envs/dev/**", "envs/sandbox/**"]
       aws_profiles: ["dev", "sandbox"]
+      kube_contexts: ["kind-*"]
   # Terragrunt-style layout: the "prod" name hint must not match "non-prod".
   - name: non-prod
     tier: standard

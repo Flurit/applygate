@@ -30,7 +30,7 @@ applygate is pre-1.0. See [what has been verified](docs/project/ACCEPTANCE.md).
 Pattern matching reads text. applygate reads commands and plans:
 
 - **It parses commands the way the shell does.** It follows `cd`, variables, `bash -c`, `eval`, `sudo`, `xargs`, Makefiles, scripts and base64-decoded payloads, so a destroy can't hide behind a wrapper. `grep "terraform destroy"` is still just a grep. Anything it can't resolve, such as a script fetched with `curl | sh`, gets an **ask** rather than a guess.
-- **It knows which environment a command targets.** Directory, workspace, backend and AWS profile map to a tier: protected, standard or disposable. Unknown environments count as protected. It also catches a planfile made in another workspace, a backend changed since `init`, stale state and lock-file drift.
+- **It knows which environment a command targets.** Directory, workspace, backend, AWS profile, Kubernetes context, GCP project and Azure subscription map to a tier: protected, standard or disposable. Unknown environments count as protected. It also catches a planfile made in another workspace, a backend changed since `init`, stale state and lock-file drift.
 - **It reads the plan before an apply.** For `apply <planfile>` it checks what will happen: stateful resources destroyed or replaced, deletion protection removed, resources exposed to the internet, IAM wildcards, changes to the state backend.
 
 On the same 17 dangerous Terraform scenarios:

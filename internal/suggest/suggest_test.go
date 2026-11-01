@@ -239,3 +239,28 @@ func loadYAML(t *testing.T, y string) (*config.Config, error) {
 	}
 	return config.LoadFile(path)
 }
+
+func TestBuildProposesClusterAndCloudTargets(t *testing.T) {
+	act := func(engine, ctx, project, sub string) policy.ActionResult {
+		return policy.ActionResult{Class: classify.CloudDestructive, Engine: engine, Dir: "/r/k8s", Tier: config.Protected, Env: "unknown",
+			KubeContext: ctx, GCPProject: project, AzureSubscription: sub, Verdict: policy.Block, Command: engine + " delete x"}
+	}
+	entries := []decisionlog.Entry{
+		{Cwd: "/r", Actions: []policy.ActionResult{act("kubectl", "prod-eks", "", "")}},
+		{Cwd: "/r", Actions: []policy.ActionResult{act("kubectl", "kind-dev", "", "")}},
+		{Cwd: "/r", Actions: []policy.ActionResult{act("gcloud", "", "acme-payments-prod", "")}},
+		{Cwd: "/r", Actions: []policy.ActionResult{act("az", "", "", "Payments")}},
+	}
+	p := Build(entries, Options{Root: "/r"})
+	y := p.YAML()
+	if !strings.Contains(y, `kube_contexts: ["prod-eks"]`) || !strings.Contains(y, `gcp_projects: ["acme-payments-prod"]`) || !strings.Contains(y, `kube_contexts: ["kind-dev"]`) {
+		t.Fatalf("YAML:\n%s", y)
+	}
+	// A subscription whose name says nothing is left for the person.
+	if !strings.Contains(strings.Join(p.Loose, "\n"), "Azure subscription Payments") {
+		t.Fatalf("loose %v", p.Loose)
+	}
+	if err := p.Check(); err != nil {
+		t.Fatalf("proposal does not parse: %v\n%s", err, y)
+	}
+}
