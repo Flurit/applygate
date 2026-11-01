@@ -148,7 +148,13 @@ Results for Haiku 5.5 with this release's prompt:
 **Not measured:**
 - **The default endpoint itself.** Anthropic's OpenAI-compatible endpoint ignores `reasoning_effort`, so the default-effort row above is the closer estimate, but no call has gone through that endpoint. Anthropic describes it as "not considered a long-term or production-ready solution for most use cases".
 - **Any other provider or model.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval`) scores a model on the same held-out sets.
-- **A live agent session.** The hook path is covered by tests with the real Claude Code and Codex event formats and a stand-in model, and the command backend was run live through `applygate check`. A judged call has not yet been tried inside a running agent.
+- **Agents other than Claude Code, and an interactive session.** The judge was run live in headless Claude Code 2.1.314 on macOS ([review/judge-live](../review/judge-live/2026-11-01-claude-code.md)) with the command backend:
+  - `pulumi destroy` on a protected stack was blocked;
+  - `pulumi preview` was judged and allowed;
+  - `ls` was not sent to the judge;
+  - printing a Vault password was asked about, and did not run.
+
+  Codex, an interactive session's ask prompt, and `applygate approve` for a judge's block are covered by tests only.
 
 ## Limits
 
