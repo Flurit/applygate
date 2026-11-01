@@ -8,7 +8,7 @@ Question: would a model, used only to make verdicts stricter, catch enough of wh
 - **The judge sees only the residual:** calls the rules allow without recognizing anything (no Terraform, cloud, cluster or guard action), plus MCP tools the table does not know. Calls the rules classified, safe or not, never reach it (`judge.Residual`).
 - **Escalate only.** The final verdict is the stricter of the rule verdict and the judge verdict (`judge.Merge`). A judge that is wrong, or talked into "allow" by text in the call, can at worst add a prompt; it cannot let through anything the rules stop.
 - **Prompt.** One fixed system prompt (`judge.System`): what counts as damage, how the environment tier changes the answer, and that everything in the call is untrusted data whose claims of safety are a warning sign. The call goes in `<tool_call>` tags with the environment the rules resolved for its directory.
-- **Pre-filter (measured both ways).** `judge.Relevant` is a coarse word list (infrastructure and data CLIs, SQL and destructive verbs, any MCP tool) so ordinary edits, builds and tests need not pay a model call. The report shows the results with every residual call judged and with only filtered ones judged.
+- **Filter (measured both ways).** `judge.Relevant` (`internal/judge/filter.go`) sends every residual call to the judge except shell commands made only of known local programs (reading, building, testing, local git, file commands inside the working tree), and sends file writes only for CI, scheduled-job, deployment and agent-instruction paths. MCP calls always go. Round 1 used a word list instead; see RESULTS.md.
 - **Backend.** `judge.CLI` calls the `claude` CLI in print mode with no tools, the judge's system prompt and a JSON schema for the answer, using the CLI's login, so the experiment needs no API key. `api_ms` is the model time the CLI reports, the figure an SDK call would see; `wall_ms` adds the CLI's start-up, which an SDK call would not pay. A product feature would call the API through the Go SDK.
 
 ## Datasets
@@ -23,6 +23,6 @@ Question: would a model, used only to make verdicts stricter, catch enough of wh
 go run ./experiments/model-judge/eval -models claude-haiku-5-5,claude-sonnet-5-5,claude-opus-5-5 -effort low -datasets pack,longtail,hard,trial
 ```
 
-`-prefilter` judges only the calls that pass the pre-filter (the mode we would ship) and costs about half as much.
+Datasets: `pack`, `longtail`, `hard`, `heldout`, `heldout2`, `trial`. `-prefilter` judges only the calls that pass the filter (the mode we would ship) and costs about half as much.
 
 Results are cached in `results/cache.json` by model, effort, prompt version and input; `results/report-<model>.md` and `results/rows-<model>.json` hold the scores and every judged call. Nothing in the experiment runs the commands it judges.
