@@ -6,7 +6,7 @@
 [![CI](https://github.com/Flurit/applygate/actions/workflows/ci.yml/badge.svg)](https://github.com/Flurit/applygate/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/Flurit/applygate)](LICENSE)
 
-applygate checks every command a coding agent is about to run against your Terraform or OpenTofu infrastructure and answers **allow**, **ask** or **block**, with a reason the agent can act on. It runs locally as the agent's pre-tool-call hook. No model is involved in the decision, and by default nothing leaves your machine.
+applygate checks every command a coding agent is about to run against your Terraform or OpenTofu infrastructure and answers **allow**, **ask** or **block**, with a reason the agent can act on. It runs locally as the agent's pre-tool-call hook. By default no model is involved in the decision and nothing leaves your machine; an opt-in [model judge](docs/judge.md) can add a prompt for calls the rules do not recognize, never remove one.
 
 <p align="center">
   <img src="docs/assets/demo.svg" alt="applygate blocking terraform destroy in prod, also when it is hidden in base64, while allowing a commit message that mentions it" width="820">
@@ -77,6 +77,8 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 `applygate init` installs the hooks for Claude Code and Codex. **Preview** hooks follow each agent's documentation but have not yet been tested inside the agent. Install one with `applygate hook install --agent NAME`, then check it: ask the agent to run `terraform destroy -auto-approve` in an empty directory, and applygate should block it. Only Claude Code and Copilot CLI can show you an "ask" prompt; the other agents block instead, and the block names an approval ID. Run `applygate approve ID` in your own terminal, type the environment name, and the agent's next identical call is allowed once. Approvals apply only to asks, never to blocks, and an agent cannot approve its own call. For every agent's details, see [docs/hosts.md](docs/hosts.md) (also `applygate hosts`).
 
 **MCP servers.** In Claude Code and Codex, a call to a known infrastructure MCP tool (AWS, HCP Terraform, Kubernetes, Helm, gcloud, az, or a server that runs shell commands) is judged as the command it is equivalent to, so a Terraform server's `destroy` gets the same verdict as `terraform destroy`. Other MCP calls are logged and allowed. The list of servers is in [docs/mcp.md](docs/mcp.md).
+
+**Model judge (opt-in).** Calls the rules do not recognize (Pulumi, database clients, PaaS CLIs, inline SDK code, unknown scripts and MCP tools, file writes) are allowed by default. Turn on `judge:` in the user config to have a language model look at them with your own API key, through any OpenAI-compatible endpoint or a program you name. It can only make a verdict stricter. On an independently written test set it caught 66 of 67 such calls that should be stopped, all of which the rules miss. See [docs/judge.md](docs/judge.md) for what is sent, what was measured and what was not.
 
 ## Beyond agents
 

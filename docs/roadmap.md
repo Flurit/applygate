@@ -1,15 +1,15 @@
 # Roadmap
 
-applygate is a deterministic, local check that runs before a coding agent's infrastructure command executes and returns allow, ask or block. It is not a sandbox and not an AI reviewer. This page is the public summary of the project's planning document; "the spec" in older project notes refers to that document.
+applygate is a deterministic, local check that runs before a coding agent's infrastructure command executes and returns allow, ask or block. It is not a sandbox and not an AI reviewer: an opt-in [model judge](judge.md) can add a prompt for calls the rules do not recognize, never remove one. This page is the public summary of the project's planning document; "the spec" in older project notes refers to that document.
 
 ## Principles
 
-- Deterministic rules decide. No model is in the decision path.
+- Deterministic rules decide. A model enters only when the user turns on the model judge, only for calls the rules let through without recognizing anything, and only to make the verdict stricter ([judge.md](judge.md)).
 - Parse commands the way the shell does, not as text.
 - Judge plans, not only commands: `terraform apply` says little, the plan says what will be destroyed.
 - Fail closed in protected environments, and say so.
 - Roll out in observe mode first and count what would have been blocked.
-- Stay local: no network calls by default, secrets redacted from logs. Telemetry exists only as an opt-in of anonymous verdict counts ([telemetry.md](telemetry.md)), off in every release.
+- Stay local: no network calls by default, secrets redacted from logs. The model judge sends calls to an endpoint the user configures, only when turned on in the user config. Telemetry exists only as an opt-in of anonymous verdict counts ([telemetry.md](telemetry.md)), off in every release.
 - State limits plainly. Never claim protection the design cannot give.
 
 **Not goals:** sandboxing, credential brokering or network isolation (pair applygate with plan-only credentials and an isolated runner); general MCP governance; drift detection, cost control or code review.

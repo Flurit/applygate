@@ -127,6 +127,9 @@ type Event struct {
 	// Args are an MCP call's raw arguments (KindMCP); Command then holds
 	// the compact copy kept in the log.
 	Args json.RawMessage `json:"-"`
+	// Content is what a write puts in the file (an edit's replacement, a
+	// patch), for the model judge. It is never logged.
+	Content string `json:"-"`
 }
 
 // Deps are the effects Decide may use. Tests replace them.
@@ -232,19 +235,27 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 		d.Actions = append(d.Actions, r)
 		d.Verdict = Max(d.Verdict, r.Verdict)
 	}
+	Settle(&d, ev, cfg)
+	return d
+}
+
+// Settle derives what is returned to the agent from d.Verdict: ask becomes
+// block on an agent that cannot ask, the message is written, and observe
+// mode allows. The model judge calls it again after raising the verdict.
+func Settle(d *Decision, ev Event, cfg *config.Config) {
 	d.Enforced = d.Verdict
 	if d.Enforced == Ask && !ev.CanAsk {
 		d.Enforced = Block
 		d.Notes = append(d.Notes, "this agent cannot show an approval prompt here, so ask is enforced as block")
 	}
+	d.Message = ""
 	if d.Enforced != Allow {
-		d.Message = message(d)
+		d.Message = message(*d)
 	}
 	if cfg.Observe() && d.Enforced != Allow {
 		d.Notes = append(d.Notes, "observe mode: would have returned "+string(d.Enforced)+"; allowed")
 		d.Enforced = Allow
 	}
-	return d
 }
 
 func mergeEnv(base, over map[string]string) map[string]string {

@@ -21,6 +21,7 @@ import (
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/hook"
+	"github.com/Flurit/applygate/internal/judge"
 	"github.com/Flurit/applygate/internal/plangate"
 	"github.com/Flurit/applygate/internal/policy"
 	"github.com/Flurit/applygate/internal/preflight"
@@ -176,6 +177,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 	dirUnknown := fs.Bool("dir-unknown", false, "treat --cwd as the session root only, as a host that does not report the command directory would (Codex 0.165.0); see docs/hosts.md")
 	agent := fs.String("agent", "cli", "host name recorded in the decision (claude, codex, cursor, ...)")
 	asJSON := fs.Bool("json", false, "print the decision as JSON")
+	noJudge := fs.Bool("no-judge", false, "do not ask the model judge even when the user config turns it on")
 	var planJSON multiFlag
 	fs.Var(&planJSON, "plan-json", "PLANFILE=JSON: use this JSON for a saved plan instead of running show")
 	if err := fs.Parse(args); err != nil {
@@ -247,6 +249,19 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 		fmt.Fprintln(stdout, "\n3. decide:")
 	}
 	d := policy.Decide(ev, cfg, deps)
+	if !*noJudge {
+		var jr *decisionlog.Judge
+		jctx, cancel := context.WithTimeout(context.Background(), cfg.JudgeTimeout()+time.Second)
+		d, jr = hook.Judge(jctx, ev, d, cfg, opt)
+		cancel()
+		if jr != nil {
+			if explain {
+				fmt.Fprintf(stdout, "   model judge (%s): %s %s%s\n", orNone(jr.Model), orNone(string(jr.Verdict)), jr.Reason, jr.Error)
+			} else if jr.Error != "" {
+				fmt.Fprintln(stderr, "model judge:", jr.Error)
+			}
+		}
+	}
 	if *asJSON || explain {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -776,6 +791,26 @@ func binExecutable(path string) (bool, string) {
 	return true, ""
 }
 
+// doctorJudge reports the model judge's setup without calling the model.
+func doctorJudge(cfg *config.Config, say func(bool, string, ...any), stdout io.Writer) {
+	if !cfg.JudgeOn() {
+		fmt.Fprintln(stdout, "     model judge off (docs/judge.md)")
+		return
+	}
+	j, err := judge.New(cfg, hook.EnvMap())
+	if err != nil {
+		say(false, "model judge on but cannot be asked: %v", err)
+		return
+	}
+	where := cfg.Judge.BaseURL
+	if cfg.Judge.Backend == config.JudgeBackendCommand {
+		where = strings.Join(cfg.Judge.Command, " ")
+	} else if where == "" {
+		where = config.DefaultJudgeBaseURL
+	}
+	say(true, "model judge on: %s via %s, timeout %s; calls the rules do not recognize leave this machine (docs/judge.md)", j.Name(), where, cfg.JudgeTimeout())
+}
+
 func cmdDoctor(stdout, stderr io.Writer) int {
 	problems := 0
 	say := func(ok bool, format string, a ...any) {
@@ -813,6 +848,9 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 			}
 			return config.DefaultLogPath()
 		}())
+	}
+	if cfg != nil {
+		doctorJudge(cfg, say, stdout)
 	}
 	if st := telemetry.Effective(hook.EnvMap()); st.On {
 		fmt.Fprintf(stdout, "     telemetry on: anonymous counts to %s at most once a day (applygate telemetry status)\n", st.Endpoint)

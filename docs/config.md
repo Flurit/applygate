@@ -41,6 +41,14 @@ preflight:
   live_state: false             # user config only: "<engine> state pull" to compare lineage/serial (network)
 
 protected_paths: []             # extra guard files the agent may not modify
+
+judge:                          # user config only; a repository config may only set enabled: false (docs/judge.md)
+  enabled: false                # send calls the rules do not recognize to a language model, which may make the verdict stricter
+  base_url: https://api.anthropic.com/v1   # any OpenAI-compatible endpoint; setting it makes model required
+  model: claude-haiku-5-5
+  api_key_env: ANTHROPIC_API_KEY           # the variable holding the key; none for another endpoint unless set
+  timeout: 10s
+  skip_mcp: []                  # MCP tool globs never sent, for tools that only read
 wrappers:                       # extra programs that run a command given in their arguments
   - name: company-run           # company-run PROFILE terraform apply ...
     skip: 1                     # positional arguments before the command (used when there is no "--")

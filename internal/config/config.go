@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -71,6 +72,12 @@ type Config struct {
 	// approve` on agents that cannot show an ask prompt (default true). A
 	// repository config may turn it off but not on.
 	Approvals *bool `yaml:"approvals"`
+	// Judge sends calls the rules let through without recognizing anything
+	// to a language model, which may make the verdict stricter, never
+	// looser. Off by default; only the user config can turn it on or
+	// configure it, because the call leaves the machine. A repository config
+	// may turn it off.
+	Judge Judge `yaml:"judge"`
 
 	Environments   []Environment `yaml:"environments"`
 	PlanGate       PlanGate      `yaml:"plan_gate"`
@@ -102,6 +109,65 @@ type Wrapper struct {
 	Name       string `yaml:"name"`
 	Skip       int    `yaml:"skip"`
 	ProfileArg int    `yaml:"profile_arg"`
+}
+
+// Judge configures the model judge (docs/judge.md).
+type Judge struct {
+	Enabled *bool `yaml:"enabled"`
+	// Backend is openai (default: any OpenAI-compatible chat completions
+	// endpoint, with the user's own key) or command (a program the user
+	// names).
+	Backend string `yaml:"backend"`
+	// BaseURL is the endpoint (default Anthropic's OpenAI-compatible
+	// endpoint, https://api.anthropic.com/v1). Set it for any other
+	// provider or a local server; Model is then required too.
+	BaseURL string `yaml:"base_url"`
+	Model   string `yaml:"model"` // default claude-haiku-5-5
+	// APIKeyEnv names the environment variable holding the API key
+	// (default ANTHROPIC_API_KEY with the default endpoint; none for
+	// another endpoint unless set). The key itself never goes in a config.
+	APIKeyEnv string `yaml:"api_key_env"`
+	// ReasoningEffort is sent as reasoning_effort when set, for providers
+	// that accept it.
+	ReasoningEffort string `yaml:"reasoning_effort"`
+	// Command is the program and arguments of the command backend: it reads
+	// one request as JSON on stdin and writes the verdict as JSON on stdout.
+	Command []string `yaml:"command"`
+	Timeout string   `yaml:"timeout"` // per call (default 10s)
+	// SkipMCP lists MCP tool name globs never sent to the judge, for tools
+	// the user knows only read (a browser, a docs search).
+	SkipMCP []string `yaml:"skip_mcp"`
+}
+
+// Judge defaults.
+const (
+	JudgeBackendOpenAI  = "openai"
+	JudgeBackendCommand = "command"
+	DefaultJudgeBaseURL = "https://api.anthropic.com/v1"
+	DefaultJudgeModel   = "claude-haiku-5-5"
+	DefaultJudgeKeyEnv  = "ANTHROPIC_API_KEY"
+	DefaultJudgeTimeout = 10 * time.Second
+)
+
+// JudgeOn reports whether the model judge is enabled.
+func (c *Config) JudgeOn() bool { return on(c.Judge.Enabled, false) }
+
+// JudgeTimeout is the per-call deadline for the judge.
+func (c *Config) JudgeTimeout() time.Duration {
+	if d, err := time.ParseDuration(c.Judge.Timeout); err == nil && d > 0 {
+		return d
+	}
+	return DefaultJudgeTimeout
+}
+
+// JudgeSkips reports whether an MCP tool is excluded from the judge.
+func (c *Config) JudgeSkips(tool string) bool {
+	for _, g := range c.Judge.SkipMCP {
+		if ok, _ := path.Match(g, tool); ok {
+			return true
+		}
+	}
+	return false
 }
 
 // Environment maps signals to a tier.
@@ -243,6 +309,13 @@ func ApprovalsPath() string {
 	return filepath.Join(filepath.Dir(logPathFor("applygate")), "approvals.json")
 }
 
+// JudgeCachePath is where the model judge keeps recent verdicts, next to
+// the decision log. It is a guard path: an agent that edited it could
+// suppress the judge's prompts.
+func JudgeCachePath() string {
+	return filepath.Join(filepath.Dir(logPathFor("applygate")), "judge-cache.json")
+}
+
 func logPathFor(name string) string {
 	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
 		return filepath.Join(d, name, "decisions.jsonl")
@@ -345,6 +418,15 @@ func merge(cfg *Config, path string, repo bool) error {
 		// A repository may turn approvals off, never back on.
 		cfg.Approvals = c.Approvals
 	}
+	if repo {
+		// The judge sends calls off the machine with the user's key: a
+		// repository may turn it off, nothing else.
+		if c.Judge.Enabled != nil && !*c.Judge.Enabled {
+			cfg.Judge.Enabled = c.Judge.Enabled
+		}
+	} else {
+		cfg.Judge = c.Judge
+	}
 	switch c.UnknownDir {
 	case "":
 	case UnknownDirMostProtected, UnknownDirSessionRoot:
@@ -442,6 +524,31 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("unknown_dir must be %s or %s, not %q", UnknownDirMostProtected, UnknownDirSessionRoot, c.UnknownDir)
 	}
+	switch c.Judge.Backend {
+	case "", JudgeBackendOpenAI:
+		if c.JudgeOn() && c.Judge.BaseURL != "" && c.Judge.Model == "" {
+			return errors.New("judge: a base_url other than the default needs a model")
+		}
+	case JudgeBackendCommand:
+		if c.JudgeOn() && len(c.Judge.Command) == 0 {
+			return errors.New("judge: backend command needs a command")
+		}
+	default:
+		return fmt.Errorf("judge: backend must be %s or %s, not %q", JudgeBackendOpenAI, JudgeBackendCommand, c.Judge.Backend)
+	}
+	if c.Judge.BaseURL != "" && !strings.HasPrefix(c.Judge.BaseURL, "https://") && !strings.HasPrefix(c.Judge.BaseURL, "http://") {
+		return fmt.Errorf("judge: base_url must be an http or https URL, not %q", c.Judge.BaseURL)
+	}
+	if c.Judge.Timeout != "" {
+		if d, err := time.ParseDuration(c.Judge.Timeout); err != nil || d <= 0 {
+			return fmt.Errorf("judge: timeout must be a duration such as 10s, not %q", c.Judge.Timeout)
+		}
+	}
+	for _, g := range c.Judge.SkipMCP {
+		if _, err := path.Match(g, ""); err != nil {
+			return fmt.Errorf("judge: skip_mcp: bad pattern %q", g)
+		}
+	}
 	for _, t := range append([]Tier{c.DefaultTier}, tiersOf(c.Environments)...) {
 		switch t {
 		case "", Protected, Standard, Disposable:
@@ -471,7 +578,7 @@ func (c *Config) GuardPaths() []string {
 	if c.LogPath != "" {
 		out = append(out, c.LogPath)
 	}
-	return append(out, ApprovalsPath())
+	return append(out, ApprovalsPath(), JudgeCachePath())
 }
 
 // Signals are what preflight knows about where a command runs.

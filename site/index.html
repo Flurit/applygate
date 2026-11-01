@@ -9,7 +9,7 @@
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://flurit.github.io/applygate/">
 <meta property="og:title" content="applygate: stop coding agents from running terraform destroy in production">
-<meta property="og:description" content="Deterministic allow / ask / block hook for AI coding agents on Terraform and OpenTofu: Claude Code and Codex, plus preview hooks for Cursor, Copilot CLI, Gemini CLI and more. Local. No model in the decision path.">
+<meta property="og:description" content="Deterministic allow / ask / block hook for AI coding agents on Terraform and OpenTofu: Claude Code and Codex, plus preview hooks for Cursor, Copilot CLI, Gemini CLI and more. Local. No model in the decision path by default.">
 <meta property="og:image" content="https://flurit.github.io/applygate/social-preview.png">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
@@ -233,7 +233,7 @@
   <section id="how">
     <div class="wrap">
       <h2>Two things a matcher cannot do.</h2>
-      <p class="sub">No model is in the decision path. The same input always gets the same verdict, and every verdict says why.</p>
+      <p class="sub">No model is in the decision path by default. The same input always gets the same verdict, and every verdict says why. An opt-in model judge can add a prompt for calls the rules do not recognize, never remove one.</p>
       <div class="two">
         <div class="card">
           <h3>Reads commands the way bash does</h3>
@@ -262,7 +262,7 @@
         <div class="stop"><h3>Guard tampering</h3><p>Skip-permissions flags and edits to hook config, applygate's config or its log.</p></div>
       </div>
       <ul class="principles" style="margin-top: 56px">
-        <li><b>Deterministic</b><span>Rules decide, not a model.</span></li>
+        <li><b>Deterministic</b><span>Rules decide; an opt-in model can only add a prompt.</span></li>
         <li><b>Local</b><span>No network calls by default. Telemetry is off unless you turn it on.</span></li>
         <li><b>Fails closed</b><span>A check that cannot finish blocks in protected tiers.</span></li>
         <li><b>Observe first</b><span>Log what would be blocked for a few days, then enforce.</span></li>
