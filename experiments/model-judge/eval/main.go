@@ -67,7 +67,7 @@ func main() {
 		switch ds {
 		case "pack":
 			items = append(items, packItems(repo)...)
-		case "longtail", "hard":
+		case "longtail", "hard", "heldout":
 			items = append(items, longtailItems(repo, ds)...)
 		case "trial":
 			items = append(items, trialItems()...)
@@ -305,7 +305,7 @@ func report(j judge.CLI, items []item, res map[int]judge.Result, prefilter bool)
 			mode = "only residual calls that pass the pre-filter go to the judge"
 		}
 		fmt.Fprintf(&sb, "### %s\n\n| Dataset | Calls | Residual | Judged | Should escalate: rules / merged | Should allow: escalated by judge | Errors |\n|---|---|---|---|---|---|---|\n", mode)
-		for _, ds := range []string{"pack", "longtail", "hard", "trial"} {
+		for _, ds := range []string{"pack", "longtail", "hard", "heldout", "trial"} {
 			var n, residual, judged, escN, escRule, escMerged, allowN, allowEsc, errs int
 			for _, r := range rows {
 				if r.Dataset != ds {
