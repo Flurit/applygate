@@ -1,6 +1,10 @@
 package judge
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Flurit/applygate/internal/policy"
+)
 
 func TestRelevant(t *testing.T) {
 	cases := []struct {
@@ -33,6 +37,40 @@ func TestRelevant(t *testing.T) {
 	for _, c := range cases {
 		if got := Relevant(c.in); got != c.want {
 			t.Errorf("Relevant(%s %q %v) = %v, want %v", c.in.Tool, c.in.Command, c.in.Paths, got, c.want)
+		}
+	}
+}
+
+// The two guards that keep the judge escalate-only, each on its own: Merge
+// never lowers a verdict, and Residual sends only calls the rules allowed
+// without recognizing anything.
+func TestMergeNeverLowers(t *testing.T) {
+	for _, rule := range []policy.Verdict{policy.Allow, policy.Ask, policy.Block} {
+		for _, j := range []policy.Verdict{policy.Allow, policy.Ask, policy.Block, ""} {
+			got := Merge(rule, Result{Verdict: j})
+			if got != policy.Max(rule, j) && !(j == "" && got == rule) {
+				t.Errorf("Merge(%s, %q) = %s", rule, j, got)
+			}
+		}
+		if got := Merge(rule, Result{Verdict: policy.Allow, Err: "x"}); got != rule {
+			t.Errorf("error changed %s to %s", rule, got)
+		}
+	}
+}
+
+func TestResidual(t *testing.T) {
+	cases := []struct {
+		d    policy.Decision
+		want bool
+	}{
+		{policy.Decision{Verdict: policy.Allow}, true},
+		{policy.Decision{Verdict: policy.Allow, Actions: []policy.ActionResult{{Engine: "terraform", Verdict: policy.Allow}}}, false},
+		{policy.Decision{Verdict: policy.Ask}, false},
+		{policy.Decision{Verdict: policy.Block}, false},
+	}
+	for _, c := range cases {
+		if got := Residual(c.d); got != c.want {
+			t.Errorf("Residual(%+v) = %v", c.d, got)
 		}
 	}
 }

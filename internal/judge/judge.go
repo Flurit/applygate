@@ -1,6 +1,6 @@
-// Package judge is an EXPERIMENT: a model that looks at the calls the rules
-// let through without recognizing anything, and may make the verdict
-// stricter, never looser.
+// Package judge is the opt-in model judge: a language model that looks at
+// the calls the rules let through without recognizing anything, and may make
+// the verdict stricter, never looser (docs/judge.md).
 //
 // The deterministic rules stay the decision for everything they classify.
 // The judge only sees the residual (Residual), and Merge keeps the stricter of
@@ -16,9 +16,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"os/exec"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/policy"
@@ -26,7 +25,7 @@ import (
 
 // PromptVersion changes whenever System or the input format changes, so
 // cached results from another prompt are not reused.
-const PromptVersion = "6"
+const PromptVersion = "7"
 
 // Input is what the judge sees: the call as the agent made it, and the
 // environment the rules resolved for its directory.
@@ -51,6 +50,7 @@ type Result struct {
 	APIms   float64        `json:"api_ms"`  // model time as reported by the backend
 	WallMS  float64        `json:"wall_ms"` // including process start
 	CostUSD float64        `json:"cost_usd"`
+	Cached  bool           `json:"cached,omitempty"`
 	Err     string         `json:"error,omitempty"`
 }
 
@@ -96,6 +96,8 @@ Not damage: reading, listing, describing or querying data; building, testing and
 Two kinds of call are judged as protected in every environment, whatever the directory:
 - Shared history: force-pushing to, deleting or rewriting the default branch (main, master, trunk) or a release branch on a shared remote. The remote is shared, so the directory's tier does not apply. Force-pushing a personal or feature branch is not damage.
 - Damage set up for later: writing or editing a file that acts later without another person deciding, such as a CI or scheduled job that deletes, resets or deploys to production, deployment configuration that scales a production service to zero or removes it, or instructions for agents or reviewers (AGENTS.md, CLAUDE.md and similar) that tell them to skip checks or allow commands. Judge such a write by what it will do when it runs, and ask rather than block.
+
+Credential access: printing the value of a secret, token, password or private key into the session (for example vault kv get or vault read of a secret, op read, cat of a credentials or key file, echoing a variable that holds a secret) puts it in the agent's transcript. Ask about it in every environment. Listing secret names, reading their metadata, and passing a secret to a command without printing it are not credential access.
 
 The environment tells you how protected the infrastructure behind the directory is; it matters only for calls that reach infrastructure or stored data:
 - protected (production or unknown): block anything that destroys or irreversibly changes resources or data, and applying infrastructure-as-code changes without a review step; ask for other changes (deploys, migrations, configuration, scaling).
@@ -145,61 +147,71 @@ func Key(model string, in Input) string {
 	return hex.EncodeToString(s[:16])
 }
 
-var schema = `{"type":"object","properties":{"verdict":{"type":"string","enum":["allow","ask","block"]},"reason":{"type":"string"}},"required":["verdict","reason"],"additionalProperties":false}`
-
-// CLI judges through the claude CLI in print mode: no tools, the judge's own
-// system prompt, a JSON schema for the answer. It uses the CLI's login, so
-// the experiment needs no API key; APIms is the CLI's API time, which is the
-// figure an SDK call would see.
-type CLI struct {
-	Model  string
-	Effort string // low | medium | high; "" leaves the model default
+// Schema is the JSON schema of the judge's answer.
+var Schema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"verdict": map[string]any{"type": "string", "enum": []string{"allow", "ask", "block"}},
+		"reason":  map[string]any{"type": "string"},
+	},
+	"required":             []string{"verdict", "reason"},
+	"additionalProperties": false,
 }
 
-func (c CLI) Name() string { return c.Model + "/" + c.Effort }
+// SchemaJSON is Schema as a string, for backends that take it as text.
+var SchemaJSON = `{"type":"object","properties":{"verdict":{"type":"string","enum":["allow","ask","block"]},"reason":{"type":"string"}},"required":["verdict","reason"],"additionalProperties":false}`
 
-func (c CLI) Judge(ctx context.Context, in Input) Result {
-	r := Result{Model: c.Model}
-	args := []string{"-p", "--model", c.Model, "--system-prompt", System, "--tools", "", "--json-schema", schema,
-		"--output-format", "json", "--no-session-persistence"}
-	if c.Effort != "" {
-		args = append(args, "--effort", c.Effort)
+// Class marks the action the judge adds to a decision it escalates, so the
+// log, report and approval prompt name it.
+const Class = "model-judge"
+
+// answer parses a backend's JSON answer into r.
+func answer(r *Result, b []byte) {
+	var a struct{ Verdict, Reason string }
+	if err := json.Unmarshal(bytes.TrimSpace(b), &a); err != nil {
+		r.Err = "unreadable answer: " + err.Error()
+		return
 	}
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Stdin = strings.NewReader(Prompt(in))
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	start := time.Now()
-	err := cmd.Run()
-	r.WallMS = float64(time.Since(start).Milliseconds())
-	if err != nil {
-		r.Err = fmt.Sprintf("claude: %v: %s", err, strings.TrimSpace(errb.String()))
-		return r
-	}
-	var resp struct {
-		IsError    bool    `json:"is_error"`
-		Result     string  `json:"result"`
-		DurationMS float64 `json:"duration_api_ms"`
-		Cost       float64 `json:"total_cost_usd"`
-		Structured *struct {
-			Verdict string `json:"verdict"`
-			Reason  string `json:"reason"`
-		} `json:"structured_output"`
-	}
-	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
-		r.Err = "unreadable CLI output: " + err.Error()
-		return r
-	}
-	r.APIms, r.CostUSD = resp.DurationMS, resp.Cost
-	if resp.IsError || resp.Structured == nil {
-		r.Err = "no structured answer: " + resp.Result
-		return r
-	}
-	switch v := policy.Verdict(resp.Structured.Verdict); v {
+	switch v := policy.Verdict(a.Verdict); v {
 	case policy.Allow, policy.Ask, policy.Block:
-		r.Verdict, r.Reason = v, resp.Structured.Reason
+		r.Verdict, r.Reason = v, a.Reason
 	default:
-		r.Err = "unknown verdict " + resp.Structured.Verdict
+		r.Err = "unknown verdict " + strconv.Quote(a.Verdict)
 	}
-	return r
+}
+
+// WriteContent is what a file-writing tool's input puts in the file, as the
+// judge sees it: a Write's content, an Edit's replacement with the text it
+// replaces, each edit of a MultiEdit, a notebook cell, or a patch.
+func WriteContent(input json.RawMessage) string {
+	var m map[string]any
+	if json.Unmarshal(input, &m) != nil {
+		return ""
+	}
+	str := func(k string) string { s, _ := m[k].(string); return s }
+	edit := func(old, new string) string {
+		if old == "" {
+			return new
+		}
+		return "replace:\n" + old + "\nwith:\n" + new
+	}
+	var parts []string
+	for _, k := range []string{"content", "file_text", "new_source", "patch", "patchText"} {
+		if s := str(k); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	if s := str("new_string"); s != "" {
+		parts = append(parts, edit(str("old_string"), s))
+	}
+	if edits, ok := m["edits"].([]any); ok {
+		for _, e := range edits {
+			if em, ok := e.(map[string]any); ok {
+				o, _ := em["old_string"].(string)
+				n, _ := em["new_string"].(string)
+				parts = append(parts, edit(o, n))
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
 }

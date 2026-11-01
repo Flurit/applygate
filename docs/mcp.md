@@ -8,7 +8,7 @@ applygate judges a call to a **known infrastructure tool** as the command it is 
 Note: MCP tool ExecuteTerraformCommand (awslabs terraform-mcp-server) judged as the equivalent of: terraform destroy -auto-approve
 ```
 
-Every **other** MCP call (GitHub, Slack, a database browser, anything not listed below) is logged with its arguments, secrets redacted and capped at 4 KB, and allowed, as before. `applygate report` counts MCP calls per server.
+Every **other** MCP call (GitHub, Slack, a database browser, anything not listed below) is logged with its arguments, secrets redacted and capped at 4 KB, and allowed, as before, unless the user turned on the [model judge](judge.md), which then looks at it (`skip_mcp` excludes tools that only read). `applygate report` counts MCP calls per server.
 
 ## How a call is judged
 

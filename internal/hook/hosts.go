@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Flurit/applygate/internal/classify"
+	"github.com/Flurit/applygate/internal/judge"
 	"github.com/Flurit/applygate/internal/policy"
 )
 
@@ -210,7 +211,8 @@ func (c call) toEvent(agent string) (policy.Event, error) {
 		}
 		ev.Kind, ev.Command = policy.KindShell, cmd
 	case writeTools[c.tool]:
-		ev.Kind, ev.Paths = policy.KindWrite, filePaths(c.tool, c.input)
+		raw, _ := json.Marshal(c.input)
+		ev.Kind, ev.Paths, ev.Content = policy.KindWrite, filePaths(c.tool, c.input), judge.WriteContent(raw)
 	case readTools[c.tool]:
 		ev.Kind, ev.Paths = policy.KindRead, filePaths(c.tool, c.input)
 	default:

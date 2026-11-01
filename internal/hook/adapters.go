@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Flurit/applygate/internal/classify"
+	"github.com/Flurit/applygate/internal/judge"
 	"github.com/Flurit/applygate/internal/policy"
 )
 
@@ -136,9 +137,9 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 	case "Bash":
 		ev.Kind, ev.Command = policy.KindShell, ti.Command
 	case "Write", "Edit", "MultiEdit":
-		ev.Kind, ev.Paths = policy.KindWrite, nonEmpty(ti.FilePath)
+		ev.Kind, ev.Paths, ev.Content = policy.KindWrite, nonEmpty(ti.FilePath), judge.WriteContent(in.ToolInput)
 	case "NotebookEdit":
-		ev.Kind, ev.Paths = policy.KindWrite, nonEmpty(ti.NotebookPath, ti.FilePath)
+		ev.Kind, ev.Paths, ev.Content = policy.KindWrite, nonEmpty(ti.NotebookPath, ti.FilePath), judge.WriteContent(in.ToolInput)
 	case "Read", "Grep", "Glob":
 		ev.Kind, ev.Paths = policy.KindRead, nonEmpty(ti.FilePath, ti.Path)
 	default:
@@ -257,7 +258,7 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 		if patch == "" {
 			patch = commandField(ti["input"])
 		}
-		ev.Kind, ev.Paths = policy.KindWrite, classify.PatchPaths(patch)
+		ev.Kind, ev.Paths, ev.Content = policy.KindWrite, classify.PatchPaths(patch), patch
 		// A Claude-style event shape (file_path) replayed in Codex format,
 		// or a future Codex edit tool that names the file directly.
 		for _, k := range []string{"file_path", "path"} {

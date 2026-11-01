@@ -37,6 +37,18 @@ type Entry struct {
 	Notes         []string              `json:"notes,omitempty"`
 	Error         string                `json:"error,omitempty"`
 	DurationMS    float64               `json:"duration_ms"`
+	// Judge is the model judge's answer, when it was asked.
+	Judge *Judge `json:"judge,omitempty"`
+}
+
+// Judge records one model judge call.
+type Judge struct {
+	Model   string         `json:"model"`
+	Verdict policy.Verdict `json:"verdict,omitempty"`
+	Reason  string         `json:"reason,omitempty"`
+	MS      float64        `json:"ms"`
+	Cached  bool           `json:"cached,omitempty"`
+	Error   string         `json:"error,omitempty"`
 }
 
 var secretPatterns = []*regexp.Regexp{
@@ -77,6 +89,11 @@ func redactEntry(e *Entry) {
 		}
 	}
 	e.Error = Redact(e.Error)
+	if e.Judge != nil {
+		j := *e.Judge
+		j.Reason, j.Error = Redact(j.Reason), Redact(j.Error)
+		e.Judge = &j
+	}
 }
 
 // Append writes e to path, creating the directory with private permissions.

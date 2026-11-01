@@ -14,6 +14,7 @@ import (
 	"github.com/Flurit/applygate/internal/approval"
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
+	"github.com/Flurit/applygate/internal/judge"
 	"github.com/Flurit/applygate/internal/mcpmap"
 	"github.com/Flurit/applygate/internal/policy"
 	"github.com/Flurit/applygate/internal/preflight"
@@ -60,6 +61,10 @@ type Options struct {
 	Approvals string
 	// Now is the clock for approvals (tests); nil means time.Now.
 	Now func() time.Time
+	// Judge replaces the configured model judge (tests). JudgeCache is the
+	// verdict cache path: "" for the default, "-" for none.
+	Judge      judge.Judge
+	JudgeCache string
 }
 
 // EnvMap returns the process environment as a map.
@@ -265,8 +270,18 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 			}
 			entry.Mode = cfg.Mode
 			entry.Verdict, entry.Enforced = policy.Allow, policy.Allow
-			entry.Notes = []string{"MCP tool call: logged, not judged"}
-			return finish(cfg, pass)
+			entry.Notes = []string{"MCP tool call: logged, not judged by the rules"}
+			if err != nil {
+				return finish(cfg, pass)
+			}
+			d := policy.Decision{Verdict: policy.Allow, Enforced: policy.Allow, Mode: cfg.Mode, Notes: entry.Notes}
+			jctx, cancel := judgeContext(start, opt)
+			d, entry.Judge = Judge(jctx, ev, d, cfg, opt)
+			cancel()
+			if d.Verdict == policy.Allow {
+				return finish(cfg, pass)
+			}
+			return finish(cfg, decided(a, ev, d, cfg, opt, &entry))
 		}
 		// A known infrastructure tool is judged as the command it runs.
 		// The server runs it in its own working directory, so without a
@@ -314,7 +329,22 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		}
 		return fail(cfg, ev.Cwd, err.Error())
 	}
-	if opt.Approvals != "" && d.Verdict == policy.Ask && !cfg.Observe() && cfg.ApprovalsOn() {
+	jctx, cancel := judgeContext(start, opt)
+	defer cancel()
+	d, entry.Judge = Judge(jctx, ev, d, cfg, opt)
+	return finish(cfg, decided(a, ev, d, cfg, opt, &entry))
+}
+
+// judgeContext ends 3 seconds after the rules' own deadline, so the hook
+// stays inside the host's timeout (30s in the Claude Code plugin) even when
+// the rules used all of theirs; the judge's own timeout applies within it.
+func judgeContext(start time.Time, opt Options) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(context.Background(), start.Add(opt.Timeout+3*time.Second))
+}
+
+// decided applies one-time approvals, records the decision and renders it.
+func decided(a Adapter, ev policy.Event, d policy.Decision, cfg *config.Config, opt Options, entry *decisionlog.Entry) Output {
+	if opt.Approvals != "" && approvable(d) && !cfg.Observe() && cfg.ApprovalsOn() {
 		now := time.Now
 		if opt.Now != nil {
 			now = opt.Now
@@ -323,9 +353,26 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	}
 	entry.Verdict, entry.Enforced, entry.Actions, entry.Notes = d.Verdict, d.Enforced, d.Actions, d.Notes
 	if er, isEventRenderer := a.(eventRenderer); isEventRenderer {
-		return finish(cfg, er.RenderEvent(ev, d))
+		return er.RenderEvent(ev, d)
 	}
-	return finish(cfg, a.Render(d))
+	return a.Render(d)
+}
+
+// approvable reports whether a person may allow the call once: an ask, or a
+// block that only the model judge gave. A rule's block never is.
+func approvable(d policy.Decision) bool {
+	switch d.Verdict {
+	case policy.Ask:
+		return true
+	case policy.Block:
+		for _, a := range d.Actions {
+			if a.Verdict == policy.Block && string(a.Class) != judge.Class {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // withApproval applies a person's one-time approval to an asked decision, or,

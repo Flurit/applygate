@@ -89,7 +89,7 @@ func main() {
 
 	cache := loadCache()
 	for _, m := range strings.Split(*models, ",") {
-		j := judge.CLI{Model: m, Effort: *effort}
+		j := CLI{Model: m, Effort: *effort}
 		var runs []map[int]judge.Result
 		for r := 1; r <= *repeat; r++ {
 			tag := ""
@@ -137,17 +137,9 @@ func decide(it *item, env map[string]string) {
 	it.Input.Write = it.Event.Kind == policy.KindWrite
 }
 
-// writeContent is what a Write or Edit call puts in the file, as the hook
-// would pass it to the judge.
 func writeContent(in map[string]any) string {
-	if c, ok := in["content"].(string); ok {
-		return c
-	}
-	if n, ok := in["new_string"].(string); ok {
-		o, _ := in["old_string"].(string)
-		return "replace:\n" + o + "\nwith:\n" + n
-	}
-	return ""
+	b, _ := json.Marshal(in)
+	return judge.WriteContent(b)
 }
 
 func packItems(repo string) []item {
@@ -238,7 +230,7 @@ func saveCache(c *cacheT) {
 	check(os.WriteFile(filepath.Join(base, "results", "cache.json"), b, 0o644))
 }
 
-func runJudge(j judge.CLI, tag string, items []item, c *cacheT, limit, parallel int, prefilter bool) map[int]judge.Result {
+func runJudge(j CLI, tag string, items []item, c *cacheT, limit, parallel int, prefilter bool) map[int]judge.Result {
 	out := map[int]judge.Result{}
 	var mu sync.Mutex
 	sem := make(chan struct{}, parallel)
@@ -291,7 +283,7 @@ type row struct {
 	APIms, WallMS, Cost                      float64
 }
 
-func report(j judge.CLI, items []item, res map[int]judge.Result, prefilter bool) {
+func report(j CLI, items []item, res map[int]judge.Result, prefilter bool) {
 	var rows []row
 	for i, it := range items {
 		r := row{Dataset: it.Dataset, ID: it.ID, Kind: it.Kind, Expect: it.Expect, Note: it.Note, Rule: it.Rule.Verdict,
@@ -393,7 +385,7 @@ func report(j judge.CLI, items []item, res map[int]judge.Result, prefilter bool)
 
 // consistency reports how often repeated judgements of the same call differ,
 // and whether any difference changes the merged verdict.
-func consistency(j judge.CLI, items []item, runs []map[int]judge.Result) {
+func consistency(j CLI, items []item, runs []map[int]judge.Result) {
 	var judged, differ, mergedDiffer int
 	var lines []string
 	for i, it := range items {
