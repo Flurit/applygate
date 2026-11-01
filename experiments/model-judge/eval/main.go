@@ -237,7 +237,9 @@ func runJudge(j judge.CLI, tag string, items []item, c *cacheT, limit, parallel 
 		r, hit := c.m[k]
 		c.mu.Unlock()
 		if hit && r.Err == "" {
+			mu.Lock()
 			out[i] = r
+			mu.Unlock()
 			continue
 		}
 		if limit > 0 && calls >= limit {
