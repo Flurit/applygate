@@ -33,6 +33,18 @@ func TestRelevant(t *testing.T) {
 		{Input{Tool: "Edit", Paths: []string{"deploy/values-prod.yaml"}}, true},
 		{Input{Tool: "Write", Paths: []string{"AGENTS.md"}}, true},
 		{Input{Tool: "mcp__x__y"}, true},
+		{Input{Tool: "Bash", Command: "env | grep -i token", Cwd: "/repo"}, true},
+		{Input{Tool: "Bash", Command: "cat .env", Cwd: "/repo"}, true},
+		{Input{Tool: "Bash", Command: "cat ~/.config/gcloud/application_default_credentials.json", Cwd: "/repo"}, true},
+		{Input{Tool: "Bash", Command: "grep -r password /etc", Cwd: "/repo"}, false},
+		{Input{Tool: "Bash", Command: "cat ~/.codex/plugins/cache/x/SKILL.md", Cwd: "/repo"}, false},
+		{Input{Tool: "Bash", Command: "ls -la ~/.kube", Cwd: "/repo"}, true},
+		{Input{Tool: "Bash", Command: "cp build.zip /srv/www/", Cwd: "/repo"}, true},
+		{Input{Tool: "Bash", Command: "cat < ~/.netrc", Cwd: "/repo"}, true},
+		{Input{Tool: "Bash", Command: "cat src/main.go | grep -n token", Cwd: "/repo"}, false},
+		{Input{Tool: "Bash", Command: "echo deploying to /srv/app", Cwd: "/repo"}, false},
+		{Input{Tool: "Bash", Command: "head -50 /repo/README.md", Cwd: "/repo"}, false},
+		{Input{Tool: "Bash", Command: "env GOOS=linux go build ./...", Cwd: "/repo"}, false},
 	}
 	for _, c := range cases {
 		if got := Relevant(c.in); got != c.want {

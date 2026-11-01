@@ -28,6 +28,9 @@ func Relevant(in Input) bool {
 	if in.Command == "" {
 		return in.Write || writeTools[in.Tool]
 	}
+	if bareEnv.MatchString(in.Command) {
+		return true // prints every variable, secrets included
+	}
 	res := shell.Analyze(in.Command, shell.Options{Dir: in.Cwd, ReadFile: noFiles})
 	if len(res.Problems) > 0 || len(res.Invocations) == 0 {
 		return true
@@ -53,6 +56,24 @@ const errNoFiles = filterErr("the filter reads no files")
 // writeTools are Claude Code's and Codex's file-writing tools, for inputs
 // that do not carry the hook's classification.
 var writeTools = map[string]bool{"Write": true, "Edit": true, "MultiEdit": true, "NotebookEdit": true, "apply_patch": true}
+
+// bareEnv matches env run without a command, which prints the environment;
+// the analyzer drops it as a wrapper with nothing to run.
+var bareEnv = regexp.MustCompile(`(^|[|;&(]\s*)env\s*($|[|;&)>])`)
+
+// secretFile matches file names that usually hold credentials, so reading
+// one goes to the judge even with a local-only program.
+var secretFile = regexp.MustCompile(`(?i)(^|/)(\.env(\.[^/]*)?|\.envrc|\.netrc|\.npmrc|\.pypirc|\.pgpass|\.git-credentials|[^/]*credentials[^/]*|[^/]*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519)|kubeconfig)$`)
+
+// credentialDir matches paths inside the directories where CLIs keep
+// credentials and session tokens.
+var credentialDir = regexp.MustCompile(`(^|/)(\.aws|\.ssh|\.kube|\.docker|\.azure|\.gnupg|\.terraform\.d|\.config/gcloud|\.config/gh|\.config/op)(/|$)`)
+
+// fileWriters are local-only programs that change files.
+var fileWriters = map[string]bool{"rm": true, "cp": true, "mv": true, "ln": true, "tee": true, "chmod": true, "touch": true, "mkdir": true, "tar": true, "unzip": true, "sed": true, "gzip": true, "gunzip": true, "zip": true}
+
+// textArgs are programs whose arguments are text, not paths.
+var textArgs = map[string]bool{"echo": true, "printf": true, "test": true, "[": true, "sleep": true, "date": true, "true": true, "false": true, "which": true, "type": true}
 
 // localOnly are programs that read, transform or write files in the working
 // tree and start nothing else.
@@ -124,24 +145,31 @@ func safeInvocation(inv shell.Invocation) bool {
 		return false
 	}
 	for _, r := range inv.Redirs {
-		if r.Write && (!r.Target.Resolved || outside(r.Target.Text, inv.Dir)) {
+		t := r.Target.Text
+		if !r.Target.Resolved || secretFile.MatchString(t) || credentialDir.MatchString(t) || (r.Write && outside(t, inv.Dir)) {
 			return false
 		}
 	}
 	name := path.Base(args[0])
 	rest := args[1:]
+	if localOnly[name] && !textArgs[name] {
+		// A file that usually holds credentials goes to the judge whoever
+		// reads it; a program that changes files goes when a path lies
+		// outside the working tree. Reading elsewhere (an agent's own skill
+		// files, a sibling module) stays local.
+		for _, a := range rest {
+			if strings.HasPrefix(a, "-") {
+				continue
+			}
+			if secretFile.MatchString(a) || credentialDir.MatchString(a) || (fileWriters[name] && outside(a, inv.Dir)) {
+				return false
+			}
+		}
+	}
 	if len(rest) == 1 && (rest[0] == "--version" || rest[0] == "--help" || rest[0] == "-h" || rest[0] == "version") {
 		return true
 	}
 	switch name {
-	case "rm", "cp", "mv", "ln", "tee", "chmod", "touch", "mkdir", "tar", "unzip", "sed":
-		// Changing files in the working tree is local; a path outside it is
-		// not known to be.
-		for _, a := range rest {
-			if !strings.HasPrefix(a, "-") && outside(a, inv.Dir) {
-				return false
-			}
-		}
 	case "find":
 		for _, a := range rest {
 			if a == "-delete" || a == "-exec" || a == "-execdir" || a == "-ok" || a == "-okdir" {

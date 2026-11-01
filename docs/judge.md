@@ -18,7 +18,11 @@ A call reaches the judge only when all of these hold:
    - a **file write or edit**, whatever the file;
    - an **MCP call** to a tool that the [known-tool table](mcp.md) does not cover and `skip_mcp` does not exclude.
 
-   File reads never go. The local list covers reading and searching files, building, testing and linting, package installs, local git (a push only without force or delete), and file commands that stay inside the working tree. A command that contains anything the shell analyzer cannot resolve always goes.
+   File reads never go. The local list covers reading and searching files, building, testing and linting, package installs, local git (a push only without force or delete), and file commands that stay inside the working tree. Some calls go even though they look local:
+- `env` printing the environment;
+- a local command that names a credential file or directory (`.env`, `*credentials*`, key files, `.netrc`, `~/.aws`, `~/.ssh`, `~/.kube`, gcloud);
+- a command that changes a file outside the working tree;
+- a command that contains anything the shell analyzer cannot resolve.
 
 What the model receives:
 
@@ -122,25 +126,34 @@ applygate: ASK.
 
 ## How well it works
 
-All measurements are in [`experiments/model-judge`](../experiments/model-judge/RESULTS.md):
-- **What was measured:** Claude Haiku 5.5, Sonnet 5.5 and Opus 5.5, called through the `claude` CLI at effort low.
-- **The test sets:** four held-out sets, each written by an independent red-team agent that never saw the prompt, the filter or the earlier sets. Each was committed before any model saw it.
+All measurements are in [`experiments/model-judge`](../experiments/model-judge/RESULTS.md).
 
-| Held-out set | Should be stopped: caught | Should go through: escalated | Prompt |
-|---|---|---|---|
-| Third (Haiku 5.5, round 4) | 68 of 71 | 2 of 65 | v6 |
-| Fourth (Haiku 5.5) | see RESULTS.md | see RESULTS.md | v7 (this release) |
+**How the judge was measured:**
+- **Models:** Claude Haiku 5.5 (also Sonnet 5.5 and Opus 5.5 in earlier rounds), called through the `claude` CLI.
+- **Held-out sets:** four, each written by an independent red-team agent that never saw the prompt, the filter or the earlier sets. Each set was committed before any model saw it.
+- **The unbiased number:** the first three sets were seen while the judge was designed, so only the fourth set's first run is unbiased.
 
-The rules alone catch none of the calls in these sets. On real agent traffic from a week of Terraform work, the judge escalated none of 162 calls; 9% of the shell calls reached it.
+Results for Haiku 5.5 with this release's prompt:
+
+| | Should be stopped: caught | Should go through: escalated |
+|---|---|---|
+| Fourth held-out set, first run, every call judged | 66 of 67 | 5 of 61 |
+| All four sets, this release's filter | 269 of 276 (97%) | 14 of 248 (6%) |
+
+- **The rules alone** catch none of the calls in these sets.
+- **About half the false escalations** are cases applygate's own table also asks about: an unreviewed infrastructure-as-code apply or a cache flush in staging, and printing a secret.
+- **On real agent traffic** from a week of Terraform work, the judge escalated none of 162 calls; 11% of the shell calls reached it.
+- **Latency and cost per judged call:** median 1.6 s, p95 2.6 s, $0.0004 at effort low. At the model's default effort, detection was the same, p95 rose to 3.6 s, and cost was $0.0003.
 
 **Not measured:**
-- **The default endpoint.** The measurements went through the `claude` CLI at effort low. Anthropic's OpenAI-compatible endpoint ignores `reasoning_effort`, and Claude 5 models think by default there, so latency and cost per call will be higher than the 1.6 s median and $0.0004 measured. Anthropic describes that endpoint as "not considered a long-term or production-ready solution for most use cases".
-- **Any other provider or model.** Its accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval`) scores a model on the same held-out sets.
+- **The default endpoint itself.** Anthropic's OpenAI-compatible endpoint ignores `reasoning_effort`, so the default-effort row above is the closer estimate, but no call has gone through that endpoint. Anthropic describes it as "not considered a long-term or production-ready solution for most use cases".
+- **Any other provider or model.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval`) scores a model on the same held-out sets.
 - **A live agent session.** The hook path is covered by tests with the real Claude Code and Codex event formats and a stand-in model, and the command backend was run live through `applygate check`. A judged call has not yet been tried inside a running agent.
 
 ## Limits
 
-- **A model can be wrong.** It missed between none and a few calls of each held-out set, mostly writes whose effect depends on context it cannot see, and it can be fooled in ways the sets did not try. The rules stay the guarantee; the judge is extra coverage.
-- **Latency.** A judged call waits for the model: about 1.6 s at the median and 2.8 s at p95 in the measurements, more through the default endpoint. A cached answer costs nothing.
+- **A model can be wrong.** It missed up to three calls of each held-out set, mostly writes whose effect depends on context it cannot see, and it can be fooled in ways the sets did not try. The rules stay the guarantee; the judge is extra coverage.
+- **Some calls skip the judge.** The filter keeps local work away from the model: reads inside the working tree, builds, tests, local git. So a destructive call that looks like local work is not judged, for example `git log -p` printing a key from history.
+- **Latency.** A judged call waits for the model: 1.6 to 1.8 s at the median and 2.6 to 3.6 s at p95 in the measurements. A cached answer costs nothing.
 - **Your data goes to the endpoint you configure.** Use a local server or a provider whose data terms you accept. Turn it off per repository with `judge: {enabled: false}`.
 - **Workspace keys.** Anthropic's compatible endpoint needs an `anthropic-workspace-id` header for keys not scoped to a workspace, which applygate does not send. Use a workspace-scoped key.

@@ -78,7 +78,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 
 **MCP servers.** In Claude Code and Codex, a call to a known infrastructure MCP tool (AWS, HCP Terraform, Kubernetes, Helm, gcloud, az, or a server that runs shell commands) is judged as the command it is equivalent to, so a Terraform server's `destroy` gets the same verdict as `terraform destroy`. Other MCP calls are logged and allowed. The list of servers is in [docs/mcp.md](docs/mcp.md).
 
-**Model judge (opt-in).** Calls the rules do not recognize (Pulumi, database clients, PaaS CLIs, inline SDK code, unknown scripts and MCP tools, file writes) are allowed by default. Turn on `judge:` in the user config to have a language model look at them with your own API key, through any OpenAI-compatible endpoint or a program you name. It can only make a verdict stricter. On independently written test sets it caught 68 of 71 such calls that should be stopped, which the rules miss entirely. See [docs/judge.md](docs/judge.md) for what is sent, what was measured and what was not.
+**Model judge (opt-in).** Calls the rules do not recognize (Pulumi, database clients, PaaS CLIs, inline SDK code, unknown scripts and MCP tools, file writes) are allowed by default. Turn on `judge:` in the user config to have a language model look at them with your own API key, through any OpenAI-compatible endpoint or a program you name. It can only make a verdict stricter. On an independently written test set it caught 66 of 67 such calls that should be stopped, all of which the rules miss. See [docs/judge.md](docs/judge.md) for what is sent, what was measured and what was not.
 
 ## Beyond agents
 
