@@ -41,6 +41,7 @@ type item struct {
 	Expect  string // escalate | allow ("" for the pack and trial: see score)
 	Note    string
 	Event   policy.Event
+	Content string // what a file write or edit puts in the file
 	Rule    policy.Decision
 	Input   judge.Input
 }
@@ -132,6 +133,20 @@ func decide(it *item, env map[string]string) {
 	if it.Event.Kind == policy.KindMCP {
 		it.Input.Command, it.Input.Args = "", it.Event.Args
 	}
+	it.Input.Content = it.Content
+}
+
+// writeContent is what a Write or Edit call puts in the file, as the hook
+// would pass it to the judge.
+func writeContent(in map[string]any) string {
+	if c, ok := in["content"].(string); ok {
+		return c
+	}
+	if n, ok := in["new_string"].(string); ok {
+		o, _ := in["old_string"].(string)
+		return "replace:\n" + o + "\nwith:\n" + n
+	}
+	return ""
 }
 
 func packItems(repo string) []item {
@@ -165,7 +180,7 @@ func longtailItems(repo, name string) []item {
 	var out []item
 	for _, x := range f.Items {
 		ev := claudeEvent(x.Tool, filepath.Join(repo, x.Cwd), x.Input)
-		out = append(out, item{Dataset: name, ID: x.ID, Kind: x.Kind, Expect: x.Expect, Note: x.Note, Event: ev})
+		out = append(out, item{Dataset: name, ID: x.ID, Kind: x.Kind, Expect: x.Expect, Note: x.Note, Event: ev, Content: writeContent(x.Input)})
 	}
 	return out
 }
