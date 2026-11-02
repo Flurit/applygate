@@ -85,13 +85,21 @@ func TestCommandBackend(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
+	// No provider or model is chosen for the user.
 	cfg := config.Default()
+	for _, j := range []config.Judge{{}, {BaseURL: "https://api.example.com/v1"}, {Model: "m"}} {
+		cfg.Judge = j
+		if _, err := New(cfg, map[string]string{"ANTHROPIC_API_KEY": "k"}); err == nil || !strings.Contains(err.Error(), "no endpoint chosen") {
+			t.Fatalf("%+v: %v", j, err)
+		}
+	}
+	cfg.Judge = config.Judge{BaseURL: "https://api.anthropic.com/v1", Model: "claude-haiku-5-5", APIKeyEnv: "ANTHROPIC_API_KEY"}
 	if _, err := New(cfg, map[string]string{}); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
 		t.Fatalf("missing key: %v", err)
 	}
 	j, err := New(cfg, map[string]string{"ANTHROPIC_API_KEY": "k"})
-	if o, ok := j.(OpenAI); err != nil || !ok || o.BaseURL != config.DefaultJudgeBaseURL || o.Model != config.DefaultJudgeModel || o.Key != "k" {
-		t.Fatalf("default: %+v %v", j, err)
+	if o, ok := j.(OpenAI); err != nil || !ok || o.BaseURL != cfg.Judge.BaseURL || o.Model != "claude-haiku-5-5" || o.Key != "k" {
+		t.Fatalf("chosen endpoint: %+v %v", j, err)
 	}
 	// A local server without a key.
 	cfg.Judge = config.Judge{BaseURL: "http://localhost:11434/v1", Model: "m"}

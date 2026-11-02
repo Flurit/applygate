@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -21,21 +22,15 @@ func New(cfg *config.Config, env map[string]string) (Judge, error) {
 	case config.JudgeBackendCommand:
 		return Command{Argv: j.Command}, nil
 	case "", config.JudgeBackendOpenAI:
+		// No provider or model is chosen for the user (docs/judge.md).
+		if j.BaseURL == "" || j.Model == "" {
+			return nil, errors.New("no endpoint chosen: set judge.base_url and judge.model, or use backend: command (docs/judge.md compares the options)")
+		}
 		o := OpenAI{BaseURL: j.BaseURL, Model: j.Model, ReasoningEffort: j.ReasoningEffort}
-		keyEnv := j.APIKeyEnv
-		if o.BaseURL == "" {
-			o.BaseURL = config.DefaultJudgeBaseURL
-			if keyEnv == "" {
-				keyEnv = config.DefaultJudgeKeyEnv
-			}
-		}
-		if o.Model == "" {
-			o.Model = config.DefaultJudgeModel
-		}
-		if keyEnv != "" {
+		if j.APIKeyEnv != "" {
 			// A local server may need no key; a configured key must exist.
-			if o.Key = env[keyEnv]; o.Key == "" {
-				return nil, fmt.Errorf("%s is not set", keyEnv)
+			if o.Key = env[j.APIKeyEnv]; o.Key == "" {
+				return nil, fmt.Errorf("%s is not set", j.APIKeyEnv)
 			}
 		}
 		return o, nil

@@ -258,7 +258,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 			if explain {
 				fmt.Fprintf(stdout, "   model judge (%s): %s %s%s\n", orNone(jr.Model), orNone(string(jr.Verdict)), jr.Reason, jr.Error)
 			} else if jr.Error != "" {
-				fmt.Fprintln(stderr, "model judge:", jr.Error)
+				if strings.HasPrefix(jr.Error, "model judge") {
+					fmt.Fprintln(stderr, jr.Error)
+				} else {
+					fmt.Fprintln(stderr, "model judge:", jr.Error)
+				}
 			}
 		}
 	}
@@ -794,7 +798,7 @@ func binExecutable(path string) (bool, string) {
 // doctorJudge reports the model judge's setup without calling the model.
 func doctorJudge(cfg *config.Config, say func(bool, string, ...any), stdout io.Writer) {
 	if !cfg.JudgeOn() {
-		fmt.Fprintln(stdout, "     model judge off (docs/judge.md)")
+		fmt.Fprintln(stdout, "     model judge off: the rules decide every call, with no model (docs/judge.md)")
 		return
 	}
 	j, err := judge.New(cfg, hook.EnvMap())
@@ -805,8 +809,6 @@ func doctorJudge(cfg *config.Config, say func(bool, string, ...any), stdout io.W
 	where := cfg.Judge.BaseURL
 	if cfg.Judge.Backend == config.JudgeBackendCommand {
 		where = strings.Join(cfg.Judge.Command, " ")
-	} else if where == "" {
-		where = config.DefaultJudgeBaseURL
 	}
 	say(true, "model judge on: %s via %s, timeout %s; calls the rules do not recognize leave this machine (docs/judge.md)", j.Name(), where, cfg.JudgeTimeout())
 }
