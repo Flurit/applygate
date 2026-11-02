@@ -43,10 +43,12 @@ preflight:
 protected_paths: []             # extra guard files the agent may not modify
 
 judge:                          # user config only; a repository config may only set enabled: false (docs/judge.md)
-  enabled: false                # send calls the rules do not recognize to a language model, which may make the verdict stricter
-  base_url: https://api.anthropic.com/v1   # any OpenAI-compatible endpoint; setting it makes model required
-  model: claude-haiku-5-5
-  api_key_env: ANTHROPIC_API_KEY           # the variable holding the key; none for another endpoint unless set
+  enabled: false                # send calls the rules do not recognize to a model you choose, which may make the verdict stricter
+  backend: openai               # openai (any OpenAI-compatible endpoint) or command (a program you name)
+  base_url: ""                  # required for openai: no provider is chosen for you (docs/judge.md compares them)
+  model: ""                     # required for openai
+  api_key_env: ""               # the variable holding the key; empty sends none
+  command: []                   # required for command
   timeout: 10s
   skip_mcp: []                  # MCP tool globs never sent, for tools that only read
 wrappers:                       # extra programs that run a command given in their arguments

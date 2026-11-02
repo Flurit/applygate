@@ -78,7 +78,12 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 
 **MCP servers.** In Claude Code and Codex, a call to a known infrastructure MCP tool (AWS, HCP Terraform, Kubernetes, Helm, gcloud, az, or a server that runs shell commands) is judged as the command it is equivalent to, so a Terraform server's `destroy` gets the same verdict as `terraform destroy`. Other MCP calls are logged and allowed. The list of servers is in [docs/mcp.md](docs/mcp.md).
 
-**Model judge (opt-in).** Calls the rules do not recognize (Pulumi, database clients, PaaS CLIs, inline SDK code, unknown scripts and MCP tools, file writes) are allowed by default. Turn on `judge:` in the user config to have a language model look at them with your own API key, through any OpenAI-compatible endpoint or a program you name. It can only make a verdict stricter. On an independently written test set it caught 66 of 67 such calls that should be stopped, all of which the rules miss. See [docs/judge.md](docs/judge.md) for what is sent, what was measured and what was not.
+**No model needed.** applygate's rules are deterministic, work offline and decide every call they recognize. Calls they do not recognize (Pulumi, database clients, PaaS CLIs, inline SDK code, unknown scripts and MCP tools, file writes) are allowed.
+
+**Model judge (optional).** If you want a second look at those calls, turn on `judge:` in the user config and choose a model: any OpenAI-compatible endpoint with your own key, or a program you name. There is no default model.
+- **What it can do:** it can only make a verdict stricter.
+- **Measured options:** Claude Haiku, Gemini, Jev and OpenAI's Decisions API. On an independently written set of 72 such calls that should be stopped, which the rules miss, they caught between 65 and 71.
+- **Details:** [docs/judge.md](docs/judge.md) compares them, with pros and cons, and says what is sent and what was not measured.
 
 ## Beyond agents
 

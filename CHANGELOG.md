@@ -3,20 +3,24 @@
 ## Unreleased
 
 - Model judge, opt-in (`judge:` in the user config, docs/judge.md). A call the rules let through without recognizing anything is sent to a language model, and the call gets the stricter of the two verdicts. That covers a shell command that starts a program outside a short list of local ones, every file write or edit (with up to 4,000 characters of content), and an MCP call to a tool the known-tool table does not cover.
-  - **Backends.** Any OpenAI-compatible chat completions endpoint with the user's own key: by default Anthropic's (`https://api.anthropic.com/v1`, `claude-haiku-5-5`, `ANTHROPIC_API_KEY`), or any `base_url` and `model`, local servers included. Or a program the user names (`backend: command`), for example `examples/judge/claude-cli.sh`, which uses the `claude` CLI's login. No new dependencies.
+  - **Backends, with no default model.** The user chooses one:
+    - any OpenAI-compatible chat completions endpoint with their own key (`base_url`, `model`, `api_key_env`), local servers included;
+    - or a program they name (`backend: command`): `examples/judge/claude-cli.sh` (the `claude` CLI's login), `jev.sh` or `openai-decisions.sh`.
+
+    `enabled: true` without a choice leaves the judge unasked; the log says why and `applygate doctor` warns. `docs/judge.md` compares the measured options with their pros and cons. No new dependencies.
   - **Escalate only.** An error, a timeout or an allow leaves the rule decision. A judge's block can be approved once with `applygate approve`; a rule's block still cannot.
   - **Who controls it.** Off by default; only the user config can turn it on or configure it, and a repository config may only turn it off.
   - **Supporting changes.** Secrets are redacted before sending. Answers are cached for 24 hours in `judge-cache.json`, a guard path. Every judge call is in the decision log under `judge`. `applygate check` runs the judge (`--no-judge` skips it), and `applygate doctor` reports its setup.
   - **Measurements.** On an independently written held-out set the rules catch none of the 67 calls that should be stopped.
     - **Through the `claude` CLI:** Claude Haiku 5.5 caught 66 of them, with 5 of 61 false escalations.
-    - **Through the default endpoint** (set already seen): it caught 62 to 63 over three runs, with 5 false escalations. Model time was p50 1.5 s and p95 2.8 s, at about $0.00023 per call.
+    - **Through Anthropic's endpoint** (set already seen): it caught 62 to 63 over three runs, with 5 false escalations. Model time was p50 1.5 s and p95 2.8 s, at about $0.00023 per call.
     - **`reasoning_effort`:** the endpoint accepts it and ignores it.
     - **Gemini 3.8 Flash through Google's OpenAI-compatible endpoint** (set already seen, no code change needed): it caught 65 in each of three runs, with 0 to 1 false escalations. It is slower: p50 5.1 s, p95 9.4 s, and 5 of 128 calls took over 10 s, so it needs `timeout: 20s`. Its cost was not measured.
     - **Jev through `examples/judge/jev.sh`** (set already seen): it caught 61 to 62, with 6 to 7 false escalations, at p95 0.56 s and about $0.00006 per call.
     - **OpenAI's `gpt-6-luna` through `examples/judge/openai-decisions.sh`** (set already seen): it caught 58 in every run, with 8 false escalations and one refusal. That was at p95 0.74 s and about $0.00011 per call.
     - **A fifth held-out set,** written independently and scored once per judge after every design choice was committed. Of 72 calls that should be stopped and 71 that should go through:
       - Gemini 3.8 Flash caught 71 with 0 false escalations;
-      - Haiku 5.5 through the default endpoint caught 70 with 4;
+      - Haiku 5.5 through Anthropic's endpoint caught 70 with 4;
       - Jev caught 69 with 5;
       - `gpt-6-luna` caught 65 with 3.
 
@@ -27,7 +31,7 @@
     - `examples/judge/openai-decisions.sh` (OpenAI's Decisions API, `gpt-6-luna`).
 
     An API error is reported with the provider's message.
-  - **Tested live** in headless Claude Code 2.1.314 on macOS, with the default endpoint (`review/judge-live/2026-11-02-default-endpoint.md`) and with the command backend (`review/judge-live/2026-11-01-claude-code.md`):
+  - **Tested live** in headless Claude Code 2.1.314 on macOS, with Anthropic's endpoint (`review/judge-live/2026-11-02-default-endpoint.md`) and with the command backend (`review/judge-live/2026-11-01-claude-code.md`):
     - `pulumi destroy` on a protected stack was blocked by the judge;
     - `pulumi preview` was judged and allowed;
     - printing a Vault password was asked about and did not run;

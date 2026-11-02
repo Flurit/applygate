@@ -13,10 +13,10 @@ import (
 	"github.com/Flurit/applygate/internal/judge"
 )
 
-// Endpoint judges through the backend applygate ships (judge.New with the
-// default endpoint unless -base-url says otherwise), so the measurement is
-// of the code users run. It reads the token usage from each response to
-// price the call; the shipped backend does not.
+// Endpoint judges through the backend applygate ships (judge.New with
+// -base-url and -model), so the measurement is of the code users run. It
+// reads the token usage from each response to price the call; the shipped
+// backend does not.
 type Endpoint struct {
 	judge.OpenAI
 	In, Out float64 // dollars per million input and output tokens
@@ -24,12 +24,7 @@ type Endpoint struct {
 
 func newEndpoint(model, baseURL, keyEnv, effort string, in, out float64) Endpoint {
 	cfg := &config.Config{Judge: config.Judge{Model: model, BaseURL: baseURL, APIKeyEnv: keyEnv, ReasoningEffort: effort}}
-	env := map[string]string{}
-	for _, k := range []string{keyEnv, config.DefaultJudgeKeyEnv} {
-		if k != "" {
-			env[k] = os.Getenv(k)
-		}
-	}
+	env := map[string]string{keyEnv: os.Getenv(keyEnv)}
 	j, err := judge.New(cfg, env)
 	check(err)
 	return Endpoint{OpenAI: j.(judge.OpenAI), In: in, Out: out}

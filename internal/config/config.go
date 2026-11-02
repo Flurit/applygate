@@ -114,18 +114,19 @@ type Wrapper struct {
 // Judge configures the model judge (docs/judge.md).
 type Judge struct {
 	Enabled *bool `yaml:"enabled"`
-	// Backend is openai (default: any OpenAI-compatible chat completions
-	// endpoint, with the user's own key) or command (a program the user
-	// names).
+	// Backend is openai (any OpenAI-compatible chat completions endpoint,
+	// with the user's own key; the default wire format) or command (a
+	// program the user names).
 	Backend string `yaml:"backend"`
-	// BaseURL is the endpoint (default Anthropic's OpenAI-compatible
-	// endpoint, https://api.anthropic.com/v1). Set it for any other
-	// provider or a local server; Model is then required too.
+	// BaseURL and Model choose the endpoint and model of the openai
+	// backend. There is no default provider or model: the user picks one
+	// (docs/judge.md compares them), and until they do the judge is not
+	// asked.
 	BaseURL string `yaml:"base_url"`
-	Model   string `yaml:"model"` // default claude-haiku-5-5
-	// APIKeyEnv names the environment variable holding the API key
-	// (default ANTHROPIC_API_KEY with the default endpoint; none for
-	// another endpoint unless set). The key itself never goes in a config.
+	Model   string `yaml:"model"`
+	// APIKeyEnv names the environment variable holding the API key; with
+	// none set, no key is sent (a local server). The key itself never goes
+	// in a config.
 	APIKeyEnv string `yaml:"api_key_env"`
 	// ReasoningEffort is sent as reasoning_effort when set, for providers
 	// that accept it.
@@ -139,13 +140,10 @@ type Judge struct {
 	SkipMCP []string `yaml:"skip_mcp"`
 }
 
-// Judge defaults.
+// Judge backends and the per-call timeout.
 const (
 	JudgeBackendOpenAI  = "openai"
 	JudgeBackendCommand = "command"
-	DefaultJudgeBaseURL = "https://api.anthropic.com/v1"
-	DefaultJudgeModel   = "claude-haiku-5-5"
-	DefaultJudgeKeyEnv  = "ANTHROPIC_API_KEY"
 	DefaultJudgeTimeout = 10 * time.Second
 )
 
@@ -526,9 +524,8 @@ func (c *Config) validate() error {
 	}
 	switch c.Judge.Backend {
 	case "", JudgeBackendOpenAI:
-		if c.JudgeOn() && c.Judge.BaseURL != "" && c.Judge.Model == "" {
-			return errors.New("judge: a base_url other than the default needs a model")
-		}
+		// A missing base_url or model is not a config error: the judge is
+		// then not asked, and the rules decide as they do without it.
 	case JudgeBackendCommand:
 		if c.JudgeOn() && len(c.Judge.Command) == 0 {
 			return errors.New("judge: backend command needs a command")

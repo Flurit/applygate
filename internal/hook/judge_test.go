@@ -146,6 +146,24 @@ func TestJudgeSeesMCPAndWrites(t *testing.T) {
 	}
 }
 
+func TestJudgeNoEndpointChosen(t *testing.T) {
+	// Turning the judge on without choosing an endpoint leaves the rules to
+	// decide, as without the judge, and says why in the log.
+	root, opt := judgeSetup(t, "enforce", "version: 1\njudge:\n  enabled: true\n")
+	log := filepath.Join(t.TempDir(), "log.jsonl")
+	opt.LogPath = log
+	o := Run(Claude{}, strings.NewReader(event("Bash", filepath.Join(root, "prod"), map[string]any{"command": "pulumi destroy --yes"})), opt)
+	if decision(t, o) != "allow" {
+		t.Fatalf("got %s", decision(t, o))
+	}
+	if e := readLog(t, log); e.Judge == nil || !strings.Contains(e.Judge.Error, "no endpoint chosen") {
+		t.Fatalf("judge record %+v", e.Judge)
+	}
+	if o := Run(Claude{}, strings.NewReader(event("Bash", filepath.Join(root, "prod"), map[string]any{"command": "terraform destroy -auto-approve"})), opt); decision(t, o) == "allow" {
+		t.Fatal("a rule block was lowered")
+	}
+}
+
 func TestJudgeCache(t *testing.T) {
 	root, opt := judgeSetup(t, "enforce", "")
 	opt.JudgeCache = filepath.Join(t.TempDir(), "judge-cache.json")
