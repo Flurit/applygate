@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sync/atomic"
 
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/judge"
@@ -42,8 +43,14 @@ func (e Endpoint) Judge(ctx context.Context, in judge.Input) judge.Result {
 	o.Client = &http.Client{Transport: counter{&u}}
 	r := o.Judge(ctx, in)
 	r.CostUSD = (u.Usage.Prompt*e.In + u.Usage.Completion*e.Out) / 1e6
+	tokensIn.Add(int64(u.Usage.Prompt))
+	tokensOut.Add(int64(u.Usage.Completion))
 	return r
 }
+
+// tokensIn and tokensOut total the usage of every endpoint call this run made,
+// for providers whose prices the -price flags do not know.
+var tokensIn, tokensOut atomic.Int64
 
 type usage struct {
 	Usage struct {

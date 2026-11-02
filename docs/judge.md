@@ -63,6 +63,17 @@ judge:
   api_key_env: OPENAI_API_KEY
 ```
 
+Google's Gemini API, measured below. It is slower than the default, so give it a longer timeout:
+
+```yaml
+judge:
+  enabled: true
+  base_url: https://generativelanguage.googleapis.com/v1beta/openai
+  model: gemini-3.8-flash
+  api_key_env: GEMINI_API_KEY
+  timeout: 20s
+```
+
 A local server needs no key:
 
 ```yaml
@@ -75,7 +86,7 @@ judge:
 How each endpoint is used:
 - **Request:** the answer is asked for as a JSON schema (`response_format` with `strict: true`). An endpoint that ignores that still works when the model replies with the JSON object.
 - **`reasoning_effort`:** sent only when you set it, for endpoints that accept it. The default endpoint accepts it and ignores it: low and high gave the same verdicts, latency and cost.
-- **Testing:** the default endpoint was called live; see the measured results below. For other providers these settings are written from the providers' published API shape, and only the request format is tested (against a local test server).
+- **Testing:** the default endpoint and Gemini's were called live; see the measured results below. For other providers these settings are written from the providers' published API shape, and only the request format is tested (against a local test server).
 
 ### A program instead of an endpoint
 
@@ -140,6 +151,7 @@ Results for Haiku 5.5 with this release's prompt:
 | Fourth held-out set, first run, every call judged | 66 of 67 | 5 of 61 |
 | All four sets, this release's filter | 269 of 276 (97%) | 14 of 248 (6%) |
 | Fourth held-out set through the default endpoint, every call judged (set already seen) | 62 to 63 of 67 over three runs | 5 of 61 |
+| Fourth held-out set, Gemini 3.8 Flash through Gemini's endpoint, every call judged (set already seen) | 65 of 67 in each of three runs | 0 to 1 of 61 |
 
 - **The rules alone** catch none of the calls in these sets.
 - **The default endpoint catches slightly less than the CLI.** It missed three calls the CLI asked about, the same three in every run and at every effort setting. Why the two paths differ is not established. The calls:
@@ -148,6 +160,13 @@ Results for Haiku 5.5 with this release's prompt:
   - `git log -p -S AKIA`, which the filter keeps from the judge anyway.
 
   The first two rows were measured through the `claude` CLI.
+- **Gemini 3.8 Flash was more accurate on this set and much slower:**
+  - its misses were a Kafka offset reset in QA and the `.gitignore` edit;
+  - model time was p50 5.1 s and p95 9.4 s;
+  - 5 of 128 calls took over 10 s (the slowest 18.5 s), so at the default timeout they would have been left to the rules;
+  - its cost per call was not measured.
+
+  The prompt was written and tuned against Claude models, and this set was written by a Claude agent.
 - **About half the false escalations** are cases applygate's own table also asks about: an unreviewed infrastructure-as-code apply or a cache flush in staging, and printing a secret.
 - **On real agent traffic** from a week of Terraform work, the judge escalated none of 162 calls; 11% of the shell calls reached it.
 - **Latency and cost per judged call:**
@@ -162,7 +181,7 @@ Results for Haiku 5.5 with this release's prompt:
   With the default endpoint the hook took 1.2 to 3.0 s per judged call, against 3.3 to 3.9 s with the command backend, which has to start the `claude` CLI.
 
 **Not measured:**
-- **Any other provider or model.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval -backend openai -base-url … -api-key-env …`) scores any OpenAI-compatible endpoint on the same held-out sets.
+- **Any provider or model other than Claude Haiku 5.5 (both paths) and Gemini 3.8 Flash.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval -backend openai -base-url … -api-key-env …`) scores any OpenAI-compatible endpoint on the same held-out sets.
 - **The default endpoint's long-term support.** Anthropic describes it as "not considered a long-term or production-ready solution for most use cases".
 - **Agents other than Claude Code, and an interactive session.** Codex, an interactive session's ask prompt, and `applygate approve` for a judge's block are covered by tests only.
 
@@ -170,6 +189,7 @@ Results for Haiku 5.5 with this release's prompt:
 
 - **A model can be wrong.** It missed up to three calls of each held-out set, mostly writes whose effect depends on context it cannot see, and it can be fooled in ways the sets did not try. The rules stay the guarantee; the judge is extra coverage.
 - **Some calls skip the judge.** The filter keeps local work away from the model: reads inside the working tree, builds, tests, local git. So a destructive call that looks like local work is not judged, for example `git log -p` printing a key from history.
-- **Latency.** A judged call waits for the model: 1.5 to 1.8 s at the median and 2.6 to 3.6 s at p95 in the measurements. A cached answer costs nothing.
+- **Latency.** A judged call waits for the model. With Claude Haiku 5.5 that was 1.5 to 1.8 s at the median and 2.6 to 3.6 s at p95 in the measurements; with Gemini 3.8 Flash it was 5.1 s and 9.4 s. A cached answer costs nothing.
+- **A timeout means no judgement.** A call that runs past `timeout` is left to the rules, which allow it. Set the timeout above your endpoint's slowest answers; the judge's limit is 25 seconds, inside the plugin's 30-second hook limit.
 - **Your data goes to the endpoint you configure.** Use a local server or a provider whose data terms you accept. Turn it off per repository with `judge: {enabled: false}`.
 - **Workspace keys.** Anthropic's compatible endpoint needs an `anthropic-workspace-id` header for keys not scoped to a workspace, which applygate does not send. Use a workspace-scoped key.

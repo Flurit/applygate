@@ -11,6 +11,7 @@
     - **Through the `claude` CLI:** Claude Haiku 5.5 caught 66 of them, with 5 of 61 false escalations.
     - **Through the default endpoint** (set already seen): it caught 62 to 63 over three runs, with 5 false escalations. Model time was p50 1.5 s and p95 2.8 s, at about $0.00023 per call.
     - **`reasoning_effort`:** the endpoint accepts it and ignores it.
+    - **Gemini 3.8 Flash through Google's OpenAI-compatible endpoint** (set already seen, no code change needed): it caught 65 in each of three runs, with 0 to 1 false escalations. It is slower: p50 5.1 s, p95 9.4 s, and 5 of 128 calls took over 10 s, so it needs `timeout: 20s`. Its cost was not measured.
     - **Other providers and models:** none have been measured.
   - **Tested live** in headless Claude Code 2.1.314 on macOS, with the default endpoint (`review/judge-live/2026-11-02-default-endpoint.md`) and with the command backend (`review/judge-live/2026-11-01-claude-code.md`):
     - `pulumi destroy` on a protected stack was blocked by the judge;

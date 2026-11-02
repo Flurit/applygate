@@ -114,6 +114,9 @@ func main() {
 			saveCache(cache)
 		}
 		report(j, items, runs[0], *prefilter)
+		if *backend == "openai" {
+			fmt.Fprintf(os.Stderr, "tokens this run: %d in, %d out\n", tokensIn.Load(), tokensOut.Load())
+		}
 		if len(runs) > 1 {
 			consistency(j, items, runs)
 		}
