@@ -120,7 +120,7 @@ Jev (TypeSafe AI, `jev-latest`, released 2026-10-22) answers typed questions wit
 
 ### OpenAI's Decisions API
 
-[`examples/judge/openai-decisions.sh`](../../examples/judge/openai-decisions.sh) is written from OpenAI's API reference: `POST /v1/decisions`, `gpt-6-luna`, one choice question. It was tested only against a local test server, which checked the request it sends and how it reads an answer, a refusal and an HTTP error. No key with access was available, so it has not been measured.
+[`examples/judge/openai-decisions.sh`](../../examples/judge/openai-decisions.sh) is written from OpenAI's API reference: `POST /v1/decisions`, `gpt-6-luna`, one choice question. It was tested only against a local test server, which checked the request it sends and how it reads an answer, a refusal and an HTTP error. A real key lists `gpt-6-luna`, but its account had no credits (HTTP 429 `insufficient_quota`), so it has not been measured.
 
 ## Round 5: the shipped judge (prompt v7, final filter) and a fourth held-out set
 

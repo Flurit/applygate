@@ -12,7 +12,8 @@
 # "schema", "call"}); this prints {"verdict": ..., "reason": ...}. The judge's
 # instructions become one choice question about the call. The API returns a
 # probability per verdict and no explanation, so the reason lists them. A
-# refusal is an error, which leaves the rule decision.
+# refusal or an API error is an error, reported with its message, which leaves
+# the rule decision.
 set -eu
 : "${OPENAI_API_KEY:?OPENAI_API_KEY is not set}"
 model=${APPLYGATE_JUDGE_MODEL:-gpt-6-luna}
@@ -31,11 +32,12 @@ jq -c --arg model "$model" '{
 		]
 	}]
 }' |
-	curl -sS --fail-with-body --max-time 25 "$url" \
+	curl -sS --max-time 25 "$url" \
 		-H @/dev/fd/3 -H 'Content-Type: application/json' --data-binary @- 3<<EOF |
 Authorization: Bearer $OPENAI_API_KEY
 EOF
-	jq -ce --arg model "$model" '.answers[0] as $a |
+	jq -ce --arg model "$model" 'if .error or .detail then error("\(.error.message // .detail | tostring)") else . end |
+		.answers[0] as $a |
 		if $a.type != "choice" then error("no answer: \($a.type)") else . end |
 		($a.probabilities | map({key: .value, value: .probability}) | from_entries) as $p |
 		{verdict: $a.choice, reason: ("\($model) chose \($a.choice) (allow \($p.allow), ask \($p.ask), block \($p.block)); a decision model gives no explanation.")}'

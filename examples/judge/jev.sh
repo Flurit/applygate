@@ -11,7 +11,8 @@
 # applygate writes one request as JSON on stdin ({"system", "prompt",
 # "schema", "call"}); this prints {"verdict": ..., "reason": ...}. The judge's
 # instructions become one choice question about the call. Jev returns a
-# probability per verdict and no explanation, so the reason lists them.
+# probability per verdict and no explanation, so the reason lists them. An
+# API error is reported with the provider's message.
 set -eu
 : "${TYPESAFE_API_KEY:?TYPESAFE_API_KEY is not set}"
 model=${APPLYGATE_JUDGE_MODEL:-jev-latest}
@@ -29,9 +30,10 @@ jq -c --arg model "$model" '{
 		}
 	}}
 }' |
-	curl -sS --fail-with-body --max-time 25 "$url" \
+	curl -sS --max-time 25 "$url" \
 		-H @/dev/fd/3 -H 'Content-Type: application/json' --data-binary @- 3<<EOF |
 Authorization: Bearer $TYPESAFE_API_KEY
 EOF
-	jq -ce --arg model "$model" '.answers.verdict as $a | ($a.choice // error("no answer")) as $v |
+	jq -ce --arg model "$model" 'if .error or .detail then error("\(.error.message // .detail | tostring)") else . end |
+		.answers.verdict as $a | ($a.choice // error("no answer")) as $v |
 		{verdict: $v, reason: ("\($model) chose \($v) (allow \($a.probabilities.allow), ask \($a.probabilities.ask), block \($a.probabilities.block)); a decision model gives no explanation.")}'

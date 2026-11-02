@@ -91,4 +91,4 @@ The same build, with the user config set to `backend: command` and `command: ["s
 
 On the fourth held-out set Jev caught 61 to 62 of 67 over three runs, and wrongly escalated 6 to 7 of 61. Model time was p50 0.46 s and p95 0.56 s ([RESULTS.md](../../experiments/model-judge/RESULTS.md)).
 
-`examples/judge/openai-decisions.sh` was not run against OpenAI; no key with Decisions API access was available.
+`examples/judge/openai-decisions.sh` reached OpenAI but was not measured. The key lists `gpt-6-luna`, but the account had no credits, so every call returned HTTP 429 `insufficient_quota`. applygate logged the judge error and kept the rule decision (allow). The adapter now passes the provider's error message through, so the log reads "You have no credits remaining…" instead of a bare 429.
