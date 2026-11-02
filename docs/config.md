@@ -1,18 +1,36 @@
 # Configuration
 
-applygate reads `~/.config/applygate/config.yaml` (user, optional) and the nearest `.applygate.yaml` above the working directory (repository). Values from the repository file win, except for the user-only settings marked below. Unknown keys are rejected.
+applygate reads two kinds of config file. Unknown keys are rejected.
+- **The user config,** `~/.config/applygate/config.yaml` (optional; `applygate doctor` prints its path).
+- **Every `.applygate.yaml`** from the outermost directory above the command down to the command's own directory.
+
+**Only the user config can loosen protection.** A repository config is written to the repository, which an agent or a cloned project may control, so it can only add protection.
+- **The outermost repository config** is the repository's. It defines the environments, and may tighten any other setting.
+- **A nested one** (a subproject, a cloned tool) may only add protected environments and other protection. No layer replaces another.
+- **These settings are user-only:**
+  - `mode: observe`;
+  - `strict: false`;
+  - a `default_tier`, `name_hints: false` or `on_error` looser than the current value;
+  - `aliases`;
+  - `plan_gate.scope`, a larger `plan_gate.max_destroy`, `plan_gate.run_show: false`;
+  - preflight switches set to `false`;
+  - `wrappers` over a shell, engine or interpreter;
+  - `approvals: true`, `unknown_dir: session_root`, `log_path`, the network checks and the model judge.
+
+  In a repository config they are ignored, and `doctor` says which.
+- **Path patterns.** A repository config's paths, including `**` patterns, are relative to its own directory. The user config's `**` patterns match anywhere.
 
 ```yaml
 version: 1
-mode: observe            # observe | enforce
+mode: enforce            # observe | enforce; observe only from the user config
 strict: true             # unknown environment = protected
 default_tier: standard   # tier for unknown environments when strict is false
 on_error: auto           # auto (block in protected/unknown, allow elsewhere) | block | allow
 name_hints: true         # treat prod/production/prd/live as a whole word in names (paths, workspaces, profiles, backend bucket/key/workspace_key_prefix/dynamodb_table/address) as protected; non-/not-/no-/pre- before the word and -like/-test/-sandbox after it cancel the hint (docs/policy.md step 4)
 unknown_dir: most_protected   # most_protected | session_root: how a command is judged when the host does not report its directory (Codex 0.165.0); a repository config may set most_protected but not session_root
-approvals: true          # on agents that cannot show an ask prompt, let a person allow one asked call with `applygate approve ID` (docs/policy.md step 9); a repository config may turn this off but not on
+approvals: false         # user config only: on agents that cannot show an ask prompt, let a person allow one asked call with `applygate approve ID` (docs/policy.md step 9). Off by default: on one machine the agent can reach any terminal the person can, so turning this on trusts that no agent runs `applygate approve` in a way applygate does not recognise
 log_path: ~/.local/state/applygate/decisions.jsonl   # user config only
-aliases: {tf: terraform}
+aliases: {tf: terraform} # user config only
 
 environments:            # any matching signal applies; the most protected match wins
   - name: prod

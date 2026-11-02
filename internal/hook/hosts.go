@@ -217,6 +217,12 @@ func (c call) toEvent(agent string) (policy.Event, error) {
 		ev.Kind, ev.Paths = policy.KindRead, filePaths(c.tool, c.input)
 	default:
 		ev.Kind = policy.KindOther
+		// A tool applygate does not know (Claude Code's Monitor or
+		// PowerShell, a host's new shell tool) that carries a command runs
+		// it, so it is judged as a shell call.
+		if cmd := commandOf(c.input); strings.TrimSpace(cmd) != "" {
+			ev.Kind, ev.Command = policy.KindShell, cmd
+		}
 	}
 	return ev, nil
 }

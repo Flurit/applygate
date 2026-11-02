@@ -128,13 +128,18 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 		NotebookPath string `json:"notebook_path"`
 		Path         string `json:"path"`
 	}
-	if len(in.ToolInput) > 0 {
+	// Only Claude Code's own tools have these fields with these types; an MCP
+	// tool or another host's tool may use the same names for arrays.
+	if len(in.ToolInput) > 0 && claudeTools[in.ToolName] {
 		if err := json.Unmarshal(in.ToolInput, &ti); err != nil {
 			return policy.Event{}, false, fmt.Errorf("malformed tool_input: %w", err)
 		}
 	}
 	switch in.ToolName {
 	case "Bash":
+		if strings.TrimSpace(ti.Command) == "" {
+			return policy.Event{}, false, errors.New("malformed hook event: Bash call without a command applygate can read")
+		}
 		ev.Kind, ev.Command = policy.KindShell, ti.Command
 	case "Write", "Edit", "MultiEdit":
 		ev.Kind, ev.Paths, ev.Content = policy.KindWrite, nonEmpty(ti.FilePath), judge.WriteContent(in.ToolInput)
@@ -245,12 +250,15 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 			return policy.Event{}, false, fmt.Errorf("malformed tool_input: %w", err)
 		}
 	}
-	cmd := commandField(ti["command"])
+	cmd := commandOf(ti)
 	if cmd == "" {
-		cmd = commandField(ti["cmd"])
+		cmd = commandField(ti["argv"])
 	}
 	switch in.ToolName {
 	case "Bash", "shell", "local_shell", "exec_command", "unified_exec", "container.exec":
+		if strings.TrimSpace(cmd) == "" {
+			return policy.Event{}, false, fmt.Errorf("malformed hook event: %s call without a command applygate can read", in.ToolName)
+		}
 		ev.Kind, ev.Command = policy.KindShell, cmd
 		ev.Cwd, ev.DirKnown = workDir(ti, in.Cwd)
 	case "apply_patch", "Edit", "Write":
@@ -268,8 +276,13 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 		}
 	default:
 		ev.Kind = policy.KindOther
-		if isMCPTool(in.ToolName) {
+		switch {
+		case isMCPTool(in.ToolName):
 			ev.Kind, ev.Command, ev.Args = policy.KindMCP, mcpArguments(in.ToolInput), in.ToolInput
+		case cmd != "":
+			// A tool applygate does not know that carries a command runs it.
+			ev.Kind, ev.Command = policy.KindShell, cmd
+			ev.Cwd, ev.DirKnown = workDir(ti, in.Cwd)
 		}
 	}
 	return ev, true, nil

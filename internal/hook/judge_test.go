@@ -37,6 +37,10 @@ func judgeSetup(t *testing.T, mode, userCfg string) (string, Options) {
 	user := filepath.Join(t.TempDir(), "config.yaml")
 	if userCfg == "" {
 		userCfg = "version: 1\njudge:\n  enabled: true\n  skip_mcp: [\"mcp__browser__*\"]\n"
+		if mode == "observe" {
+			// Observe mode comes from the user config only.
+			userCfg += "mode: observe\n"
+		}
 	}
 	os.WriteFile(user, []byte(userCfg), 0o644)
 	return root, Options{UserConfig: user, NoGit: true, Env: map[string]string{}, JudgeCache: "-"}

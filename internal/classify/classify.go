@@ -57,6 +57,14 @@ type Action struct {
 	// TouchesState marks commands that read or write Terraform state, so
 	// stale-state and backend checks apply.
 	TouchesState bool
+	// PlanWritten is set when an earlier step of the same command wrote the
+	// saved plan this action applies: what is on disk when the hook runs is
+	// not what will be applied.
+	PlanWritten bool
+	// DataDirWritten is set when an earlier step rewrote this directory's
+	// .terraform (workspace, backend): the workspace and backend recorded
+	// there now are not the ones the command will use.
+	DataDirWritten bool
 }
 
 // Options configure classification.
@@ -91,8 +99,29 @@ var engines = map[string]string{"terraform": "terraform", "tofu": "tofu", "opent
 // infrastructure or guard files produce no action.
 func Invocations(res *shell.Result, opt Options) []Action {
 	var out []Action
+	// written collects what each step writes, so a later step that applies
+	// a planfile or reads .terraform is judged on what will be there, not on
+	// what is there now.
+	var written []string
 	for _, inv := range res.Invocations {
-		out = append(out, invocation(inv, opt)...)
+		acts := invocation(inv, opt)
+		for i := range acts {
+			a := &acts[i]
+			if a.PlanFile != "" && a.Dir != "" {
+				a.PlanWritten = writtenAt(written, absPath(a.Dir, a.PlanFile, opt.Home))
+			}
+			if a.Engine == "terraform" || a.Engine == "tofu" || a.Engine == "terragrunt" {
+				dataDir := ".terraform"
+				if d := a.Env["TF_DATA_DIR"]; d != "" {
+					dataDir = d
+				}
+				if a.Dir != "" {
+					a.DataDirWritten = writtenAt(written, absPath(a.Dir, dataDir, opt.Home))
+				}
+			}
+		}
+		out = append(out, acts...)
+		written = append(written, stepWrites(inv, opt)...)
 	}
 	for _, p := range res.Problems {
 		a := Action{Class: Dynamic, Command: p.Text, Why: p.Reason, Dir: p.Dir, Via: p.Via}
@@ -404,6 +433,61 @@ func fileOps(base Action, name string, args []shell.Word, dir string, opt Option
 		}
 	}
 	return out
+}
+
+// stepWrites returns the absolute paths one step of a command writes: its
+// redirections, what writeTargets finds for its program, and the plan of
+// terraform plan -out.
+func stepWrites(inv shell.Invocation, opt Options) []string {
+	var out []string
+	for _, r := range inv.Redirs {
+		if r.Write && r.Target.Resolved {
+			out = append(out, absPath(inv.Dir, r.Target.Text, opt.Home))
+		}
+	}
+	if len(inv.Args) == 0 || !inv.Args[0].Resolved {
+		return out
+	}
+	name := filepath.Base(inv.Args[0].Text)
+	args := inv.Args[1:]
+	if _, ok := engines[name]; ok {
+		for i, w := range args {
+			t := w.Text
+			if v, ok := strings.CutPrefix(t, "-out="); ok {
+				out = append(out, absPath(inv.Dir, v, opt.Home))
+			} else if t == "-out" && i+1 < len(args) {
+				out = append(out, absPath(inv.Dir, args[i+1].Text, opt.Home))
+			}
+		}
+		return out
+	}
+	out = append(out, writeTargets(name, args, inv.Dir, opt.Home)...)
+	// cp, mv, ln and tee write their last argument even when it is a file.
+	switch name {
+	case "cp", "mv", "ln", "install", "tee", "touch", "truncate", "dd":
+		for _, w := range args {
+			if w.Resolved && !strings.HasPrefix(w.Text, "-") {
+				t := w.Text
+				if v, ok := strings.CutPrefix(t, "of="); ok {
+					t = v
+				}
+				out = append(out, absPath(inv.Dir, t, opt.Home))
+			}
+		}
+	}
+	return out
+}
+
+// writtenAt reports whether p, or a directory holding it, is among written.
+func writtenAt(written []string, p string) bool {
+	p = filepath.Clean(p)
+	for _, w := range written {
+		w = filepath.Clean(w)
+		if w == p || strings.HasPrefix(p, w+string(filepath.Separator)) || strings.HasPrefix(w, p+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // writeTargets returns the absolute paths a program changes in a way that

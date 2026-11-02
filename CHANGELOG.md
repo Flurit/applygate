@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- **Security fixes from the v0.6.0 pre-release review** (`review/v0.6.0/`).
+  - **The review:** six independent reviewers found 80 issues, 20 of them critical, most present in earlier releases.
+  - **This release fixes the self-protection findings,** where an agent could switch applygate off or approve its own call.
+  - **Tests:** every finding has a test (`harness/pack_attack`, `internal/reviewgap`).
+  - **Guard files are compared after resolving symlinks and, on macOS and Windows, case.**
+    - **Before:** `.APPLYGATE.YAML`, `~/.Claude/settings.json` or a symlinked parent got past the guard. So did the user config, decision log and telemetry file when `XDG_CONFIG_HOME` or `XDG_STATE_HOME` was set, and the running binary itself.
+    - **Directories that hold a guard file now count too:**
+      - removing or moving `~/.claude`, the state directory or the repository;
+      - copying, downloading or extracting into them (`cp -t`, `curl -o`, `wget -O`, `tar -C`, `unzip -d`);
+      - `git mv/checkout/restore/reset -- <guard file>`;
+      - `find -delete`, `patch` and editors.
+    - **Code in another language** (`python3 -c`, `node -e`, scripts) that names a guard file or applygate's approvals, judge cache, telemetry or log file is guard tampering, whether or not it mentions a tool.
+  - **Tampering is judged by what a program is, not only its name:**
+    - `applygate` or `seatbelt` in any case;
+    - the same file as the running binary;
+    - a renamed copy given applygate's tampering subcommands;
+    - `go run` of `cmd/applygate`;
+    - applygate started from another program's arguments, such as a pty spawner.
+
+    `applygate hook install` and `applygate apply` run by an agent are now tampering. So are the agent CLIs' own switches: `claude plugin disable|uninstall`, `claude config set`, a nested `claude --settings` or `--setting-sources`, and `codex -c` overrides of hooks, the sandbox or approvals.
+  - **Every Claude Code tool reaches the hook.** `hook install` and the plugin use the matcher `*`.
+    - **Commands in other tools:** a tool applygate does not know whose input carries a command (`Monitor`, `PowerShell`) is judged as a shell call. Before, `Monitor` ran `terraform destroy` unseen. `doctor` warns about an older matcher.
+    - **Unreadable shell calls:** a Claude Code or Codex shell call whose command cannot be read is an error under `on_error`, not an allow.
+    - **Other inputs:** `apply_patch` run from the shell, and text typed into another terminal with `tmux send-keys` or `screen -X stuff`, are judged.
+  - **A planfile or `.terraform` written earlier in the same command.**
+    - `terraform plan -destroy -out=tfplan && terraform apply tfplan` gets a critical `plan-unverifiable` finding instead of being judged on the old file.
+    - A command after a step that rewrites `.terraform` is judged as protected.
+- **Behaviour changes:**
+  - **One-time approvals are off by default.** Only the user config turns them on. The approval key now binds write content and full MCP arguments, the store's lock never waits more than about half a second, and the approve prompt escapes control characters.
+  - **`applygate apply` has no `--yes` and no `--plan-json`.** An ask outside a terminal is refused; in CI, gate with `applygate plan-check` and run the engine yourself.
+  - **Repository configs can only add protection.** Every `.applygate.yaml` from the outermost directory down applies, and a nested one no longer replaces the repository's.
+    - **User config only:** observe mode, `strict: false`, a looser `default_tier`, `name_hints` or `on_error`, `aliases`, and the other settings listed in `docs/config.md`. In a repository config they are ignored, and `doctor` says so.
+    - **`applygate init`** writes the repository config without a mode and starts the observe-mode trial in the user config.
+    - **`applygate suggest`** no longer proposes a mode.
+    - **Path patterns:** a repository's `**` patterns are rooted at its own directory.
 - Model judge, opt-in (`judge:` in the user config, docs/judge.md). A call the rules let through without recognizing anything is sent to a language model, and the call gets the stricter of the two verdicts. That covers a shell command that starts a program outside a short list of local ones, every file write or edit (with up to 4,000 characters of content), and an MCP call to a tool the known-tool table does not cover.
   - **Backends, with no default model.** The user chooses one:
     - any OpenAI-compatible chat completions endpoint with their own key (`base_url`, `model`, `api_key_env`), local servers included;
