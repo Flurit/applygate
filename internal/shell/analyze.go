@@ -61,6 +61,9 @@ type Problem struct {
 	// Mentions lists infrastructure words seen in opaque text (for example
 	// "terraform" inside python -c code). Empty when nothing was recognized.
 	Mentions []string
+	// Guard is the guard file opaque text names, if any: code that names
+	// one is guard tampering whatever else it does.
+	Guard string
 }
 
 // Result is the outcome of Analyze.
@@ -85,6 +88,9 @@ type Options struct {
 	// ProtectedPaths are the guard-file patterns from the config. An
 	// interpreter body that names one of them is never a plain file edit.
 	ProtectedPaths []string
+	// GuardNeedles are strings that name a guard file (paths and distinctive
+	// names, lower case); opaque code containing one is guard tampering.
+	GuardNeedles []string
 	// ProtectedPath reports whether an absolute path is a guard file (the
 	// classify package's matcher); the files an interpreter body writes are
 	// resolved against its directory and checked with it.

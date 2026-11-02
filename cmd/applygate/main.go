@@ -214,7 +214,8 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 	ev := policy.Event{Agent: *agent, Tool: "Bash", Kind: policy.KindShell, Command: fs.Arg(0), Cwd: dir, CanAsk: true, DirKnown: !*dirUnknown}
 	deps := hook.Deps(context.Background(), cfg, opt)
 	if explain {
-		res := shell.Analyze(ev.Command, shell.Options{Dir: dir, Env: opt.Env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ProtectedPaths: cfg.GuardPaths(), ProtectedPath: func(p string) bool { return classify.IsProtectedPath(p, cfg.GuardPaths()) }})
+		copt := policy.GuardOptions(cfg, opt.Env)
+		res := shell.Analyze(ev.Command, policy.ShellOptions(cfg, copt, dir, opt.Env, nil))
 		fmt.Fprintf(stdout, "config: %s\n", orNone(strings.Join(cfg.Sources, ", ")))
 		for _, d := range cfg.Deprecations {
 			fmt.Fprintf(stdout, "note: %s\n", d)
@@ -241,7 +242,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 		for _, n := range res.Notes {
 			fmt.Fprintf(stdout, "   - NOTE: %s\n", n)
 		}
-		acts := classify.Invocations(res, classify.Options{ProtectedPaths: cfg.GuardPaths(), Home: opt.Env["HOME"]})
+		acts := classify.Invocations(res, copt)
 		fmt.Fprintf(stdout, "\n2. classify: %d policy-relevant action(s)\n", len(acts))
 		for _, a := range acts {
 			fmt.Fprintf(stdout, "   - %s: %s (%s)\n", a.Class, a.Command, a.Why)

@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Flurit/applygate/internal/classify"
+	"github.com/Flurit/applygate/internal/guard"
 	"github.com/Flurit/applygate/internal/shell"
 )
 
@@ -69,8 +70,9 @@ type Config struct {
 	UnknownDir string            `yaml:"unknown_dir"`
 	Aliases    map[string]string `yaml:"aliases"`
 	// Approvals lets a person allow one asked command with `applygate
-	// approve` on agents that cannot show an ask prompt (default true). A
-	// repository config may turn it off but not on.
+	// approve` on agents that cannot show an ask prompt. It is off by
+	// default: on one machine the agent can reach any terminal the person
+	// can, so only the user config may turn it on, knowing that.
 	Approvals *bool `yaml:"approvals"`
 	// Judge sends calls the rules let through without recognizing anything
 	// to a language model, which may make the verdict stricter, never
@@ -223,7 +225,7 @@ func (c *Config) UnknownDirMostProtected() bool {
 	return c.UnknownDir != UnknownDirSessionRoot
 }
 func (c *Config) UseNameHints() bool    { return on(c.NameHints, true) }
-func (c *Config) ApprovalsOn() bool     { return on(c.Approvals, true) }
+func (c *Config) ApprovalsOn() bool     { return on(c.Approvals, false) }
 func (c *Config) Observe() bool         { return c.Mode == "observe" }
 func (c *Config) StaleStateCheck() bool { return on(c.Preflight.StaleState, true) }
 func (c *Config) LockfileCheck() bool   { return on(c.Preflight.Lockfile, true) }
@@ -568,14 +570,95 @@ func tiersOf(es []Environment) []Tier {
 	return out
 }
 
-// GuardPaths returns all protected path patterns, including the log.
+// GuardPaths returns all protected path patterns: the defaults, the
+// config's own, and applygate's files wherever the environment puts them
+// (XDG_CONFIG_HOME, XDG_STATE_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME), plus
+// the running binary.
 func (c *Config) GuardPaths() []string {
 	out := append([]string(nil), DefaultProtectedPaths...)
 	out = append(out, c.ProtectedPaths...)
 	if c.LogPath != "" {
 		out = append(out, c.LogPath)
 	}
-	return append(out, ApprovalsPath(), JudgeCachePath())
+	for _, d := range appDirs() {
+		out = append(out, d, filepath.Join(d, "**"))
+	}
+	out = append(out, ApprovalsPath(), JudgeCachePath())
+	out = append(out, hostDirFiles()...)
+	return append(out, guard.Executable()...)
+}
+
+// appDirs are applygate's user config and state directories, and the
+// pre-rename ones, as the environment resolves them.
+func appDirs() []string {
+	return []string{filepath.Dir(userPathFor("applygate")), filepath.Dir(userPathFor("seatbelt")),
+		filepath.Dir(logPathFor("applygate")), filepath.Dir(logPathFor("seatbelt"))}
+}
+
+// hostDirFiles are the hook settings under a relocated host directory.
+func hostDirFiles() []string {
+	var out []string
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		out = append(out, filepath.Join(d, "settings.json"), filepath.Join(d, "settings.local.json"),
+			filepath.Join(d, "plugins", "cache", "applygate", "**"), filepath.Join(d, "plugins", "marketplaces", "applygate", "**"),
+			filepath.Join(d, "plugins", "data", "applygate-*", "**"))
+	}
+	if d := os.Getenv("CODEX_HOME"); d != "" {
+		out = append(out, filepath.Join(d, "hooks.json"), filepath.Join(d, "config.toml"))
+	}
+	return out
+}
+
+// GuardTargets returns the concrete places guard files live, for the
+// ancestor check: removing, moving or extracting into a directory that holds
+// one changes it. home is the user's home directory; the repository root is
+// the config's. A default pattern "**/x/y" stands for home/x/y and root/x/y.
+func (c *Config) GuardTargets(home string) []string {
+	var out []string
+	for _, p := range append(append([]string(nil), DefaultProtectedPaths...), c.ProtectedPaths...) {
+		lit := literalPrefix(p)
+		if lit == "" {
+			continue
+		}
+		if filepath.IsAbs(lit) {
+			out = append(out, lit)
+			continue
+		}
+		for _, base := range []string{home, c.Root} {
+			if base != "" {
+				out = append(out, filepath.Join(base, lit))
+			}
+		}
+	}
+	out = append(out, appDirs()...)
+	out = append(out, ApprovalsPath(), JudgeCachePath())
+	if c.LogPath != "" {
+		out = append(out, c.LogPath)
+	}
+	for _, f := range hostDirFiles() {
+		if lit := literalPrefix(f); lit != "" {
+			out = append(out, lit)
+		}
+	}
+	return append(out, guard.Executable()...)
+}
+
+// literalPrefix is the part of a guard pattern before its first segment with
+// a wildcard, without a leading "**/".
+func literalPrefix(p string) string {
+	p = filepath.ToSlash(strings.TrimPrefix(filepath.ToSlash(p), "**/"))
+	var segs []string
+	for _, s := range strings.Split(p, "/") {
+		if strings.ContainsAny(s, "*?[") {
+			break
+		}
+		segs = append(segs, s)
+	}
+	out := strings.Join(segs, "/")
+	if strings.HasPrefix(p, "/") && !strings.HasPrefix(out, "/") {
+		out = "/" + out
+	}
+	return filepath.FromSlash(out)
 }
 
 // Signals are what preflight knows about where a command runs.

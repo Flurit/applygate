@@ -679,7 +679,7 @@ func TestApprovalFlow(t *testing.T) {
 	root := setup(t, "enforce", "auto")
 	store := filepath.Join(t.TempDir(), "approvals.json")
 	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
-	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}, Approvals: store, Now: func() time.Time { return now }}
+	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}, Approvals: store, Now: func() time.Time { return now }, UserConfig: approvalsOn(t)}
 	in := event("Bash", filepath.Join(root, "dev"), map[string]any{"command": "terraform state rm aws_s3_bucket.logs"})
 	call := func(a Adapter) Output { return Run(a, strings.NewReader(in), opt) }
 
@@ -703,9 +703,35 @@ func TestApprovalFlow(t *testing.T) {
 	}
 }
 
-func TestApprovalNotOffered(t *testing.T) {
+// approvalsOn writes a user config that turns approvals on (they are off by
+// default) and returns its path.
+func approvalsOn(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(p, []byte("version: 1\napprovals: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestApprovalsOffByDefault(t *testing.T) {
+	// Without approvals turned on in the user config, an ask on a host that
+	// cannot prompt is a block that names no approval and records nothing.
+	root := setup(t, "enforce", "auto")
 	store := filepath.Join(t.TempDir(), "approvals.json")
 	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}, Approvals: store}
+	o := Run(Codex{}, strings.NewReader(event("Bash", filepath.Join(root, "dev"), map[string]any{"command": "terraform state rm aws_s3_bucket.logs"})), opt)
+	if msg := string(o.Stdout) + o.Stderr; decision(t, o) == "allow" || strings.Contains(msg, "applygate approve") {
+		t.Fatalf("want a block naming no approval, got %s: %s", decision(t, o), msg)
+	}
+	if recs, _ := approval.List(store, time.Now()); len(recs) != 0 {
+		t.Fatalf("requests recorded: %+v", recs)
+	}
+}
+
+func TestApprovalNotOffered(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "approvals.json")
+	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}, Approvals: store, UserConfig: approvalsOn(t)}
 	root := setup(t, "enforce", "auto")
 	cases := map[string]struct {
 		a   Adapter

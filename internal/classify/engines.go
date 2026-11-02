@@ -513,8 +513,39 @@ func agentFlags(base Action, name string, args []shell.Word) (Action, bool) {
 			a.Class, a.Why = Tampering, name+" "+t+" turns off the agent's permission checks"
 			return a, true
 		}
+		// A nested session with other settings, or settings sources that
+		// leave out the user's, can run without the hook.
+		if t == "--settings" || strings.HasPrefix(t, "--settings=") || t == "--setting-sources" || strings.HasPrefix(t, "--setting-sources=") ||
+			(name == "codex" && (t == "-c" || t == "--config" || strings.HasPrefix(t, "--config=")) && i+1 < len(args) && codexHookKey(args[i+1].Text)) ||
+			(name == "codex" && strings.HasPrefix(t, "--config=") && codexHookKey(strings.TrimPrefix(t, "--config="))) {
+			a.Class, a.Why = Tampering, name+" "+t+" starts a session whose settings may leave out the hook"
+			return a, true
+		}
+	}
+	// The agent CLI changing its own plugins or settings: claude plugin
+	// disable|uninstall|remove, claude config set (hooks, permissions).
+	if pos := positional(args); len(pos) >= 2 {
+		switch {
+		case pos[0] == "plugin" || pos[0] == "plugins":
+			switch pos[1] {
+			case "disable", "uninstall", "remove", "rm", "marketplace":
+				a.Class, a.Why = Tampering, name+" "+pos[0]+" "+pos[1]+" changes the agent's plugins, which may remove the hook"
+				return a, true
+			}
+		case pos[0] == "config" && (pos[1] == "set" || pos[1] == "add" || pos[1] == "remove" || pos[1] == "unset"):
+			a.Class, a.Why = Tampering, name+" config "+pos[1]+" changes the agent's settings, which hold the hook"
+			return a, true
+		}
 	}
 	return a, false
+}
+
+// codexHookKey reports whether a codex -c override touches hooks, the
+// sandbox or approvals.
+func codexHookKey(kv string) bool {
+	k, _, _ := strings.Cut(kv, "=")
+	k = strings.ToLower(k)
+	return strings.Contains(k, "hook") || strings.Contains(k, "sandbox") || strings.Contains(k, "approval")
 }
 
 func hasAnyPrefix(s string, ps ...string) bool {

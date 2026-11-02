@@ -15,21 +15,7 @@ import (
 
 // Open lists the findings not fixed yet, by review ID.
 var Open = map[string]string{
-	"A1":  "applygate apply --plan-json / --yes / confirmation get past the gate",
-	"A2":  "interpreter code naming applygate's own files is allowed",
-	"A3":  "guard paths are case-sensitive on case-insensitive file systems",
-	"A4":  "an agent approves its own call through a pseudo-terminal",
-	"A5":  "the seatbelt shim or a renamed binary runs tampering subcommands",
-	"A6":  "git mv / checkout / restore, curl -o, archives plant a repository config",
-	"A7":  "hook install is not tampering",
-	"A8":  "the hook binary is not a guard path",
-	"A9":  "guard matching is lexical: parents, symlinks, directory targets, missing writers",
-	"A10": "guard paths miss the user config, log and telemetry under XDG variables",
-	"A11": "agent CLIs turn the hook off (claude plugin disable, config set, --settings)",
-	"A12": "an approval does not bind write content or full MCP arguments",
 	"A13": "the judge cache can be pre-filled with allow entries",
-	"A14": "a held approvals lock hangs the hook past the host timeout",
-	"A15": "the approval prompt prints terminal control characters from the call",
 	"B1":  "Monitor and PowerShell tools are never judged",
 	"B2":  "apply_patch run from the shell skips the guard check",
 	"B3":  "an unreadable Claude or Codex shell command is allowed",

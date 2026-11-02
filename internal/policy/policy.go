@@ -18,6 +18,7 @@ import (
 
 	"github.com/Flurit/applygate/internal/classify"
 	"github.com/Flurit/applygate/internal/config"
+	"github.com/Flurit/applygate/internal/guard"
 	"github.com/Flurit/applygate/internal/plangate"
 	"github.com/Flurit/applygate/internal/preflight"
 	"github.com/Flurit/applygate/internal/shell"
@@ -184,6 +185,24 @@ type Decision struct {
 	Notes    []string       `json:"notes,omitempty"`
 }
 
+// GuardOptions returns the classifier options for cfg in env: the guard
+// patterns, and the guard set that also knows where guard files live under
+// the user's home and the repository root.
+func GuardOptions(cfg *config.Config, env map[string]string) classify.Options {
+	home := env["HOME"]
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	paths := cfg.GuardPaths()
+	return classify.Options{ProtectedPaths: paths, Guard: guard.New(paths, cfg.GuardTargets(home)), Home: home}
+}
+
+// ShellOptions returns the analyzer options for a command run in dir.
+func ShellOptions(cfg *config.Config, copt classify.Options, dir string, env map[string]string, read func(string) ([]byte, error)) shell.Options {
+	return shell.Options{Dir: dir, Env: env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ReadFile: read,
+		ProtectedPaths: copt.ProtectedPaths, ProtectedPath: copt.Guard.Protected, GuardNeedles: copt.Guard.Needles(copt.Home)}
+}
+
 // Decide evaluates an event. It does not write the log.
 func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 	if deps.ReadFile == nil {
@@ -192,12 +211,12 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 	if deps.Rules == nil {
 		deps.Rules = plangate.DefaultRules()
 	}
-	copt := classify.Options{ProtectedPaths: cfg.GuardPaths(), Home: deps.Env["HOME"]}
+	copt := GuardOptions(cfg, deps.Env)
 	var actions []classify.Action
 	var notes []string
 	switch ev.Kind {
 	case KindShell:
-		res := shell.Analyze(ev.Command, shell.Options{Dir: ev.Cwd, Env: deps.Env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ReadFile: deps.ReadFile, ProtectedPaths: copt.ProtectedPaths, ProtectedPath: func(p string) bool { return classify.IsProtectedPath(p, copt.ProtectedPaths) }})
+		res := shell.Analyze(ev.Command, ShellOptions(cfg, copt, ev.Cwd, deps.Env, deps.ReadFile))
 		actions = classify.Invocations(res, copt)
 		notes = res.Notes
 	case KindWrite:

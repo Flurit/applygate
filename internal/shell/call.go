@@ -430,7 +430,9 @@ func (a *analyzer) script(name string, rest []Word, cmdSt, st *state, via []stri
 	src := string(b)
 	first, _, _ := strings.Cut(src, "\n")
 	if strings.HasPrefix(first, "#!") && !shebangShell.MatchString(first) {
-		if m := Mentions(src); len(m) > 0 {
+		if g := a.guardIn(src); g != "" {
+			a.guardProblem(st, via, name, "script in another language mentions the guard file "+g+"; cannot be analyzed", g)
+		} else if m := Mentions(src); len(m) > 0 {
 			a.problem(st, via, name, "script in another language mentions infrastructure tools or an AWS SDK; cannot be analyzed")
 		}
 		return false
@@ -471,6 +473,12 @@ func (a *analyzer) foreign(bn, flag string, args []Word, cmdSt, st *state, via [
 	// tool name split across string-literal concatenation (e.g. 'ter'+'raform',
 	// "terra"."form") hides from a plain scan, so also test a form with those
 	// joins collapsed.
+	// Code that names a guard file is tampering, whether or not it also
+	// mentions an infrastructure tool.
+	if g := a.guardIn(code); g != "" {
+		a.guardProblem(st, via, bn+" "+code, bn+" code mentions the guard file "+g+"; it cannot be analyzed", g)
+		return
+	}
 	mentions := Mentions(code)
 	for _, m := range Mentions(dejoinLiterals(code)) {
 		if !slices.Contains(mentions, m) {
@@ -767,4 +775,25 @@ func credentialWrapper(bn string, rest []Word) (cmd []Word, script *Word, profil
 		return rest[firstPos:], nil, profile, true
 	}
 	return nil, nil, profile, false
+}
+
+// guardIn returns the guard needle that text names, comparing without case
+// and with string-literal joins collapsed ('appro' + 'vals.json').
+func (a *analyzer) guardIn(text string) string {
+	if len(a.opt.GuardNeedles) == 0 || text == "" {
+		return ""
+	}
+	low, joined := strings.ToLower(text), strings.ToLower(dejoinLiterals(text))
+	for _, n := range a.opt.GuardNeedles {
+		n = strings.ToLower(n)
+		if strings.Contains(low, n) || strings.Contains(joined, n) {
+			return n
+		}
+	}
+	return ""
+}
+
+func (a *analyzer) guardProblem(st *state, via []string, text, reason, guard string) {
+	a.problem(st, via, text, reason)
+	a.res.Problems[len(a.res.Problems)-1].Guard = guard
 }
