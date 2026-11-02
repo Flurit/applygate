@@ -74,8 +74,8 @@ judge:
 
 How each endpoint is used:
 - **Request:** the answer is asked for as a JSON schema (`response_format` with `strict: true`). An endpoint that ignores that still works when the model replies with the JSON object.
-- **`reasoning_effort`:** sent only when you set it, for endpoints that accept it.
-- **Testing:** these settings are written from the providers' published API shape, and only the request format is tested (against a local test server). No endpoint other than the default has been called.
+- **`reasoning_effort`:** sent only when you set it, for endpoints that accept it. The default endpoint accepts it and ignores it: low and high gave the same verdicts, latency and cost.
+- **Testing:** the default endpoint was called live; see the measured results below. For other providers these settings are written from the providers' published API shape, and only the request format is tested (against a local test server).
 
 ### A program instead of an endpoint
 
@@ -129,7 +129,7 @@ applygate: ASK.
 All measurements are in [`experiments/model-judge`](../experiments/model-judge/RESULTS.md).
 
 **How the judge was measured:**
-- **Models:** Claude Haiku 5.5 (also Sonnet 5.5 and Opus 5.5 in earlier rounds), called through the `claude` CLI.
+- **Models:** Claude Haiku 5.5 (also Sonnet 5.5 and Opus 5.5 in earlier rounds), called through the `claude` CLI and, in the last round, through the default endpoint.
 - **Held-out sets:** four, each written by an independent red-team agent that never saw the prompt, the filter or the earlier sets. Each set was committed before any model saw it.
 - **The unbiased number:** the first three sets were seen while the judge was designed, so only the fourth set's first run is unbiased.
 
@@ -139,27 +139,37 @@ Results for Haiku 5.5 with this release's prompt:
 |---|---|---|
 | Fourth held-out set, first run, every call judged | 66 of 67 | 5 of 61 |
 | All four sets, this release's filter | 269 of 276 (97%) | 14 of 248 (6%) |
+| Fourth held-out set through the default endpoint, every call judged (set already seen) | 62 to 63 of 67 over three runs | 5 of 61 |
 
 - **The rules alone** catch none of the calls in these sets.
+- **The default endpoint catches slightly less than the CLI.** It missed three calls the CLI asked about, the same three in every run and at every effort setting. Why the two paths differ is not established. The calls:
+  - a Cloudflare DNS record deleted in staging;
+  - `heroku config` printing a staging app's config values;
+  - `git log -p -S AKIA`, which the filter keeps from the judge anyway.
+
+  The first two rows were measured through the `claude` CLI.
 - **About half the false escalations** are cases applygate's own table also asks about: an unreviewed infrastructure-as-code apply or a cache flush in staging, and printing a secret.
 - **On real agent traffic** from a week of Terraform work, the judge escalated none of 162 calls; 11% of the shell calls reached it.
-- **Latency and cost per judged call:** median 1.6 s, p95 2.6 s, $0.0004 at effort low. At the model's default effort, detection was the same, p95 rose to 3.6 s, and cost was $0.0003.
-
-**Not measured:**
-- **The default endpoint itself.** Anthropic's OpenAI-compatible endpoint ignores `reasoning_effort`, so the default-effort row above is the closer estimate, but no call has gone through that endpoint. Anthropic describes it as "not considered a long-term or production-ready solution for most use cases".
-- **Any other provider or model.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval`) scores a model on the same held-out sets.
-- **Agents other than Claude Code, and an interactive session.** The judge was run live in headless Claude Code 2.1.314 on macOS ([review/judge-live](../review/judge-live/2026-11-01-claude-code.md)) with the command backend:
+- **Latency and cost per judged call:**
+  - **Default endpoint:** model time median 1.5 s, p95 2.8 s, about $0.00023 per call.
+  - **The `claude` CLI:** median 1.6 s and p95 2.6 s at effort low ($0.0004); p95 3.6 s at default effort ($0.0003).
+- **Live in headless Claude Code 2.1.314 on macOS,** with both the default endpoint ([review/judge-live, 2026-11-02](../review/judge-live/2026-11-02-default-endpoint.md)) and the command backend ([2026-11-01](../review/judge-live/2026-11-01-claude-code.md)):
   - `pulumi destroy` on a protected stack was blocked;
   - `pulumi preview` was judged and allowed;
-  - `ls` was not sent to the judge;
-  - printing a Vault password was asked about, and did not run.
+  - printing a Vault password was asked about, and did not run;
+  - `ls` was not sent to the judge (command-backend run).
 
-  Codex, an interactive session's ask prompt, and `applygate approve` for a judge's block are covered by tests only.
+  With the default endpoint the hook took 1.2 to 3.0 s per judged call, against 3.3 to 3.9 s with the command backend, which has to start the `claude` CLI.
+
+**Not measured:**
+- **Any other provider or model.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval -backend openai -base-url … -api-key-env …`) scores any OpenAI-compatible endpoint on the same held-out sets.
+- **The default endpoint's long-term support.** Anthropic describes it as "not considered a long-term or production-ready solution for most use cases".
+- **Agents other than Claude Code, and an interactive session.** Codex, an interactive session's ask prompt, and `applygate approve` for a judge's block are covered by tests only.
 
 ## Limits
 
 - **A model can be wrong.** It missed up to three calls of each held-out set, mostly writes whose effect depends on context it cannot see, and it can be fooled in ways the sets did not try. The rules stay the guarantee; the judge is extra coverage.
 - **Some calls skip the judge.** The filter keeps local work away from the model: reads inside the working tree, builds, tests, local git. So a destructive call that looks like local work is not judged, for example `git log -p` printing a key from history.
-- **Latency.** A judged call waits for the model: 1.6 to 1.8 s at the median and 2.6 to 3.6 s at p95 in the measurements. A cached answer costs nothing.
+- **Latency.** A judged call waits for the model: 1.5 to 1.8 s at the median and 2.6 to 3.6 s at p95 in the measurements. A cached answer costs nothing.
 - **Your data goes to the endpoint you configure.** Use a local server or a provider whose data terms you accept. Turn it off per repository with `judge: {enabled: false}`.
 - **Workspace keys.** Anthropic's compatible endpoint needs an `anthropic-workspace-id` header for keys not scoped to a workspace, which applygate does not send. Use a workspace-scoped key.
