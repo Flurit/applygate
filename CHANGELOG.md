@@ -13,10 +13,13 @@
     - **`reasoning_effort`:** the endpoint accepts it and ignores it.
     - **Gemini 3.8 Flash through Google's OpenAI-compatible endpoint** (set already seen, no code change needed): it caught 65 in each of three runs, with 0 to 1 false escalations. It is slower: p50 5.1 s, p95 9.4 s, and 5 of 128 calls took over 10 s, so it needs `timeout: 20s`. Its cost was not measured.
     - **Jev through `examples/judge/jev.sh`** (set already seen): it caught 61 to 62, with 6 to 7 false escalations, at p95 0.56 s and about $0.00006 per call.
+    - **OpenAI's `gpt-6-luna` through `examples/judge/openai-decisions.sh`** (set already seen): it caught 58 in every run, with 8 false escalations and one refusal. That was at p95 0.74 s and about $0.00011 per call.
     - **Other providers and models:** none have been measured.
   - **Decision-model adapters** for the command backend, which answer with a probability per verdict and no explanation:
     - `examples/judge/jev.sh` (TypeSafe AI's Jev);
-    - `examples/judge/openai-decisions.sh` (OpenAI's Decisions API, `gpt-6-luna`), tested only against a local test server.
+    - `examples/judge/openai-decisions.sh` (OpenAI's Decisions API, `gpt-6-luna`).
+
+    An API error is reported with the provider's message.
   - **Tested live** in headless Claude Code 2.1.314 on macOS, with the default endpoint (`review/judge-live/2026-11-02-default-endpoint.md`) and with the command backend (`review/judge-live/2026-11-01-claude-code.md`):
     - `pulumi destroy` on a protected stack was blocked by the judge;
     - `pulumi preview` was judged and allowed;
