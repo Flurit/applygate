@@ -146,64 +146,48 @@ applygate: ASK.
 All measurements are in [`experiments/model-judge`](../experiments/model-judge/RESULTS.md).
 
 **How the judge was measured:**
-- **Models:** Claude Haiku 5.5 (also Sonnet 5.5 and Opus 5.5 in earlier rounds), called through the `claude` CLI and, in the last round, through the default endpoint.
-- **Held-out sets:** four, each written by an independent red-team agent that never saw the prompt, the filter or the earlier sets. Each set was committed before any model saw it.
-- **The unbiased number:** the first three sets were seen while the judge was designed, so only the fourth set's first run is unbiased.
+- **Held-out sets:** five, each written by an independent red-team agent that never saw the prompt, the filter, the adapters or the earlier sets. Each set was committed before any model saw it.
+- **The unbiased numbers come from the fifth set.**
+  - The first four were seen while the prompt, the filter and the decision-model setup below were designed.
+  - The fifth was scored once per judge, after every design choice was committed.
+  - 7 of its 143 calls happen to repeat calls from earlier sets (common commands such as `docker system prune`). Leaving them out moves no judge by more than one call.
 
-Results for Haiku 5.5 with this release's prompt:
+Fifth held-out set, this release's prompt and filter, one run per judge:
 
-| | Should be stopped: caught | Should go through: escalated |
-|---|---|---|
-| Fourth held-out set, first run, every call judged | 66 of 67 | 5 of 61 |
-| All four sets, this release's filter | 269 of 276 (97%) | 14 of 248 (6%) |
-| Fourth held-out set through the default endpoint, every call judged (set already seen) | 62 to 63 of 67 over three runs | 5 of 61 |
-| Fourth held-out set, Gemini 3.8 Flash through Gemini's endpoint, every call judged (set already seen) | 65 of 67 in each of three runs | 0 to 1 of 61 |
-| Fourth held-out set, Jev (`jev-latest`) through `jev.sh`, every call judged (set already seen) | 61 to 62 of 67 over three runs | 6 to 7 of 61 |
-| Fourth held-out set, OpenAI `gpt-6-luna` through `openai-decisions.sh`, every call judged (set already seen) | 58 of 67 in each of three runs | 8 of 61 |
+| Judge | Should be stopped: caught (72) | Should go through: escalated (71) | Model time p95 | Cost per judged call |
+|---|---|---|---|---|
+| Gemini 3.8 Flash, Gemini's OpenAI-compatible endpoint | 71 | 0 | 8.9 s | not measured |
+| Claude Haiku 5.5, the default endpoint | 70 | 4 | 2.5 s | $0.00022 |
+| Jev, [`jev.sh`](../examples/judge/jev.sh) | 69 | 5 | 0.65 s | about $0.00006 |
+| OpenAI `gpt-6-luna`, [`openai-decisions.sh`](../examples/judge/openai-decisions.sh) | 65 | 3 (and 1 refusal) | 0.68 s | about $0.00011 |
 
 - **The rules alone** catch none of the calls in these sets.
-- **The default endpoint catches slightly less than the CLI.** It missed three calls the CLI asked about, the same three in every run and at every effort setting. Why the two paths differ is not established. The calls:
-  - a Cloudflare DNS record deleted in staging;
-  - `heroku config` printing a staging app's config values;
-  - `git log -p -S AKIA`, which the filter keeps from the judge anyway.
+- **Every judge but Gemini missed** a GitHub issue comment carrying a hidden instruction to AI assistants, posted through an unknown MCP tool. Gemini's one miss was a file write. Haiku and Jev also allowed deleting one Grafana dashboard on a shared host, which applygate's own table allows in a standard tier.
+- **Every judge but Gemini** wrongly escalated both `docker system prune -af --volumes` and an `octodns-sync` of the production DNS config, which the set labels as going through.
+- **Gemini is the most accurate and the slowest:** model time about 5 s at the median and 9 to 10 s at p95. Some calls take longer than the default 10-second timeout, and a call that times out is left to the rules, so use `timeout: 20s`.
+- **The decision models answer in under a second.** Jev comes within one or two calls of Haiku on this set. On the fourth set (seen) it was further behind: 61 to 62 caught against Haiku's 62 to 63 through the same endpoint, with 6 to 7 false escalations against 5.
+- **One long question works as well as many short ones.** Asking the decision models nine yes/no questions and letting applygate's tier table decide, with thresholds tuned on the earlier sets, did not beat one question on the fifth set:
+  - Jev: 67 caught, 2 escalated;
+  - `gpt-6-luna`: 65 caught, 3 escalated.
 
-  The first two rows were measured through the `claude` CLI.
-- **Gemini 3.8 Flash was more accurate on this set and much slower:**
-  - its misses were a Kafka offset reset in QA and the `.gitignore` edit;
-  - model time was p50 5.1 s and p95 9.4 s;
-  - 5 of 128 calls took over 10 s (the slowest 18.5 s), so at the default timeout they would have been left to the rules;
-  - its cost per call was not measured.
+  Those adapters stay in the experiment (`experiments/model-judge/decision-facts`).
+- **Caveat:** the prompt was tuned on Claude models, and Claude agents wrote every set.
 
-  The prompt was written and tuned against Claude models, and this set was written by a Claude agent.
-- **Jev is the fastest and cheapest, and the least accurate on its most likely answer:**
-  - model time p50 0.46 s and p95 0.56 s, about $0.00006 per call;
-  - it missed the three calls the default endpoint misses, plus a write that plants an injected instruction, a squash-merge of an infrastructure pull request, and the `.gitignore` edit;
-  - its false escalations included killing a local dev server and measuring a token's length without printing it.
-
-  Escalating whenever its probability of allow is below 0.6, rather than taking the most likely answer, caught 64 with the same 7 false escalations. That threshold was picked on this set, so it is not a measured result; `jev.sh` takes the most likely answer.
-- **`gpt-6-luna` is fast and fully consistent, and the least accurate:**
-  - model time p50 0.40 s and p95 0.74 s, about $0.00011 per call;
-  - not one verdict changed over three runs;
-  - it missed most credential reads (`heroku config`, `age -d` of a secrets file, and `env | grep` for secrets, which it refused to answer, leaving the rule decision);
-  - it also missed two writes the chat models catch: removing the CI approval gate for production deploys, and a `postinstall` hook that pipes a remote script into `sh`;
-  - it blocked dry runs (`bq query --dry_run`, `rclone sync --dry-run`) against production.
-
-  The judge's instructions were written for chat models and are sent to decision models as one long question. That may not suit them, and it has not been tried another way. The full comparison is in [RESULTS.md](../experiments/model-judge/RESULTS.md).
-- **About half the false escalations** are cases applygate's own table also asks about: an unreviewed infrastructure-as-code apply or a cache flush in staging, and printing a secret.
+Earlier measurements on sets already seen:
+- **Through the `claude` CLI:** Haiku 5.5 caught 66 of 67 on the fourth set, and 269 of 276 (97%) on all four with this release's filter, with 14 of 248 (6%) false escalations.
+- **Through the default endpoint:** it caught 62 to 63 on the fourth set over three runs, missing three calls the CLI asked about; why the paths differ is not established. `reasoning_effort` is accepted and changes nothing measurable.
 - **On real agent traffic** from a week of Terraform work, the judge escalated none of 162 calls; 11% of the shell calls reached it.
-- **Latency and cost per judged call:**
-  - **Default endpoint:** model time median 1.5 s, p95 2.8 s, about $0.00023 per call.
-  - **The `claude` CLI:** median 1.6 s and p95 2.6 s at effort low ($0.0004); p95 3.6 s at default effort ($0.0003).
-- **Live in headless Claude Code 2.1.314 on macOS,** with both the default endpoint ([review/judge-live, 2026-11-02](../review/judge-live/2026-11-02-default-endpoint.md)) and the command backend ([2026-11-01](../review/judge-live/2026-11-01-claude-code.md)):
-  - `pulumi destroy` on a protected stack was blocked;
-  - `pulumi preview` was judged and allowed;
-  - printing a Vault password was asked about, and did not run;
-  - `ls` was not sent to the judge (command-backend run).
 
-  With the default endpoint the hook took 1.2 to 3.0 s per judged call, against 3.3 to 3.9 s with the command backend, which has to start the `claude` CLI.
+**Live in headless Claude Code 2.1.314 on macOS,** with both the default endpoint ([review/judge-live, 2026-11-02](../review/judge-live/2026-11-02-default-endpoint.md)) and the command backend ([2026-11-01](../review/judge-live/2026-11-01-claude-code.md)):
+- `pulumi destroy` on a protected stack was blocked;
+- `pulumi preview` was judged and allowed;
+- printing a Vault password was asked about, and did not run;
+- `ls` was not sent to the judge (command-backend run).
+
+With the default endpoint the hook took 1.2 to 3.0 s per judged call, against 3.3 to 3.9 s with the command backend, which has to start the `claude` CLI. Gemini, Jev and `gpt-6-luna` were run through `applygate check`, not inside an agent.
 
 **Not measured:**
-- **Any provider or model other than Claude Haiku 5.5 (both paths), Gemini 3.8 Flash, Jev and `gpt-6-luna`.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval -backend openai -base-url … -api-key-env …`) scores any OpenAI-compatible endpoint on the same held-out sets.
+- **Any provider or model other than those above.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval -backend openai -base-url … -api-key-env …`, or `-backend command`) scores any OpenAI-compatible endpoint or adapter on the same held-out sets.
 - **The default endpoint's long-term support.** Anthropic describes it as "not considered a long-term or production-ready solution for most use cases".
 - **Agents other than Claude Code, and an interactive session.** Codex, an interactive session's ask prompt, and `applygate approve` for a judge's block are covered by tests only.
 

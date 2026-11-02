@@ -61,7 +61,7 @@ func main() {
 	backend := flag.String("backend", "cli", "cli (the claude CLI's login), command (-command) or openai (the shipped OpenAI-compatible backend, with a key from the environment)")
 	baseURL := flag.String("base-url", "", "openai backend: endpoint (default: applygate's default endpoint)")
 	keyEnv := flag.String("api-key-env", "", "openai backend: environment variable holding the key (default: ANTHROPIC_API_KEY with the default endpoint)")
-	tag := flag.String("tag", "", "command backend: appended to the judge's name, so a changed script gets its own cache entries and report")
+	tag := flag.String("tag", "", "command backend: appended to the judge's name. The cache keys a command judge by its name and the call, not by the script's contents, so change the tag whenever the script or a file it reads changes")
 	command := flag.String("command", "", "command backend: the program and its arguments, split on spaces (for example \"sh examples/judge/jev.sh\")")
 	priceIn := flag.Float64("price-in", 0.10, "openai backend: dollars per million input tokens, to price the calls")
 	priceOut := flag.Float64("price-out", 0.50, "openai backend: dollars per million output tokens")

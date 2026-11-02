@@ -8,7 +8,7 @@
 #   judge:
 #     enabled: true
 #     backend: command
-#     command: ["sh", "/path/to/openai-decisions-facts.sh"]
+#     command: ["sh", "/path/to/experiments/model-judge/decision-facts/openai-decisions-facts.sh"]
 #
 # applygate writes one request as JSON on stdin ({"system", "prompt",
 # "schema", "call"}); this prints {"verdict": ..., "reason": ...}. The reason
@@ -19,7 +19,7 @@ set -eu
 dir=$(cd "$(dirname "$0")" && pwd)
 model=${APPLYGATE_JUDGE_MODEL:-gpt-6-luna}
 url=${APPLYGATE_JUDGE_URL:-https://api.openai.com/v1/decisions}
-# Thresholds per fact (default 0.5), tuned on experiments/model-judge sets 1-4
+# Thresholds per fact (default 0.5), tuned on the experiment's sets 1-4
 # and the author's sets; APPLYGATE_DECISION_THRESHOLDS (JSON) replaces them.
 t=${APPLYGATE_DECISION_THRESHOLDS:-}
 [ -n "$t" ] || t='{"destroys":0.3,"bulk":0.3,"changes_remote":0.95,"iac_apply":0.9,"weakens_guard":0.8}'

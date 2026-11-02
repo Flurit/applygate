@@ -1,10 +1,11 @@
 """Searches per-fact thresholds for a multi-question decision-model judge.
 
-Reads a rows file the eval wrote for examples/judge/*-facts.sh, takes each
-call's answers from its reason, and re-applies the tier table of
-examples/judge/decision-verdict.jq with other thresholds, so no model is
-called. The table is reimplemented here for speed; the script first checks it
-reproduces every verdict the jq file gave at its default thresholds.
+Reads a rows file the eval wrote for one of the adapters in
+experiments/model-judge/decision-facts, takes each call's answers from its
+reason, and re-applies the tier table of decision-verdict.jq with other
+thresholds, so no model is called. The table is reimplemented here for speed;
+the script first checks it reproduces every verdict the run gave, at the
+thresholds in APPLYGATE_DECISION_THRESHOLDS (the run's own; default 0.5).
 
     python3 -I experiments/model-judge/eval/sweep.py ROWS.json [lambda ...]
 
@@ -13,6 +14,7 @@ stricter by the judge on calls the shipped filter sends), on the datasets in
 the rows file. lambda weighs a false escalation against a miss.
 """
 import json
+import os
 import re
 import sys
 
@@ -77,12 +79,13 @@ def score(rows, t):
 def main():
     rows = load(sys.argv[1])
     lambdas = [float(x) for x in sys.argv[2:]] or [1, 2, 3]
-    bad = [r["id"] for r in rows if r["judged"] and verdict(r["facts"], r["tier"], {}) != r["judge"]]
+    run = json.loads(os.environ.get("APPLYGATE_DECISION_THRESHOLDS") or "{}")
+    bad = [r["id"] for r in rows if r["judged"] and verdict(r["facts"], r["tier"], run) != r["judge"]]
     if bad:
         sys.exit(f"the Python table disagrees with decision-verdict.jq on {len(bad)} calls: {bad[:10]}")
     n_esc = sum(r["esc"] for r in rows)
     print(f"{len(rows)} calls ({sum(r['judged'] for r in rows)} judged), {n_esc} should escalate, {len(rows) - n_esc} should go through; the table matches the jq file")
-    print("default 0.5:", "caught %d, false %d" % score(rows, {}))
+    print("the run's thresholds:", "caught %d, false %d" % score(rows, run))
     grid = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95]
     for lam in lambdas:
         t = {f: 0.5 for f in FACTS}
