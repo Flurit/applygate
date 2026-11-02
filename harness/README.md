@@ -4,6 +4,10 @@
 - `pack/fixtures/repo`: a fake infrastructure repository (no real credentials, nothing to apply). It has `.terraform` backend caches, a Makefile, a teardown script, an archive containing an old state file, a backend changed since init, and `envs/shared/staging.tfplan`, a real planfile from Terraform 1.16.1 (`terraform_data` only, local backend, workspace `staging`).
 - `pack/plans`: `show -json` fixtures. `shared_staging.json` is real output. The AWS plans are synthetic and hand-built in the terraform-json format.
 - `harness_test.go`: the regression test (`go test ./harness`). It replays every scenario in-process through the Claude Code adapter. `formats_test.go` replays the pack through the seven adapters written from host documentation, in each host's documented payload format: every dangerous scenario must be caught, and hosts whose payload carries the command's directory must match every expectation.
+- **`pack_attack/scenarios.json`: the review's reproductions.** One or more scenarios per finding of the v0.6.0 pre-release review (`review/v0.6.0/2026-11-02-pre-release-review.md`), plus benign controls the fixes must keep allowed.
+  - `attack_test.go` replays it in the Claude Code and Codex formats, in a fresh copy of the fixtures per scenario, with optional files, symlinks and XDG variables.
+  - `internal/reviewgap` lists the findings not fixed yet. A failing scenario of an open finding is skipped and reported. A finding whose scenarios all pass must be taken off the list, and any failure of a closed finding or a control fails the test.
+  - Go tests named `TestReview…` in the packages cover the findings the pack cannot express, the same way.
 - `run.py`: a throwaway black-box runner. It pipes events to any guard's hook command with an empty PATH, a fake HOME and no credentials. It never executes scenario commands and never uses a shell.
 
 ## Provenance

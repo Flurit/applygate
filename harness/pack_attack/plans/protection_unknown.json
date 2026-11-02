@@ -1,0 +1,22 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "aws_db_instance.main",
+   "mode": "managed",
+   "type": "aws_db_instance",
+   "name": "main",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": ["update"],
+    "before": {"identifier": "main", "deletion_protection": true, "skip_final_snapshot": false},
+    "after": {"identifier": "main"},
+    "after_unknown": {"deletion_protection": true, "skip_final_snapshot": true}
+   }
+  }
+ ],
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}
