@@ -2520,10 +2520,10 @@
   "Merged": "allow",
   "Residual": true,
   "Relevant": true,
-  "Reason": "gpt-6-luna facts: destroys=0.0 bulk=0.0 changes_remote=0.0 iac_apply=0.0 prints_secret=0.0 weakens_guard=0.0 production_target=0.92 preview_only=0.0 shared_history=0.0; the tier table gives allow in a protected environment. A decision model gives no explanation.",
+  "Reason": "gpt-6-luna facts: destroys=0.0 bulk=0.0 changes_remote=0.0 iac_apply=0.0 prints_secret=0.0 weakens_guard=0.03 production_target=0.72 preview_only=0.0 shared_history=0.0; the tier table gives allow in a protected environment. A decision model gives no explanation.",
   "Err": "",
-  "APIms": 900,
-  "WallMS": 900,
+  "APIms": 380,
+  "WallMS": 380,
   "Cost": 0
  },
  {

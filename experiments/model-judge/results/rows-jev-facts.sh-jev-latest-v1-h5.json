@@ -2520,10 +2520,10 @@
   "Merged": "allow",
   "Residual": true,
   "Relevant": true,
-  "Reason": "jev-latest facts: destroys=0.01 bulk=0.02 changes_remote=0.41 iac_apply=0.03 prints_secret=0.33 weakens_guard=0.15 production_target=0.7 preview_only=0.02 shared_history=0.01; the tier table gives allow in a protected environment. A decision model gives no explanation.",
+  "Reason": "jev-latest facts: destroys=0.01 bulk=0.02 changes_remote=0.33 iac_apply=0.03 prints_secret=0.21 weakens_guard=0.12 production_target=0.62 preview_only=0.02 shared_history=0.01; the tier table gives allow in a protected environment. A decision model gives no explanation.",
   "Err": "",
-  "APIms": 489,
-  "WallMS": 489,
+  "APIms": 457,
+  "WallMS": 457,
   "Cost": 0
  },
  {

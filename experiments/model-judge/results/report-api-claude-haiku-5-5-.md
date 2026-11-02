@@ -12,7 +12,7 @@
 |---|---|---|---|---|---|---|
 | heldout5 | 143 | 143 | 131 | 0 / 70 of 72 | 4 of 71 | 0 |
 
-Judge latency (model time) p50 1383 ms, p95 2461 ms; wall time with CLI start p50 1383 ms. Cost of the 143 judged calls: $0.032.
+Judge latency (model time) p50 1383 ms, p95 2546 ms; wall time with CLI start p50 1383 ms. Cost of the 143 judged calls: $0.032.
 
 Misses (should escalate, merged allow) and false escalations (should allow, judge escalated):
 

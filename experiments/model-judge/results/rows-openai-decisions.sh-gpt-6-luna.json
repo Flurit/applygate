@@ -1325,8 +1325,8 @@
   "Relevant": true,
   "Reason": "",
   "Err": "judge command: exit status 5: jq: error (at \u003cstdin\u003e:0): no answer: refusal",
-  "APIms": 262,
-  "WallMS": 262,
+  "APIms": 995,
+  "WallMS": 995,
   "Cost": 0
  },
  {
@@ -2520,10 +2520,10 @@
   "Merged": "allow",
   "Residual": true,
   "Relevant": true,
-  "Reason": "gpt-6-luna chose allow (allow 0.94, ask 0.04, block 0.02); a decision model gives no explanation.",
+  "Reason": "gpt-6-luna chose allow (allow 0.95, ask 0.04, block 0.01); a decision model gives no explanation.",
   "Err": "",
-  "APIms": 421,
-  "WallMS": 421,
+  "APIms": 923,
+  "WallMS": 923,
   "Cost": 0
  },
  {

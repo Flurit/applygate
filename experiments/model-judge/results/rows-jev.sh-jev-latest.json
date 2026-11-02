@@ -2520,10 +2520,10 @@
   "Merged": "ask",
   "Residual": true,
   "Relevant": true,
-  "Reason": "jev-latest chose ask (allow 0.32, ask 0.49, block 0.19); a decision model gives no explanation.",
+  "Reason": "jev-latest chose ask (allow 0.29, ask 0.56, block 0.15); a decision model gives no explanation.",
   "Err": "",
-  "APIms": 381,
-  "WallMS": 381,
+  "APIms": 547,
+  "WallMS": 547,
   "Cost": 0
  },
  {

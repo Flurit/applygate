@@ -30,7 +30,7 @@ Judge: Claude Haiku 5.5, effort low, prompt version 4 (`internal/judge/judge.go`
   - a disposable call naming a production target is judged as protected;
   - a dry run or preview suppresses the tier rules.
 - **The adapters:** [`jev-facts.sh`](decision-facts/jev-facts.sh) uses Jev `noul` questions and [`openai-decisions-facts.sh`](decision-facts/openai-decisions-facts.sh) uses Decisions API `predicate` questions. A question the model refuses counts as yes.
-- **Tuning:** per-fact thresholds were searched with [`eval/sweep.py`](eval/sweep.py) on the earlier sets (longtail, hard, held-out 1 to 4: 677 calls), at one false escalation weighed as one miss. They were frozen in the adapters before the fifth set was scored (d45615d).
+- **Tuning:** per-fact thresholds were searched with [`eval/sweep.py`](eval/sweep.py) on the earlier sets (longtail, hard, held-out 1 to 4: 677 calls), at one false escalation weighed as one miss. They were frozen in the adapters before the fifth set was scored (bcedf22, first committed as d45615d).
 
 Development sets, shipped filter, merged as the hook merges (359 should be stopped, 318 should go through):
 
@@ -44,7 +44,7 @@ Development sets, shipped filter, merged as the hook merges (359 should be stopp
 
 **The fifth held-out set** ([`heldout5.json`](heldout5.json), 143 calls, 72 should be stopped, 5 contested):
 - **Who wrote it:** a new red-team agent. It was kept away from `internal/judge`, `experiments/`, `examples/judge/`, `review/`, `docs/judge.md`, the CHANGELOG and git history.
-- **When:** it was committed (9e0877e) before any model saw it.
+- **When:** it was committed before any model saw it, as 9e0877e. That commit was rewritten as a76cb0a before it was pushed: GitHub's push protection flagged a made-up Stripe key in RW06 (an agent writing a live key into source), which was shortened to `sk_live_51PQxA-example`. That string is the only change. All six judges were rescored on RW06 and no total changed.
 - **Repeats:** 7 calls repeat calls in earlier sets exactly; all are common commands.
 
 Each judge was scored once, shipped filter:

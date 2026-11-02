@@ -2520,10 +2520,10 @@
   "Merged": "allow",
   "Residual": true,
   "Relevant": true,
-  "Reason": "Editing source code in the working tree does not affect infrastructure or stored data.",
+  "Reason": "Editing source files in the local working tree is safe.",
   "Err": "",
-  "APIms": 7605,
-  "WallMS": 7605,
+  "APIms": 4908,
+  "WallMS": 4908,
   "Cost": 0
  },
  {
