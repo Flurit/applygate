@@ -104,6 +104,12 @@ The contract:
 
 [`examples/judge/claude-cli.sh`](../examples/judge/claude-cli.sh) asks Claude through the `claude` CLI's own login, so it needs no API key. It was tested live through `applygate check`; see the measured results below.
 
+Two scripts use decision models, which answer a multiple-choice question with a probability per option instead of writing text. Each sends the judge's instructions as one question with the options allow, ask and block, and takes the most likely option. These models give no explanation, so the reason shown lists the probabilities.
+- **[`examples/judge/jev.sh`](../examples/judge/jev.sh):** TypeSafe AI's Jev (`jev-latest`), with a key in `TYPESAFE_API_KEY`. Measured below.
+- **[`examples/judge/openai-decisions.sh`](../examples/judge/openai-decisions.sh):** OpenAI's Decisions API (`gpt-6-luna`), with a key in `OPENAI_API_KEY`. Written from OpenAI's API reference and tested only against a local test server.
+
+Both set `APPLYGATE_JUDGE_MODEL` to choose another model.
+
 ### All settings
 
 | Key | Default | Meaning |
@@ -152,6 +158,7 @@ Results for Haiku 5.5 with this release's prompt:
 | All four sets, this release's filter | 269 of 276 (97%) | 14 of 248 (6%) |
 | Fourth held-out set through the default endpoint, every call judged (set already seen) | 62 to 63 of 67 over three runs | 5 of 61 |
 | Fourth held-out set, Gemini 3.8 Flash through Gemini's endpoint, every call judged (set already seen) | 65 of 67 in each of three runs | 0 to 1 of 61 |
+| Fourth held-out set, Jev (`jev-latest`) through `jev.sh`, every call judged (set already seen) | 61 to 62 of 67 over three runs | 6 to 7 of 61 |
 
 - **The rules alone** catch none of the calls in these sets.
 - **The default endpoint catches slightly less than the CLI.** It missed three calls the CLI asked about, the same three in every run and at every effort setting. Why the two paths differ is not established. The calls:
@@ -167,6 +174,12 @@ Results for Haiku 5.5 with this release's prompt:
   - its cost per call was not measured.
 
   The prompt was written and tuned against Claude models, and this set was written by a Claude agent.
+- **Jev is the fastest and cheapest, and the least accurate on its most likely answer:**
+  - model time p50 0.46 s and p95 0.56 s, about $0.00006 per call;
+  - it missed the three calls the default endpoint misses, plus a write that plants an injected instruction, a squash-merge of an infrastructure pull request, and the `.gitignore` edit;
+  - its false escalations included killing a local dev server and measuring a token's length without printing it.
+
+  Escalating whenever its probability of allow is below 0.6, rather than taking the most likely answer, caught 64 with the same 7 false escalations. That threshold was picked on this set, so it is not a measured result; `jev.sh` takes the most likely answer.
 - **About half the false escalations** are cases applygate's own table also asks about: an unreviewed infrastructure-as-code apply or a cache flush in staging, and printing a secret.
 - **On real agent traffic** from a week of Terraform work, the judge escalated none of 162 calls; 11% of the shell calls reached it.
 - **Latency and cost per judged call:**
@@ -181,7 +194,7 @@ Results for Haiku 5.5 with this release's prompt:
   With the default endpoint the hook took 1.2 to 3.0 s per judged call, against 3.3 to 3.9 s with the command backend, which has to start the `claude` CLI.
 
 **Not measured:**
-- **Any provider or model other than Claude Haiku 5.5 (both paths) and Gemini 3.8 Flash.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval -backend openai -base-url … -api-key-env …`) scores any OpenAI-compatible endpoint on the same held-out sets.
+- **Any provider or model other than Claude Haiku 5.5 (both paths), Gemini 3.8 Flash and Jev.** That includes OpenAI's Decisions API. Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval -backend openai -base-url … -api-key-env …`) scores any OpenAI-compatible endpoint on the same held-out sets.
 - **The default endpoint's long-term support.** Anthropic describes it as "not considered a long-term or production-ready solution for most use cases".
 - **Agents other than Claude Code, and an interactive session.** Codex, an interactive session's ask prompt, and `applygate approve` for a judge's block are covered by tests only.
 
@@ -189,7 +202,7 @@ Results for Haiku 5.5 with this release's prompt:
 
 - **A model can be wrong.** It missed up to three calls of each held-out set, mostly writes whose effect depends on context it cannot see, and it can be fooled in ways the sets did not try. The rules stay the guarantee; the judge is extra coverage.
 - **Some calls skip the judge.** The filter keeps local work away from the model: reads inside the working tree, builds, tests, local git. So a destructive call that looks like local work is not judged, for example `git log -p` printing a key from history.
-- **Latency.** A judged call waits for the model. With Claude Haiku 5.5 that was 1.5 to 1.8 s at the median and 2.6 to 3.6 s at p95 in the measurements; with Gemini 3.8 Flash it was 5.1 s and 9.4 s. A cached answer costs nothing.
+- **Latency.** A judged call waits for the model. With Claude Haiku 5.5 that was 1.5 to 1.8 s at the median and 2.6 to 3.6 s at p95 in the measurements; with Gemini 3.8 Flash it was 5.1 s and 9.4 s; with Jev, 0.46 s and 0.56 s. A cached answer costs nothing.
 - **A timeout means no judgement.** A call that runs past `timeout` is left to the rules, which allow it. Set the timeout above your endpoint's slowest answers; the judge's limit is 25 seconds, inside the plugin's 30-second hook limit.
 - **Your data goes to the endpoint you configure.** Use a local server or a provider whose data terms you accept. Turn it off per repository with `judge: {enabled: false}`.
 - **Workspace keys.** Anthropic's compatible endpoint needs an `anthropic-workspace-id` header for keys not scoped to a workspace, which applygate does not send. Use a workspace-scoped key.

@@ -58,9 +58,10 @@ func main() {
 	only := flag.String("datasets", "pack,longtail,trial", "datasets to run")
 	repeat := flag.Int("repeat", 1, "judge every call this many times (repeats 2+ are cached separately) to measure consistency")
 	prefilter := flag.Bool("prefilter", false, "judge only residual calls that pass the pre-filter (the mode we would ship), and report only that mode")
-	backend := flag.String("backend", "cli", "cli (the claude CLI's login) or openai (the shipped OpenAI-compatible backend, with a key from the environment)")
+	backend := flag.String("backend", "cli", "cli (the claude CLI's login), command (-command) or openai (the shipped OpenAI-compatible backend, with a key from the environment)")
 	baseURL := flag.String("base-url", "", "openai backend: endpoint (default: applygate's default endpoint)")
 	keyEnv := flag.String("api-key-env", "", "openai backend: environment variable holding the key (default: ANTHROPIC_API_KEY with the default endpoint)")
+	command := flag.String("command", "", "command backend: the program and its arguments, split on spaces (for example \"sh examples/judge/jev.sh\")")
 	priceIn := flag.Float64("price-in", 0.10, "openai backend: dollars per million input tokens, to price the calls")
 	priceOut := flag.Float64("price-out", 0.50, "openai backend: dollars per million output tokens")
 	flag.Parse()
@@ -103,6 +104,11 @@ func main() {
 			// The shipped backend sends reasoning_effort only when set, so
 			// -effort "" measures exactly what a default config sends.
 			j = newEndpoint(m, *baseURL, *keyEnv, *effort, *priceIn, *priceOut)
+		}
+		if *backend == "command" {
+			// The program reads its model from APPLYGATE_JUDGE_MODEL.
+			os.Setenv("APPLYGATE_JUDGE_MODEL", m)
+			j = named{judge.Command{Argv: strings.Fields(*command)}, m}
 		}
 		var runs []map[int]judge.Result
 		for r := 1; r <= *repeat; r++ {
@@ -466,3 +472,12 @@ func check(err error) {
 		os.Exit(1)
 	}
 }
+
+// named keys a command judge's cache and report by its model as well as its
+// program, so two models through one script do not share results.
+type named struct {
+	judge.Command
+	model string
+}
+
+func (n named) Name() string { return n.Command.Name() + "-" + n.model }
