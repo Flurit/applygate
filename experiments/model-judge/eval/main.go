@@ -61,6 +61,7 @@ func main() {
 	backend := flag.String("backend", "cli", "cli (the claude CLI's login), command (-command) or openai (the shipped OpenAI-compatible backend, with a key from the environment)")
 	baseURL := flag.String("base-url", "", "openai backend: endpoint (default: applygate's default endpoint)")
 	keyEnv := flag.String("api-key-env", "", "openai backend: environment variable holding the key (default: ANTHROPIC_API_KEY with the default endpoint)")
+	tag := flag.String("tag", "", "command backend: appended to the judge's name. The cache keys a command judge by its name and the call, not by the script's contents, so change the tag whenever the script or a file it reads changes")
 	command := flag.String("command", "", "command backend: the program and its arguments, split on spaces (for example \"sh examples/judge/jev.sh\")")
 	priceIn := flag.Float64("price-in", 0.10, "openai backend: dollars per million input tokens, to price the calls")
 	priceOut := flag.Float64("price-out", 0.50, "openai backend: dollars per million output tokens")
@@ -78,7 +79,7 @@ func main() {
 		switch ds {
 		case "pack":
 			items = append(items, packItems(repo)...)
-		case "longtail", "hard", "heldout", "heldout2", "heldout3", "heldout4":
+		case "longtail", "hard", "heldout", "heldout2", "heldout3", "heldout4", "heldout5":
 			items = append(items, longtailItems(repo, ds)...)
 		case "trial":
 			items = append(items, trialItems()...)
@@ -108,7 +109,7 @@ func main() {
 		if *backend == "command" {
 			// The program reads its model from APPLYGATE_JUDGE_MODEL.
 			os.Setenv("APPLYGATE_JUDGE_MODEL", m)
-			j = named{judge.Command{Argv: strings.Fields(*command)}, m}
+			j = named{judge.Command{Argv: strings.Fields(*command)}, m + *tag}
 		}
 		var runs []map[int]judge.Result
 		for r := 1; r <= *repeat; r++ {
@@ -299,17 +300,17 @@ func runJudge(j judge.Judge, tag string, items []item, c *cacheT, limit, paralle
 }
 
 type row struct {
-	Dataset, ID, Kind, Expect, Note, Command string
-	Rule, Judge, Merged                      policy.Verdict
-	Residual, Relevant                       bool
-	Reason, Err                              string
-	APIms, WallMS, Cost                      float64
+	Dataset, ID, Kind, Expect, Note, Command, Tier string
+	Rule, Judge, Merged                            policy.Verdict
+	Residual, Relevant                             bool
+	Reason, Err                                    string
+	APIms, WallMS, Cost                            float64
 }
 
 func report(j judge.Judge, items []item, res map[int]judge.Result, prefilter bool) {
 	var rows []row
 	for i, it := range items {
-		r := row{Dataset: it.Dataset, ID: it.ID, Kind: it.Kind, Expect: it.Expect, Note: it.Note, Rule: it.Rule.Verdict,
+		r := row{Dataset: it.Dataset, ID: it.ID, Kind: it.Kind, Expect: it.Expect, Note: it.Note, Tier: string(it.Input.Tier), Rule: it.Rule.Verdict,
 			Residual: judge.Residual(it.Rule), Relevant: judge.Relevant(it.Input), Merged: it.Rule.Verdict}
 		r.Command = it.Input.Command
 		if r.Command == "" {
@@ -338,7 +339,7 @@ func report(j judge.Judge, items []item, res map[int]judge.Result, prefilter boo
 			mode = "only residual calls that pass the pre-filter go to the judge"
 		}
 		fmt.Fprintf(&sb, "### %s\n\n| Dataset | Calls | Residual | Judged | Should escalate: rules / merged | Should allow: escalated by judge | Errors |\n|---|---|---|---|---|---|---|\n", mode)
-		for _, ds := range []string{"pack", "longtail", "hard", "heldout", "heldout2", "heldout3", "heldout4", "trial"} {
+		for _, ds := range []string{"pack", "longtail", "hard", "heldout", "heldout2", "heldout3", "heldout4", "heldout5", "trial"} {
 			var n, residual, judged, escN, escRule, escMerged, allowN, allowEsc, errs int
 			for _, r := range rows {
 				if r.Dataset != ds {

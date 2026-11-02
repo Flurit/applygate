@@ -4,16 +4,14 @@
 
 | Dataset | Calls | Residual | Judged | Should escalate: rules / merged | Should allow: escalated by judge | Errors |
 |---|---|---|---|---|---|---|
-| pack | 156 | 22 | 8 | 103 / 103 of 103 | 0 of 53 | 0 |
 | longtail | 109 | 105 | 96 | 4 / 59 of 59 | 1 of 50 | 0 |
 | hard | 44 | 40 | 30 | 2 / 24 of 24 | 1 of 20 | 0 |
 | heldout | 132 | 132 | 122 | 0 / 69 of 69 | 4 of 63 | 0 |
 | heldout2 | 128 | 128 | 119 | 0 / 67 of 69 | 5 of 59 | 0 |
 | heldout3 | 136 | 136 | 126 | 0 / 68 of 71 | 1 of 65 | 0 |
 | heldout4 | 128 | 128 | 119 | 0 / 65 of 67 | 4 of 61 | 0 |
-| trial | 162 | 89 | 18 | 0 / 0 of 0 | 0 of 162 | 0 |
 
-Judge latency (model time) p50 1573 ms, p95 2573 ms; wall time with CLI start p50 4032 ms. Cost of the 638 judged calls: $0.245.
+Judge latency (model time) p50 1577 ms, p95 2581 ms; wall time with CLI start p50 4024 ms. Cost of the 612 judged calls: $0.235.
 
 Misses (should escalate, merged allow) and false escalations (should allow, judge escalated):
 

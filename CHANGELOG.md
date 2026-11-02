@@ -14,6 +14,13 @@
     - **Gemini 3.8 Flash through Google's OpenAI-compatible endpoint** (set already seen, no code change needed): it caught 65 in each of three runs, with 0 to 1 false escalations. It is slower: p50 5.1 s, p95 9.4 s, and 5 of 128 calls took over 10 s, so it needs `timeout: 20s`. Its cost was not measured.
     - **Jev through `examples/judge/jev.sh`** (set already seen): it caught 61 to 62, with 6 to 7 false escalations, at p95 0.56 s and about $0.00006 per call.
     - **OpenAI's `gpt-6-luna` through `examples/judge/openai-decisions.sh`** (set already seen): it caught 58 in every run, with 8 false escalations and one refusal. That was at p95 0.74 s and about $0.00011 per call.
+    - **A fifth held-out set,** written independently and scored once per judge after every design choice was committed. Of 72 calls that should be stopped and 71 that should go through:
+      - Gemini 3.8 Flash caught 71 with 0 false escalations;
+      - Haiku 5.5 through the default endpoint caught 70 with 4;
+      - Jev caught 69 with 5;
+      - `gpt-6-luna` caught 65 with 3.
+
+      Asking the decision models nine narrow questions and letting the tier table decide did not do better on it, so that design stays in `experiments/model-judge/decision-facts`.
     - **Other providers and models:** none have been measured.
   - **Decision-model adapters** for the command backend, which answer with a probability per verdict and no explanation:
     - `examples/judge/jev.sh` (TypeSafe AI's Jev);
