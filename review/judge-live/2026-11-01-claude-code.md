@@ -27,6 +27,6 @@ The opt-in model judge, from branch `feat/model-judge` (prompt version 7), ran i
 
 ## Not covered here
 
-- **The OpenAI-compatible backend.** Tested only against a local test server.
+- **The OpenAI-compatible backend.** Tested only against a local test server at the time. The default endpoint was run live the next day ([2026-11-02](2026-11-02-default-endpoint.md)).
 - **`applygate approve`.** Approving a judge's block was not exercised live. It needs a person at a terminal; the hook tests cover it.
 - **Other agents and interactive sessions.** Codex, and an interactive Claude Code session where an ask shows a prompt, were not run.

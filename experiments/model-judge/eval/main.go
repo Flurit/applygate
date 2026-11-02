@@ -4,6 +4,10 @@
 //
 //	go run ./experiments/model-judge/eval -models claude-haiku-5-5 [-limit N] [-parallel 6]
 //
+// By default the judge is the claude CLI (its login, no key). With -backend
+// openai it is the backend the hook ships, called with a key from the
+// environment: the default endpoint, or -base-url and -api-key-env.
+//
 // Datasets: the scenario pack, the long-tail set (longtail.json) and the
 // agent-driven trial's decision log (real Claude Code and Codex calls on five
 // public Terraform repositories, all benign). Judge results are cached in
@@ -54,6 +58,12 @@ func main() {
 	only := flag.String("datasets", "pack,longtail,trial", "datasets to run")
 	repeat := flag.Int("repeat", 1, "judge every call this many times (repeats 2+ are cached separately) to measure consistency")
 	prefilter := flag.Bool("prefilter", false, "judge only residual calls that pass the pre-filter (the mode we would ship), and report only that mode")
+	backend := flag.String("backend", "cli", "cli (the claude CLI's login), command (-command) or openai (the shipped OpenAI-compatible backend, with a key from the environment)")
+	baseURL := flag.String("base-url", "", "openai backend: endpoint (default: applygate's default endpoint)")
+	keyEnv := flag.String("api-key-env", "", "openai backend: environment variable holding the key (default: ANTHROPIC_API_KEY with the default endpoint)")
+	command := flag.String("command", "", "command backend: the program and its arguments, split on spaces (for example \"sh examples/judge/jev.sh\")")
+	priceIn := flag.Float64("price-in", 0.10, "openai backend: dollars per million input tokens, to price the calls")
+	priceOut := flag.Float64("price-out", 0.50, "openai backend: dollars per million output tokens")
 	flag.Parse()
 
 	tmp, err := os.MkdirTemp("", "judge-eval-")
@@ -89,7 +99,17 @@ func main() {
 
 	cache := loadCache()
 	for _, m := range strings.Split(*models, ",") {
-		j := CLI{Model: m, Effort: *effort}
+		var j judge.Judge = CLI{Model: m, Effort: *effort}
+		if *backend == "openai" {
+			// The shipped backend sends reasoning_effort only when set, so
+			// -effort "" measures exactly what a default config sends.
+			j = newEndpoint(m, *baseURL, *keyEnv, *effort, *priceIn, *priceOut)
+		}
+		if *backend == "command" {
+			// The program reads its model from APPLYGATE_JUDGE_MODEL.
+			os.Setenv("APPLYGATE_JUDGE_MODEL", m)
+			j = named{judge.Command{Argv: strings.Fields(*command)}, m}
+		}
 		var runs []map[int]judge.Result
 		for r := 1; r <= *repeat; r++ {
 			tag := ""
@@ -100,6 +120,9 @@ func main() {
 			saveCache(cache)
 		}
 		report(j, items, runs[0], *prefilter)
+		if *backend == "openai" {
+			fmt.Fprintf(os.Stderr, "tokens this run: %d in, %d out\n", tokensIn.Load(), tokensOut.Load())
+		}
 		if len(runs) > 1 {
 			consistency(j, items, runs)
 		}
@@ -230,7 +253,7 @@ func saveCache(c *cacheT) {
 	check(os.WriteFile(filepath.Join(base, "results", "cache.json"), b, 0o644))
 }
 
-func runJudge(j CLI, tag string, items []item, c *cacheT, limit, parallel int, prefilter bool) map[int]judge.Result {
+func runJudge(j judge.Judge, tag string, items []item, c *cacheT, limit, parallel int, prefilter bool) map[int]judge.Result {
 	out := map[int]judge.Result{}
 	var mu sync.Mutex
 	sem := make(chan struct{}, parallel)
@@ -283,7 +306,7 @@ type row struct {
 	APIms, WallMS, Cost                      float64
 }
 
-func report(j CLI, items []item, res map[int]judge.Result, prefilter bool) {
+func report(j judge.Judge, items []item, res map[int]judge.Result, prefilter bool) {
 	var rows []row
 	for i, it := range items {
 		r := row{Dataset: it.Dataset, ID: it.ID, Kind: it.Kind, Expect: it.Expect, Note: it.Note, Rule: it.Rule.Verdict,
@@ -385,7 +408,7 @@ func report(j CLI, items []item, res map[int]judge.Result, prefilter bool) {
 
 // consistency reports how often repeated judgements of the same call differ,
 // and whether any difference changes the merged verdict.
-func consistency(j CLI, items []item, runs []map[int]judge.Result) {
+func consistency(j judge.Judge, items []item, runs []map[int]judge.Result) {
 	var judged, differ, mergedDiffer int
 	var lines []string
 	for i, it := range items {
@@ -449,3 +472,12 @@ func check(err error) {
 		os.Exit(1)
 	}
 }
+
+// named keys a command judge's cache and report by its model as well as its
+// program, so two models through one script do not share results.
+type named struct {
+	judge.Command
+	model string
+}
+
+func (n named) Name() string { return n.Command.Name() + "-" + n.model }
