@@ -41,6 +41,14 @@ jobs:
         run: python3 -I harness/test_run.py
       - name: black-box replay (never executes scenario commands)
         run: python3 -I harness/run.py --guard bin/applygate --md replay.md && cat replay.md >> "$GITHUB_STEP_SUMMARY"
+      - name: black-box replay in the Codex format
+        run: python3 -I harness/run.py --guard bin/applygate --format codex --md replay-codex.md && cat replay-codex.md >> "$GITHUB_STEP_SUMMARY"
+      - name: open findings of the v0.6.0 review (internal/reviewgap)
+        run: |
+          {
+            echo "### Open review findings"
+            go test -count=1 -v -run 'TestAttackPack|Review' ./... 2>&1 | grep -oE 'open finding [A-J][0-9]+' | sort -u | sed 's/^/- /'
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: fuzz shell analyzer (short)
         if: matrix.os == 'ubuntu-latest'
         run: go test -run XXX -fuzz FuzzAnalyze -fuzztime 30s ./internal/shell
