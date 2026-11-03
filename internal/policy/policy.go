@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -188,6 +189,61 @@ type Decision struct {
 // GuardOptions returns the classifier options for cfg in env: the guard
 // patterns, and the guard set that also knows where guard files live under
 // the user's home and the repository root.
+// MCPGuardPath returns a guard path that a call to an MCP tool outside the
+// known-tool table names in its arguments, or "". Any string argument that
+// resolves to a guard file, or to a directory that holds one, counts, unless
+// the tool's name says it only reads (read_file, list_directory).
+func MCPGuardPath(cfg *config.Config, env map[string]string, tool, cwd string, args json.RawMessage) string {
+	name := strings.ToLower(tool)
+	if i := strings.LastIndex(name, "__"); i >= 0 {
+		name = name[i+2:]
+	}
+	reads := regexp.MustCompile(`(^|_)(read|get|list|search|view|stat|info|find|show|describe|tree)(_|$)`).MatchString(name)
+	writes := regexp.MustCompile(`write|edit|move|rename|delete|remove|create|copy|set|update|put|patch|append|exec|run|mkdir|chmod|upload|save`).MatchString(name)
+	if reads && !writes {
+		return ""
+	}
+	var v any
+	if json.Unmarshal(args, &v) != nil {
+		return ""
+	}
+	copt := GuardOptions(cfg, env)
+	var found string
+	n := 0
+	var walk func(any, int)
+	walk = func(x any, depth int) {
+		if found != "" || depth > 8 || n > 500 {
+			return
+		}
+		n++
+		switch t := x.(type) {
+		case string:
+			if t == "" || len(t) > 4096 || !strings.ContainsAny(t, "/.~") {
+				return
+			}
+			p := t
+			if strings.HasPrefix(p, "~/") {
+				p = filepath.Join(copt.Home, p[2:])
+			} else if !filepath.IsAbs(p) {
+				p = filepath.Join(cwd, p)
+			}
+			if copt.Guard.Touches(filepath.Clean(p)) {
+				found = filepath.Clean(p)
+			}
+		case []any:
+			for _, e := range t {
+				walk(e, depth+1)
+			}
+		case map[string]any:
+			for _, e := range t {
+				walk(e, depth+1)
+			}
+		}
+	}
+	walk(v, 0)
+	return found
+}
+
 func GuardOptions(cfg *config.Config, env map[string]string) classify.Options {
 	home := env["HOME"]
 	if home == "" {

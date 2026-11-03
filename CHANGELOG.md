@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Red-team round 2 fixes, part 1** (`review/v0.6.0/2026-11-03-red-team-round-2.md`):
+  - **Default-deny near guard files.** A shell command that names a guard file, or a guarded directory, is tampering unless the program only reads. This replaces recognizing each writer: `sort -o`, `yq -i`, `awk -i inplace`, `busybox`, `openssl -out`, `tar -C … -x`, `git clean` and git plumbing that name a guard file are all blocked. Unresolved words count when their literal text or their glob names one (`${HOME:-x}/.claude/settings.json`, `rm ~/.claude/setting*.json`).
+  - **Redirections** on compound commands (`{ …; } > f`), bare redirections and `exec` redirections are checked.
+  - **Case folding** follows APFS: `ſ` (U+017F) and the Kelvin sign fold to ASCII, and names are NFC-normalized.
+  - **MCP tools outside the known-tool table** that name a guard file in their arguments are judged as writes to it.
+  - **The hook's own git calls** run by an absolute path without the system and global config, with `fsmonitor`, hooks and pagers off, and read committed files with `git cat-file` instead of `git diff`. Before, an agent-set `core.fsmonitor` ran inside the hook.
+  - **The decision log, approvals, judge cache, configs and telemetry settings** are opened without blocking, and only when they are regular files. Before, a FIFO at the log hung the hook.
+  - **Limits:** nesting deeper than 2,000 levels is unresolved instead of crashing the process, and gzip output over the 256 KB cap is unknown instead of cut.
+  - **`COPILOT_HOME`'s hook file** is a guard path.
+
 - **Security fixes from the v0.6.0 pre-release review** (`review/v0.6.0/`).
   - **The review:** six independent reviewers found 80 issues, 20 of them critical, most present in earlier releases.
   - **This release fixes the self-protection findings,** where an agent could switch applygate off or approve its own call.

@@ -26,6 +26,7 @@ import (
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/policy"
+	"github.com/Flurit/applygate/internal/safefile"
 )
 
 const (
@@ -230,7 +231,7 @@ func live(recs []Record, now time.Time) []Record {
 }
 
 func read(path string) ([]Record, error) {
-	b, err := os.ReadFile(path)
+	b, err := safefile.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -250,7 +251,7 @@ func update(path string, now time.Time, f func([]Record) []Record) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := safefile.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}

@@ -7,10 +7,13 @@ package guard
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // FoldCase is true where the default file system ignores case.
@@ -105,11 +108,51 @@ func canonicalGlob(p string) string {
 	return Canonical(p[:j]) + p[j:]
 }
 
+// fold returns s as a case-insensitive file system compares it: Unicode
+// NFC (APFS ignores normalization), lower case, and the code points such
+// file systems fold onto ASCII letters that strings.ToLower leaves alone
+// (U+017F long s and U+212A Kelvin sign).
 func fold(s string) string {
-	if FoldCase {
-		return strings.ToLower(s)
+	if !FoldCase {
+		return s
 	}
-	return s
+	s = norm.NFC.String(s)
+	s = strings.NewReplacer("\u017f", "s", "\u212a", "k").Replace(s)
+	return strings.ToLower(s)
+}
+
+// Fold is fold for other packages: text compared with Needles.
+func Fold(s string) string { return fold(s) }
+
+// GlobTouches reports whether an absolute glob could match a guard file or a
+// directory that holds one: rm ~/.claude/setting*.json, rm -rf ~/.clau?e.
+func (s *Set) GlobTouches(pattern string) bool {
+	if s == nil || !filepath.IsAbs(pattern) {
+		return false
+	}
+	pat := canonicalGlob(pattern)
+	for _, t := range s.targets {
+		for a := t; ; a = path.Dir(a) {
+			if shellGlob(pat, a) {
+				return true
+			}
+			if a == "/" || a == "." || a == path.Dir(a) {
+				break
+			}
+		}
+	}
+	// The repository config and other dot-names that may live in any
+	// directory (.applygate.yaml); other names, settings.json or the
+	// applygate binary, count only through the concrete targets above.
+	base := path.Base(pat)
+	for _, p := range s.patterns {
+		if b := path.Base(p); !strings.ContainsAny(b, "*?[") && strings.HasPrefix(b, ".") {
+			if segMatch(base, b) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Protected reports whether p (absolute) is a guard file or lies inside a
@@ -246,4 +289,29 @@ func Executable() []string {
 	}
 	dir := filepath.Dir(exe)
 	return []string{exe, filepath.Join(dir, "applygate"), filepath.Join(dir, "seatbelt")}
+}
+
+// shellGlob matches an absolute path the way the shell expands a glob: one
+// segment per segment, and a segment starting with "." only when the
+// pattern's segment does too (no dotglob).
+func shellGlob(pattern, p string) bool {
+	pp := strings.Split(strings.Trim(pattern, "/"), "/")
+	ps := strings.Split(strings.Trim(p, "/"), "/")
+	if len(pp) != len(ps) {
+		return false
+	}
+	for i := range pp {
+		if !segMatch(pp[i], ps[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func segMatch(pat, seg string) bool {
+	if strings.HasPrefix(seg, ".") && !strings.HasPrefix(pat, ".") {
+		return false
+	}
+	ok, err := path.Match(pat, seg)
+	return err == nil && ok
 }

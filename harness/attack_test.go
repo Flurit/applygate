@@ -145,7 +145,7 @@ func runAttack(t *testing.T, s AttackScenario, format, self string) (string, str
 	for k, v := range s.Env {
 		v = sub(v)
 		env[k] = v
-		if strings.HasPrefix(k, "XDG_") || k == "CLAUDE_CONFIG_DIR" || k == "CODEX_HOME" {
+		if strings.HasPrefix(k, "XDG_") || k == "CLAUDE_CONFIG_DIR" || k == "CODEX_HOME" || k == "COPILOT_HOME" {
 			t.Setenv(k, v)
 		}
 	}

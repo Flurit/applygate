@@ -286,6 +286,12 @@ func (a *analyzer) source(src string, st *state, via []string, depth int) {
 		a.unbounded(st, via, src, "nesting deeper than the analyzer follows")
 		return
 	}
+	if nestingDepth(src) > maxNesting {
+		// The parser and the walk recurse per level; deeper text would
+		// overflow the stack and kill the process with no verdict.
+		a.unbounded(st, via, src, "nesting deeper than the analyzer follows")
+		return
+	}
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
 	if err != nil {
 		// A shell runs the lines before a syntax error: walk them too.
@@ -361,6 +367,12 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			}
 		}
 	}()
+	// Redirections of a statement that is not a simple command with words
+	// ({ …; } > f, ( … ) > f, if …; fi > f, a bare > f) apply all the same:
+	// they are recorded as an invocation with no program.
+	if c, isCall := s.Cmd.(*syntax.CallExpr); (!isCall || len(c.Args) == 0) && len(redirs) > 0 {
+		a.res.Invocations = append(a.res.Invocations, Invocation{Dir: st.dir, Env: st.env(), Redirs: redirs, Via: append([]string(nil), via...)})
+	}
 	switch c := s.Cmd.(type) {
 	case *syntax.CallExpr:
 		a.callExpr(c, redirs, st, via, depth, in)
@@ -1055,4 +1067,30 @@ func hexVal(c byte) int {
 	default:
 		return int(c-'A') + 10
 	}
+}
+
+// maxNesting bounds the brackets the parser is given, far above what a
+// person writes and far below what overflows the stack.
+const maxNesting = 2000
+
+// nestingDepth is the deepest nesting of what the parser recurses on in
+// src: parentheses (subshells, $( ), arithmetic) and braces that open a
+// block ("{" followed by white space). Quoting is ignored: an overestimate
+// is safe. Braces inside a word ({a,b}) are not counted.
+func nestingDepth(src string) int {
+	d, m := 0, 0
+	for i := 0; i < len(src); i++ {
+		switch c := src[i]; {
+		case c == '(' || c == '{' && i+1 < len(src) && (src[i+1] == ' ' || src[i+1] == '\t' || src[i+1] == '\n'):
+			d++
+			if d > m {
+				m = d
+			}
+		case c == ')' || c == '}':
+			if d > 0 {
+				d--
+			}
+		}
+	}
+	return m
 }

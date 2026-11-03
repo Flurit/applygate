@@ -16,6 +16,7 @@ import (
 
 	"github.com/Flurit/applygate/internal/policy"
 	"github.com/Flurit/applygate/internal/preflight"
+	"github.com/Flurit/applygate/internal/safefile"
 )
 
 // Entry is one logged decision.
@@ -154,7 +155,7 @@ func Append(path string, e Entry) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := safefile.OpenAppend(path, 0o600)
 	if err != nil {
 		return err
 	}

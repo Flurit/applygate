@@ -180,6 +180,14 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		if !r.Write {
 			continue
 		}
+		if !r.Target.Resolved {
+			if p := namesGuard("tee", []shell.Word{r.Target}, inv.Dir, opt); p != "" {
+				a := base
+				a.Class, a.Engine, a.Why = Tampering, "file", "redirect writes to "+p+", which may be a guard file"
+				out = append(out, a)
+			}
+			continue
+		}
 		if r.Target.Resolved {
 			p := absPath(inv.Dir, r.Target.Text, opt.Home)
 			if opt.protected(p) {
@@ -232,6 +240,16 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 				return append(out, a)
 			}
 		}
+	}
+
+	// Default-deny near guard files: a program that names one, or (when it
+	// writes, removes or extracts) a directory that holds one, is
+	// tampering unless it only reads. This does not depend on knowing how
+	// the program writes.
+	if p := namesGuard(name, args, inv.Dir, opt); p != "" {
+		a := base
+		a.Class, a.Engine, a.Why = Tampering, "file", name+" names guard file "+p+"; only reading it is allowed"
+		return append(out, a)
 	}
 
 	if e, ok := engines[name]; ok {
@@ -853,4 +871,103 @@ func positional(args []shell.Word) []string {
 		}
 	}
 	return out
+}
+
+// readOnlyUse reports whether a program, as called, only reads the files it
+// names, so naming a guard file is fine.
+func readOnlyUse(name string, args []shell.Word) bool {
+	has := func(flags ...string) bool {
+		for _, w := range args {
+			for _, f := range flags {
+				if w.Text == f || strings.HasPrefix(w.Text, f+"=") {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	first := ""
+	for _, w := range args {
+		if !strings.HasPrefix(w.Text, "-") {
+			first = w.Text
+			break
+		}
+	}
+	switch name {
+	case "cat", "head", "tail", "less", "more", "ls", "stat", "file", "wc", "diff", "cmp", "test", "[", "sha256sum",
+		"shasum", "md5sum", "sha1sum", "readlink", "realpath", "basename", "dirname", "tree", "du", "echo", "printf",
+		"bat", "strings", "od", "hexdump", "jq", "grep", "egrep", "fgrep", "ack", "ag", "which", "type", "command":
+		return true
+	case "rg":
+		return !has("--pre", "--pre-glob")
+	case "yq":
+		return !has("-i", "--inplace")
+	case "find", "fd":
+		return !has("-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls", "-x", "-X", "--exec", "--exec-batch")
+	case "git":
+		switch first {
+		case "status", "log", "diff", "show", "blame", "ls-files", "add", "commit", "cat-file", "ls-tree", "check-ignore", "check-attr", "rev-parse":
+			return true
+		}
+	case "applygate", "seatbelt":
+		switch first {
+		case "check", "explain", "doctor", "report", "hosts", "version", "selftest", "plan-check":
+			return true
+		case "suggest":
+			return !has("--out")
+		}
+	}
+	return false
+}
+
+// namesGuard returns the guard path a command names, or "". A path counts
+// when it is a guard file or lies in a guarded directory; a directory that
+// holds a guard file counts only for a program that writes, removes or
+// extracts. Words that cannot be resolved count when their literal text
+// names a guard file, or when they are a glob that could match one.
+func namesGuard(name string, args []shell.Word, dir string, opt Options) string {
+	if opt.Guard == nil || readOnlyUse(name, args) {
+		return ""
+	}
+	changes := writers[name] || removers[name] || copiers[name] || name == "tar" || name == "bsdtar" || name == "gtar" ||
+		name == "unzip" || name == "7z" || name == "cpio" || name == "pax" || name == "find" || name == "fd" || name == "git" ||
+		name == "busybox" || name == "toybox"
+	var needles []string
+	for _, w := range args {
+		if w.Resolved {
+			// The word, and each part of a list (100644,sha,.applygate.yaml)
+			// or an option value (--out=~/.claude/settings.json).
+			for _, part := range append([]string{w.Text}, strings.FieldsFunc(w.Text, func(r rune) bool { return r == ',' || r == '=' || r == ':' })...) {
+				if part == "" || part == "-" || strings.HasPrefix(part, "-") && part == w.Text {
+					continue
+				}
+				p := absPath(dir, part, opt.Home)
+				if opt.Guard.Protected(p) || changes && opt.Guard.Touches(p) {
+					return p
+				}
+			}
+			continue
+		}
+		t := w.Text
+		if strings.ContainsAny(t, "*?[") {
+			if opt.Guard.GlobTouches(absPath(dir, t, opt.Home)) {
+				return t
+			}
+		}
+		if needles == nil {
+			needles = opt.Guard.Needles(opt.Home)
+		}
+		ft := guard.Fold(t)
+		for _, n := range needles {
+			if strings.Contains(ft, n) {
+				return w.Prefix + "<?>" + strings.TrimPrefix(t, w.Prefix)
+			}
+		}
+		// $XDG_CONFIG_HOME/applygate, ${DIR}/seatbelt: applygate's own
+		// directories, named by the variable the hook itself reads.
+		if changes && (strings.HasSuffix(ft, "/applygate") || strings.HasSuffix(ft, "/seatbelt")) {
+			return t
+		}
+	}
+	return ""
 }
