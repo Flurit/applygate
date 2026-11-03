@@ -415,7 +415,14 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			left := st.clone()
 			a.stmt(c.X, left, via, depth, in)
 			out, ok := a.stdout(c.X, st.clone(), in, 0)
-			a.stmt(c.Y, st.clone(), via, depth, stdin{text: out, known: ok, present: true, desc: "output of " + short(pipeSource(c.X))})
+			ys := st.clone()
+			a.stmt(c.Y, ys, via, depth, stdin{text: out, known: ok, present: true, desc: "output of " + short(pipeSource(c.X))})
+			// zsh (and bash with lastpipe) runs the last element in the
+			// current shell, bash in a subshell: a cd there may or may not
+			// move the shell.
+			if ys.dir != st.dir {
+				st.dir = ""
+			}
 		default:
 			a.stmt(c.X, st, via, depth, in)
 			a.stmt(c.Y, st, via, depth, stdin{})
@@ -469,9 +476,10 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			return
 		}
 		st.funcs[c.Name.Value] = c.Body
-		if n := c.Name.Value; n == "command_not_found_handle" || n == "command_not_found_handler" {
-			// bash and zsh run it for any command they cannot find, so it
-			// may run at any later point, after any cd.
+		if n := c.Name.Value; n == "command_not_found_handle" || n == "command_not_found_handler" || zshHook(n) {
+			// bash and zsh run it for any command they cannot find, and
+			// zsh its hook functions (chpwd after a cd, TRAPEXIT at exit),
+			// so it may run at any later point, after any cd.
 			t := st.clone()
 			t.dir = ""
 			a.stmt(c.Body, t, append(via, n), depth+1, stdin{})
@@ -1215,4 +1223,27 @@ func nestingDepth(src string) int {
 		}
 	}
 	return m
+}
+
+// zshHook reports whether zsh calls a function of this name on its own:
+// the hook functions and the TRAP<signal> handlers.
+func zshHook(n string) bool {
+	switch n {
+	case "chpwd", "precmd", "preexec", "periodic", "zshexit", "zshaddhistory":
+		return true
+	}
+	return strings.HasPrefix(n, "TRAP")
+}
+
+// zshSpecial are zsh parameters whose assignment changes what a command
+// name runs or which files zsh reads: the function, command, alias and
+// builtin tables, the search paths, and the hook arrays.
+func zshSpecial(n string) bool {
+	switch n {
+	case "path", "fpath", "cdpath", "manpath", "module_path", "mailpath", "functions", "commands", "aliases", "galiases",
+		"saliases", "builtins", "dis_functions", "dis_aliases", "dis_builtins", "dis_galiases", "dis_saliases", "parameters",
+		"options", "nameddirs", "userdirs", "reswords", "dis_reswords", "psvar", "zle_highlight":
+		return true
+	}
+	return strings.HasSuffix(n, "_functions")
 }

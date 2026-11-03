@@ -1035,7 +1035,9 @@ func PathDirs(home string) []string {
 }
 
 // PathPrograms are the names guarded in PathDirs.
-func PathPrograms() []string { return pathPrograms }
+func PathPrograms() []string {
+	return append(append([]string(nil), pathPrograms...), shell.GitPrograms()...)
+}
 
 func pathDirs(home string) []string {
 	dirs := filepath.SplitList(os.Getenv("PATH"))

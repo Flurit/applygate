@@ -26,7 +26,15 @@ Done, with reproductions in `harness/pack_attack` (Y6*):
 - Replays: Claude 163/163, Codex 161/161.
 - Agent trial: no verdict changes in prod, staging or dev, compared with main.
 
-### R6-2: strict shapes that see what programs read (decision needed)
+### R6-2: strict shapes that see what programs read
+
+**Decided on 2026-11-03: C. Built** on branch fix/round-6-shapes:
+- `internal/shell/gitstate.go` holds git's discovery, config parsing and the safe list.
+- `internal/policy/engine_state.go` checks terraform's providers, upstream lock and data sources.
+- Measured on the agent trial: 51 of 162 calls in a protected directory are asked about or blocked, against 47 for R6-1. Of the 4 new asks, 2 are `terragrunt` and 2 are terraform in trial directories that do not exist on this machine.
+- The replay fixture has no installed providers, so the provider check is covered by unit tests, not the trial.
+
+The analysis that led to the decision:
 
 The remaining criticals (6C6 to 6C12, 6C16) and 6H21 share one cause: a plain command reads state an earlier allowed call can write. Exact shapes check a program's arguments, not that state. Two ways to close it inside the hook are measured below. Both keep the adversarial promise.
 

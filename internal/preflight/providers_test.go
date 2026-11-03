@@ -100,3 +100,22 @@ func TestVerifyProvidersWithoutLockOrProviders(t *testing.T) {
 		t.Fatalf("no lock file: %v", err)
 	}
 }
+
+func TestRunsPrograms(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "main.tf"), []byte("resource \"null_resource\" \"x\" {}\nmodule \"m\" {\n  source = \"./m\"\n}\n"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "m"), 0o755)
+	if why := RunsPrograms(dir, filepath.Join(dir, ".terraform")); why != "" {
+		t.Fatalf("a configuration without external data: %s", why)
+	}
+	os.WriteFile(filepath.Join(dir, "m", "x.tf"), []byte("data \"external\" \"x\" {\n  program = [\"sh\"]\n}\n"), 0o644)
+	if why := RunsPrograms(dir, filepath.Join(dir, ".terraform")); why == "" {
+		t.Fatal("external data in a local module was not found")
+	}
+	os.Remove(filepath.Join(dir, "m", "x.tf"))
+	os.MkdirAll(filepath.Join(dir, ".terraform", "modules", "r"), 0o755)
+	os.WriteFile(filepath.Join(dir, ".terraform", "modules", "r", "a.tf.json"), []byte(`{"data":{"external":{"x":{"program":["sh"]}}}}`), 0o644)
+	if why := RunsPrograms(dir, filepath.Join(dir, ".terraform")); why == "" {
+		t.Fatal("external data in a downloaded JSON module was not found")
+	}
+}

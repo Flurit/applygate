@@ -1213,24 +1213,54 @@ func plantsCommand(inv shell.Invocation) string {
 		}
 		return false
 	}
+	n := shell.ProgName(inv.Args[0].Text)
+	// pos are the positional words, the values of the program's valued
+	// options left out (aws --region X, kubectl --context X, gh -R X).
+	valued := map[string]bool{}
+	switch n {
+	case "aws":
+		valued = toSet("--profile", "--region", "--output", "--endpoint-url", "--query", "--ca-bundle", "--cli-read-timeout", "--cli-connect-timeout", "--color")
+	case "kubectl":
+		valued = toSet("-n", "--namespace", "--context", "--cluster", "--user", "-s", "--server", "--kubeconfig", "--as", "--as-group", "--token", "--request-timeout", "-v")
+	case "gh", "glab":
+		valued = toSet("-R", "--repo", "--hostname")
+	}
 	pos := func() []string {
 		var out []string
-		for _, w := range ws {
-			if !strings.HasPrefix(w, "-") {
-				out = append(out, w)
+		for i := 0; i < len(ws); i++ {
+			w := ws[i]
+			if strings.HasPrefix(w, "-") {
+				if valued[w] {
+					i++
+				}
+				continue
 			}
+			out = append(out, w)
 		}
 		return out
 	}()
-	n := shell.ProgName(inv.Args[0].Text)
 	switch {
-	case n == "git" && len(pos) >= 2 && pos[0] == "config" && has("--global", "--system", "--file", "-f"):
-		k := pos[1]
-		if (k == "set" || k == "add") && len(pos) >= 3 {
-			k = pos[2]
+	case n == "git":
+		// git [-C dir] [-c k=v] ... config ...: the global options first.
+		args := inv.Args[1:]
+		for len(args) > 0 && strings.HasPrefix(args[0].Text, "-") {
+			if t := args[0].Text; (t == "-C" || t == "-c" || t == "--git-dir" || t == "--work-tree" || t == "--namespace") && len(args) > 1 {
+				args = args[1:]
+			}
+			args = args[1:]
 		}
-		if !inv.Args[len(inv.Args)-1].Resolved || shell.GitRunsKey(strings.ToLower(k), "") {
-			return "git config " + k + " outside the repository sets a command git runs later"
+		if len(args) == 0 || args[0].Text != "config" {
+			return ""
+		}
+		op, why := shell.GitConfigOp(args[1:])
+		if op.Scope == "" {
+			return "" // the repository's own config: strict shapes judges it
+		}
+		if why != "" && why != "git config --edit runs an editor" {
+			return "git config outside the repository: " + why
+		}
+		if why != "" || op.Write && !shell.GitSafeKey(op.Key, op.Value, true) {
+			return "git config " + op.Key + " outside the repository may set a command git runs later"
 		}
 	case (n == "gh" || n == "glab") && len(pos) >= 2 && pos[0] == "alias" && pos[1] != "list":
 		return n + " alias " + pos[1] + " defines a command " + n + " runs later"

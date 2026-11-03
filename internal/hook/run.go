@@ -197,7 +197,7 @@ func firstLine(s string) string {
 // Deps builds policy dependencies for a config. ctx is cancelled on the
 // internal deadline; the plan gate's show subprocess is bound to it.
 func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
-	d := policy.Deps{Env: opt.Env, PlanJSON: opt.PlanJSON,
+	d := policy.Deps{Ctx: ctx, Env: opt.Env, PlanJSON: opt.PlanJSON,
 		LoadConfig: func(dir string) (*config.Config, error) { return config.Load(opt.UserConfig, dir) }}
 	if d.PlanJSON == nil && cfg.RunShow() {
 		d.PlanJSON = ShowPlan(ctx, cfg.ShowTimeout(), cfg.EngineBinary)
@@ -459,7 +459,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	}
 	if ev.Kind == policy.KindMCP {
 		ev.Kind, ev.Command = policy.KindShell, tr.Command
-		ev.DirKnown = tr.Dir != ""
+		ev.DirKnown, ev.Persistent = tr.Dir != "", tr.Persistent
 		if tr.Dir != "" {
 			ev.Cwd = tr.Dir
 		}

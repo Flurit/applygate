@@ -1269,7 +1269,7 @@
     "command": "make fmt && make plan"
    },
    "expect": [
-    "allow"
+    "ask"
    ],
    "origin": "reconstructed"
   },
