@@ -36,7 +36,7 @@ Usage:
   applygate hook AGENT                 read one hook event on stdin (used by the agent); AGENT is
                                       claude, codex, cursor, copilot, gemini, windsurf, devin, opencode
                                       or cline (applygate hosts says what each was verified on)
-  applygate check [--cwd DIR] [--dir-unknown] [--json] [--agent NAME] [--no-judge] [--plan-json F=J] "<command>"
+  applygate check [--cwd DIR] [--dir-unknown] [--json] [--agent NAME] [--no-judge] [--enforce] [--plan-json F=J] "<command>"
                                       dry-run a command through the policy (and the judge, if on)
   applygate explain [--cwd DIR] [--dir-unknown] [--agent NAME] [--no-judge] [--plan-json F=J] "<command>"
                                       show the parse, classification and decision trace
@@ -189,6 +189,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 	agent := fs.String("agent", "cli", "host name recorded in the decision (claude, codex, cursor, ...)")
 	asJSON := fs.Bool("json", false, "print the decision as JSON")
 	noJudge := fs.Bool("no-judge", false, "do not ask the model judge even when the user config turns it on")
+	enforce := fs.Bool("enforce", false, "exit by the verdict even when the config is in observe mode (for gates such as Terragrunt hooks)")
 	var planJSON multiFlag
 	fs.Var(&planJSON, "plan-json", "PLANFILE=JSON: use this JSON for a saved plan instead of running show")
 	if err := fs.Parse(args); err != nil {
@@ -297,7 +298,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 			fmt.Fprintln(stdout, d.Message)
 		}
 	}
-	switch d.Enforced {
+	v := d.Enforced
+	if *enforce {
+		v = d.Verdict
+	}
+	switch v {
 	case policy.Block:
 		return 3
 	case policy.Ask:

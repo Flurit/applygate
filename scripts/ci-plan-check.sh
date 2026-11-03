@@ -23,8 +23,11 @@ cd "$workdir"
 json=$plan
 # A saved planfile is a zip; its JSON is produced by show -json.
 if [ "$(head -c1 "$plan")" != "{" ]; then
-    json=${RUNNER_TEMP:-${TMPDIR:-/tmp}}/applygate-plan.$$.json
-    "$tf" show -json "$plan" > "$json" || { echo "$tf show -json failed on $plan" >&2; exit 2; }
+    # A private temp file: the plan JSON holds values, and a predictable
+    # name could be created by someone else first.
+    json=$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/applygate-plan.XXXXXXXX") || { echo "cannot create a temp file" >&2; exit 2; }
+    chmod 600 "$json"
+    "$tf" show -json "$plan" > "$json" || { rm -f "$json"; echo "$tf show -json failed on $plan" >&2; exit 2; }
 fi
 
 set +e
@@ -49,7 +52,16 @@ esac
 # newline and tab, and end the multi-line output with a random delimiter
 # that the text cannot contain, so it cannot add outputs of its own.
 out=$(printf '%s' "$out" | LC_ALL=C tr -d '\000-\010\013-\037\177')
-printf '%s\n' "$out"
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    # Workflow commands (::add-mask::, ::error::) in the plan text must not
+    # run: the runner ignores them between stop-commands markers.
+    stop="applygate-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    echo "::stop-commands::$stop"
+    printf '%s\n' "$out"
+    echo "::$stop::"
+else
+    printf '%s\n' "$out"
+fi
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
     delim="APPLYGATE_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
     while printf '%s' "$out" | grep -qF "$delim"; do

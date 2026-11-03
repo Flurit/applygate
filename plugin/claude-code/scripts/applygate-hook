@@ -141,11 +141,16 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+# HTTPS only; the tests' local server (127.0.0.1) is the one exception, and
+# the sha256 check applies to it all the same.
+proto='=https'
+wget_https=--https-only
+case "$base" in http://127.0.0.1:*) proto='=http,https' wget_https= ;; esac
 if need curl; then
-    curl -fsSL --retry 2 --max-time "$limit" -o "$tmp/$archive" "$url" 2>"$tmp/err" ||
+    curl --proto "$proto" --proto-redir "$proto" -fsSL --retry 2 --max-time "$limit" -o "$tmp/$archive" "$url" 2>"$tmp/err" ||
         fail "no applygate on PATH, and downloading v$version failed: $url ($(head -n 1 "$tmp/err"))"
 elif need wget; then
-    wget -q -T "$limit" -O "$tmp/$archive" "$url" 2>"$tmp/err" ||
+    wget $wget_https -q -T "$limit" -O "$tmp/$archive" "$url" 2>"$tmp/err" ||
         fail "no applygate on PATH, and downloading v$version failed: $url"
 else
     fail "no applygate on PATH, and neither curl nor wget is installed to download v$version"

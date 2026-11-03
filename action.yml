@@ -57,12 +57,19 @@ runs:
       shell: bash
       env:
         APPLYGATE_VERSION: ${{ inputs.version }}
+        ACTION_PATH: ${{ github.action_path }}
       run: |
         set -euo pipefail
+        # A release tag only: the value names a download path.
+        if ! [[ "$APPLYGATE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9]+)?)?$ ]]; then
+          echo "version must be a release tag such as v0.6.0" >&2
+          exit 2
+        fi
         dir="$RUNNER_TEMP/applygate-bin"
         mkdir -p "$dir"
-        curl -fsSL "https://raw.githubusercontent.com/Flurit/applygate/${APPLYGATE_VERSION}/install.sh" -o "$RUNNER_TEMP/install.sh"
-        APPLYGATE_VERIFY_SIGNATURE=require APPLYGATE_INSTALL_DIR="$dir" sh "$RUNNER_TEMP/install.sh"
+        # The installer comes with the action, at the ref the workflow pinned,
+        # not from a branch that can move.
+        APPLYGATE_VERIFY_SIGNATURE=require APPLYGATE_INSTALL_DIR="$dir" sh "$ACTION_PATH/install.sh"
         echo "APPLYGATE_BIN=$dir/applygate" >> "$GITHUB_ENV"
     - name: Use the given binary
       if: inputs.binary != ''
@@ -70,7 +77,12 @@ runs:
       env:
         # Through the environment, not the script text: an input is data.
         BINARY: ${{ inputs.binary }}
-      run: echo "APPLYGATE_BIN=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")" >> "$GITHUB_ENV"
+      run: |
+        set -euo pipefail
+        # A newline would add environment variables of its own.
+        case "$BINARY" in *$'\n'*|*$'\r'*) echo "binary must not contain a newline" >&2; exit 2 ;; esac
+        [ -x "$BINARY" ] || { echo "binary is not an executable file: $BINARY" >&2; exit 2; }
+        echo "APPLYGATE_BIN=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")" >> "$GITHUB_ENV"
     - name: plan-check
       id: check
       shell: bash

@@ -43,7 +43,14 @@ func cmdEntry(cmd string) map[string]any {
 var installSpecs = []installSpec{
 	{
 		agent: "claude", project: filepath.Join(".claude", "settings.json"), kind: "json",
-		user: func(h string) string { return filepath.Join(h, ".claude", "settings.json") },
+		user: func(h string) string {
+			// Claude Code reads its user settings from CLAUDE_CONFIG_DIR
+			// when set.
+			if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+				return filepath.Join(d, "settings.json")
+			}
+			return filepath.Join(h, ".claude", "settings.json")
+		},
 		entries: func(cmd string) map[string]any {
 			h := cmdEntry(cmd)
 			// Block the tool call if the hook crashes or times out
@@ -55,7 +62,12 @@ var installSpecs = []installSpec{
 	},
 	{
 		agent: "codex", project: filepath.Join(".codex", "hooks.json"), kind: "json",
-		user: func(h string) string { return filepath.Join(h, ".codex", "hooks.json") },
+		user: func(h string) string {
+			if d := os.Getenv("CODEX_HOME"); d != "" {
+				return filepath.Join(d, "hooks.json")
+			}
+			return filepath.Join(h, ".codex", "hooks.json")
+		},
 		entries: func(cmd string) map[string]any {
 			return map[string]any{"PreToolUse": map[string]any{"matcher": "*", "hooks": []any{cmdEntry(cmd)}}}
 		},

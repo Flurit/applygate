@@ -17,11 +17,11 @@ applygate checks every command a coding agent is about to run against your Terra
 ```bash
 brew install Flurit/tap/applygate     # or see docs/install.md
 cd your-infra-repo
-applygate init                        # writes .applygate.yaml, starts observe mode in your user config, hooks Claude Code and Codex
+applygate init                        # writes and trusts .applygate.yaml, hooks Claude Code and Codex, and writes a user config in observe mode if you have none
 applygate check "terraform -chdir=envs/prod destroy"
 ```
 
-applygate starts in **observe mode**: it logs what it would block and blocks nothing, so `check` prints `allow` followed by the block it would give in enforce mode. After a few days, `applygate report` shows what it caught and `applygate suggest` proposes a config with your environments and their tiers. Review it, set `mode: enforce` in your user config (`~/.config/applygate/config.yaml`; a repository config can only add protection), and run `applygate doctor` to check the setup.
+applygate starts in **observe mode**: it logs what it would block and blocks nothing, so `check` prints `allow` followed by the block it would give in enforce mode. Observe mode turns self-protection off too: an agent can edit the hook files and applygate's config while you trial it, so trial it where that is acceptable. After a few days, `applygate report` shows what it caught and `applygate suggest` proposes a config with your environments and their tiers. Review it, set `mode: enforce` in your user config (`~/.config/applygate/config.yaml`; a repository config can only add protection), and run `applygate doctor` to check the setup.
 
 applygate is pre-1.0. See [what has been verified](docs/project/ACCEPTANCE.md).
 
@@ -41,7 +41,7 @@ On the same 17 dangerous Terraform scenarios:
 | A competent hand-written Rego/regex policy | 14 / 17 |
 | **applygate** (protected tier) | **17 / 17** |
 
-The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 162 reproductions of the v0.6.0 security review are in `harness/pack_attack`.
+The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 250 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
 
 applygate is a check, not a sandbox. Pair it with plan-only credentials for agents; see [the threat model](docs/threat-model.md).
 
@@ -78,7 +78,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 
 `applygate init` installs the hooks for Claude Code and Codex. **Preview** hooks follow each agent's documentation but have not yet been tested inside the agent. Install one with `applygate hook install --agent NAME`, then check it: ask the agent to run `terraform destroy -auto-approve` in an empty directory, and applygate should block it. Only Claude Code and Copilot CLI can show you an "ask" prompt; on the other agents an ask is a block. Claude Code is trusted to prompt only in the permission modes where that was seen live (default and `bypassPermissions`); in `acceptEdits`, `plan`, `auto` and `dontAsk` an ask is a block. One-time approvals (`applygate approve ID`) are off by default, because an agent on the same machine can reach any terminal you can; turning them on in your user config trusts that no agent runs the approval in a way applygate does not recognise ([docs/policy.md](docs/policy.md) step 9). For every agent's details, see [docs/hosts.md](docs/hosts.md) (also `applygate hosts`).
 
-**MCP servers.** In Claude Code and Codex, a call to a known infrastructure MCP tool (AWS, HCP Terraform, Kubernetes, Helm, gcloud, az, or a server that runs shell commands) is judged as the command it is equivalent to, so a Terraform server's `destroy` gets the same verdict as `terraform destroy`. Other MCP calls are logged and allowed. The translations were written from each server's source code and have not been tested against the running servers; the list is in [docs/mcp.md](docs/mcp.md).
+**MCP servers.** In Claude Code and Codex, a call to a known infrastructure MCP tool (AWS, HCP Terraform, Kubernetes, Helm, gcloud, az, or a server that runs shell commands) is judged as the command it is equivalent to, so a Terraform server's `destroy` gets the same verdict as `terraform destroy`. Shell tools of other servers (`run_in_terminal`, `bash`, …) are judged as shell commands, and a call that names a guard file is blocked like a write to it. Other MCP calls are logged and allowed, or sent to the model judge when it is on. The translations were written from each server's source code and have not been tested against the running servers; the list is in [docs/mcp.md](docs/mcp.md).
 
 **No model needed.** applygate's rules are deterministic, work offline and decide every call they recognize. Calls they do not recognize (Pulumi, database clients, PaaS CLIs, inline SDK code, unknown scripts and MCP tools, file writes) are allowed.
 
@@ -120,7 +120,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 
 ## When something goes wrong
 
-- **If applygate hits an error it can handle** (bad config, unreadable input, internal error), it blocks when anything under the repository could be a protected or unknown environment, and allows otherwise. You can change this with `on_error`.
+- **If applygate hits an error it can handle** (a bad repository config, unreadable input, internal error), it blocks when anything under the repository could be a protected or unknown environment, and allows otherwise. You can change this with `on_error` in the user config. A user config that cannot be read always blocks, since its `on_error` is what is unknown.
 - **If a decision takes longer than 25 seconds,** it is cancelled and the command is blocked in every environment.
 - **If applygate cannot start at all,** the agent decides; see the table above. Where the call runs (Codex, Gemini CLI, Windsurf, Devin), use the agent's sandbox and approval settings as a second line, and run `applygate doctor` to confirm the hook binary is in place.
 - **Observe mode** never blocks, not even on errors.

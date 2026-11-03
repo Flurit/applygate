@@ -87,6 +87,36 @@ func (Cline) Pass() Output  { return Output{Stdout: clineOut(false, "")} }
 // prompt for a hook's ask ("" is an older version without the field).
 var claudeAskModes = map[string]bool{"": true, "default": true, "bypassPermissions": true}
 
+// caseClash rejects an event, or its tool_input, with two keys that differ
+// only in case (command and COMMAND). Go's decoder matches struct fields
+// without case, so it could read the other one than the host acts on.
+func caseClash(raw []byte) error {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(raw, &top) != nil {
+		return nil
+	}
+	check := func(m map[string]json.RawMessage) error {
+		seen := map[string]string{}
+		for k := range m {
+			if o, ok := seen[strings.ToLower(k)]; ok {
+				return fmt.Errorf("malformed hook event: keys %q and %q differ only in case", o, k)
+			}
+			seen[strings.ToLower(k)] = k
+		}
+		return nil
+	}
+	if err := check(top); err != nil {
+		return err
+	}
+	var ti map[string]json.RawMessage
+	for k, v := range top {
+		if strings.EqualFold(k, "tool_input") && json.Unmarshal(v, &ti) == nil {
+			return check(ti)
+		}
+	}
+	return nil
+}
+
 type hookInput struct {
 	SessionID      string          `json:"session_id"`
 	Cwd            string          `json:"cwd"`
@@ -117,6 +147,9 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 	var in hookInput
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return policy.Event{}, false, fmt.Errorf("malformed hook event: %w", err)
+	}
+	if err := caseClash(raw); err != nil {
+		return policy.Event{}, false, err
 	}
 	if in.HookEventName != "" && in.HookEventName != "PreToolUse" {
 		return policy.Event{}, false, nil
@@ -242,6 +275,9 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 	var in hookInput
 	if err := json.Unmarshal(raw, &in); err != nil {
 		return policy.Event{}, false, fmt.Errorf("malformed hook event: %w", err)
+	}
+	if err := caseClash(raw); err != nil {
+		return policy.Event{}, false, err
 	}
 	if in.HookEventName != "" && in.HookEventName != "PreToolUse" {
 		return policy.Event{}, false, nil

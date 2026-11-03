@@ -411,7 +411,9 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	}
 	cfg, err := config.Load(opt.UserConfig, ev.Cwd)
 	if err != nil {
-		return fail(nil, ev.Cwd, "config error: "+err.Error())
+		// A broken repository config: on_error and observe mode come from
+		// the user config, as for any other error.
+		return fail(userCfg, ev.Cwd, "config error: "+err.Error())
 	}
 	recoverCfg = cfg
 	entry.Mode = cfg.Mode

@@ -36,6 +36,10 @@ jobs:
   release:
     needs: test
     runs-on: ubuntu-latest
+    # Protection rules live on the environment in the repository settings
+    # (tags v* only, a required reviewer), so a workflow run cannot sign a
+    # release by itself.
+    environment: release
     permissions:
       contents: write # upload release assets
       id-token: write # keyless cosign signing and provenance attestation (OIDC)
@@ -54,7 +58,7 @@ jobs:
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
-          version: "~> v2"
+          version: "v2.19.0" # exact: a new goreleaser release does not change what gets signed
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

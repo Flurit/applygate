@@ -414,7 +414,9 @@ var (
 	knownAgents   = map[string]bool{"claude": true, "codex": true, "cursor": true, "copilot": true, "gemini": true, "windsurf": true, "devin": true, "opencode": true, "cline": true, "human": true}
 	knownModes    = map[string]bool{"enforce": true, "observe": true}
 	knownVerdicts = map[string]bool{"allow": true, "ask": true, "block": true}
-	semverRe      = regexp.MustCompile(`^v?\d{1,4}\.\d{1,4}\.\d{1,4}(-[0-9A-Za-z.]{1,32})?$`)
+	// A release version, with at most a standard pre-release tag: free
+	// text after the dash could carry anything (finding 2D12).
+	semverRe = regexp.MustCompile(`^v?\d{1,4}\.\d{1,4}\.\d{1,4}(-(alpha|beta|rc|dev)(\.?\d{1,3})?)?$`)
 )
 
 func enumOf(v string, known map[string]bool) string {

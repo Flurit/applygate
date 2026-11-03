@@ -12,6 +12,18 @@
   - **Limits:** nesting deeper than 2,000 levels is unresolved instead of crashing the process, and gzip output over the 256 KB cap is unknown instead of cut.
   - **`COPILOT_HOME`'s hook file** is a guard path.
 
+- **Red-team round 2 fixes, part 5** (data, supply chain, docs):
+  - **Redaction:** quoted multi-word values, `-p'x'`, `docker login -p`, `redis-cli -a`, `sshpass -p`, PGP private keys, JSON `Authorization`, Azure `AccountKey` and SAS `sig`, Vault `hvs.` and npm tokens, and values containing `$`. The log's notes and `matched` lines are redacted, and an approval request lists the programs a redacted command starts.
+  - **The log:** a line over 16 MB is counted and skipped instead of hiding every later entry from `report`, `suggest` and telemetry.
+  - **Events:** keys that differ only in case (`command` and `COMMAND`) make an event malformed.
+  - **Config errors:** a broken repository config follows the user config's `on_error` and mode; a user config that cannot be read still blocks.
+  - **User scope:** `init` and `hook install --scope user` follow `CLAUDE_CONFIG_DIR` and `CODEX_HOME`.
+  - **Telemetry:** the version is a release number or `other`.
+  - **The Action:** installs with its own `install.sh` instead of one fetched from a moving ref, accepts only a release tag as `version`, rejects a `binary` with a newline, and keeps workflow commands in plan text from running. `ci-plan-check.sh` uses a private temp file.
+  - **Releases and CI:** the release job runs in the `release` environment with an exact goreleaser version; checkouts do not keep credentials; `govulncheck` is pinned; `install.sh` and the plugin launcher download over HTTPS only; the documented verify command names the exact workflow identity.
+  - **`check --enforce`** exits by the verdict under observe mode, and the Terragrunt hook in `docs/ci.md` is one hook that judges a saved plan by its contents and anything else, `apply -destroy` included, as the command.
+  - **Docs:** observe mode turning self-protection off is stated; `doctor` names every ignored repository setting; `init`, MCP, "Not in v1", the contributor and harness docs are current; `docs/project/RELEASE.md` and `scripts/bump-version-refs.sh` cover the version pins at the tag.
+
 - **Red-team round 2 fixes, part 4** (MCP and the model judge):
   - **MCP:**
     - a call that fits several servers' tools is judged by every reading, and the strictest wins;

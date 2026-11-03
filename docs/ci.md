@@ -57,8 +57,11 @@ while a team is still tuning its config. An error (unreadable plan, config
 error, missing binary) always fails the job: the gate fails closed.
 
 Inputs: `plan` (required), `tier`, `fail-on`, `working-directory`,
-`terraform` (`tofu` for OpenTofu), `version` (release tag, default v0.5.0),
-and `binary` to skip the download and use a binary already on the runner.
+`terraform` (`tofu` for OpenTofu), `version` (a release tag such as v0.5.0,
+the default; anything else is an error), and `binary` to skip the download and
+use a binary already on the runner. The release is installed with the
+`install.sh` that comes with the action, at the ref your workflow pins, and its
+signature is required. Pin the action by commit SHA to fix both.
 `.github/workflows/action-check.yml` in this repository exercises the action
 on every push against two real AWS-provider plans.
 
@@ -86,29 +89,40 @@ case $rc in 0) ;; 4) echo "needs review" ;; 3) exit 1 ;; *) exit 1 ;; esac
 ## Terragrunt
 
 Terragrunt runs `before_hook`s before the Terraform command, and a failing
-hook aborts the run. Two hooks give a unit the plan gate and the destroy
-guard; put them in the shared `root.hcl` (or `terragrunt.hcl`) so every unit
-inherits them:
+hook aborts the run. One hook gives a unit the plan gate and the destroy
+guard; put it in the shared `root.hcl` (or `terragrunt.hcl`) so every unit
+inherits it:
 
 ```hcl
 terraform {
-  # Gate "terragrunt apply tfplan": judge the saved plan's contents for this
-  # unit's tier before Terraform applies it. The hook runs in the unit's
-  # working directory, where tfplan was written by "terragrunt plan -out=tfplan";
+  # Every apply and destroy is judged for this unit's tier before Terraform
+  # runs. "terragrunt apply tfplan" is judged by the saved plan's contents;
+  # anything else (apply without a plan, apply -destroy, destroy) is judged
+  # as the command it is, so a plan left over from an earlier run is never
+  # judged in place of the one that runs. --enforce makes the exit code
+  # follow the verdict even when your user config is in observe mode.
   # --cwd points tier resolution at the live directory (envs/prod/...).
-  before_hook "applygate_plan_gate" {
-    commands = ["apply"]
-    execute  = ["sh", "-c", "terraform show -json tfplan > tfplan.json && applygate plan-check --cwd '${get_terragrunt_dir()}' tfplan.json"]
-  }
-
-  # Refuse "terragrunt destroy" where the tier says so (block in protected,
-  # ask in standard, which is also a non-zero exit and aborts the run).
-  before_hook "applygate_destroy_guard" {
-    commands = ["destroy"]
-    execute  = ["applygate", "check", "--cwd", "${get_terragrunt_dir()}", "terraform destroy"]
+  before_hook "applygate_gate" {
+    commands = ["apply", "destroy"]
+    execute = ["sh", "-c", <<-EOT
+      set -eu
+      args='${join(" ", get_terraform_cli_args())}'
+      case " $args " in
+        *" tfplan "*)
+          terraform show -json tfplan > tfplan.json
+          applygate plan-check --cwd '${get_terragrunt_dir()}' tfplan.json ;;
+        *)
+          applygate check --enforce --no-judge --cwd '${get_terragrunt_dir()}' "terraform ${get_terraform_command()} $args" ;;
+      esac
+    EOT
+    ]
   }
 }
 ```
+
+This hook follows Terragrunt's documented `get_terraform_command()` and
+`get_terraform_cli_args()`; it has not been run against a live Terragrunt
+plan yet.
 
 Use the saved-plan flow the hook expects:
 

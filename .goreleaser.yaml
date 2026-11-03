@@ -66,7 +66,7 @@ signs:
   # ignores the old --output-signature/--output-certificate flags. The bundle
   # is uploaded next to the checksums as checksums.txt.sigstore.json. Verify:
   #   cosign verify-blob --bundle checksums.txt.sigstore.json \
-  #     --certificate-identity-regexp '^https://github.com/Flurit/applygate/' \
+  #     --certificate-identity "https://github.com/Flurit/applygate/.github/workflows/release.yml@refs/tags/<tag>" \
   #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   #     checksums.txt
   - id: checksums
