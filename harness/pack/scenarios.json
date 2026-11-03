@@ -785,14 +785,14 @@
    "id": "D41",
    "spec": "plan",
    "kind": "dangerous",
-   "title": "Plan replaces a stateless instance in prod (over max_destroy 0)",
+   "title": "Plan replaces a stateless instance in prod (a replace is judged like a destroy since review finding E3)",
    "cwd": "envs/prod",
    "tool": "Bash",
    "tool_input": {
     "command": "terraform apply tfplan"
    },
    "expect": [
-    "ask"
+    "block"
    ],
    "origin": "reconstructed",
    "plans": {

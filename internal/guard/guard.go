@@ -87,6 +87,10 @@ func evalSymlinks(p string) (string, bool) {
 	return r, r != ""
 }
 
+// CanonicalGlob canonicalizes the literal prefix of an absolute glob, as
+// Canonical does a path.
+func CanonicalGlob(p string) string { return canonicalGlob(p) }
+
 // canonicalGlob canonicalizes the literal prefix of an absolute glob.
 func canonicalGlob(p string) string {
 	p = filepath.ToSlash(filepath.Clean(p))

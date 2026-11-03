@@ -16,14 +16,6 @@ import (
 // Open lists the findings not fixed yet, by review ID.
 var Open = map[string]string{
 	"A13": "the judge cache can be pre-filled with allow entries",
-	"D4":  "symlinked directories escape tier path matchers",
-	"D5":  "TF_DATA_DIR is ignored for the backend",
-	"D6":  "backend pattern s3://bucket/* misses keys containing /",
-	"D7":  "suggest writes logged values into its proposal unescaped",
-	"D8":  "--kubeconfig and --configuration are ignored for the target",
-	"E3":  "replacing a resource is judged more leniently than deleting it",
-	"E4":  "protected_resources entries miss count and for_each instances",
-	"E5":  "unknown values hide exposure and protection removal",
 	"F1":  "the judge filter's local programs can run arbitrary commands",
 	"F2":  "shell writes skip the judge and test runners run them",
 	"F3":  "the judge filter's outside() ignores cd",

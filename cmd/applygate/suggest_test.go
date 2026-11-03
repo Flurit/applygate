@@ -16,7 +16,7 @@ func TestSuggestPrintsAProposalForTheRoot(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, errb.String())
 	}
 	y := out.String()
-	for _, want := range []string{"version: 1", "user config", "- name: examples", "paths: [\"examples/**\"]", "max_destroy: {protected: 0}"} {
+	for _, want := range []string{"version: 1", "user config", `- name: "examples"`, "paths: [\"examples/**\"]", "max_destroy: {protected: 0}"} {
 		if !strings.Contains(y, want) {
 			t.Errorf("missing %q in:\n%s", want, y)
 		}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -867,11 +868,38 @@ func (c *Config) Resolve(s Signals) Resolution {
 			best.Matched = append(best.Matched, why)
 		}
 	}
+	// A directory is matched as written and as it resolves (symlinks
+	// followed, case folded where the file system ignores it): an alias
+	// such as envs/dev/p -> ../prod and its target may be in different
+	// environments, and the stricter one wins.
+	var dirs []string
+	if s.Dir != "" {
+		dirs = append(dirs, filepath.ToSlash(s.Dir))
+		if filepath.IsAbs(s.Dir) {
+			if canon := guard.Canonical(s.Dir); canon != dirs[0] {
+				dirs = append(dirs, canon)
+			}
+		}
+	}
 	for _, e := range c.Environments {
 		m := e.Match
 		for _, p := range m.Paths {
-			if s.Dir != "" && (classify.MatchGlob(p, filepath.ToSlash(s.Dir)) || classify.MatchGlob(strings.TrimSuffix(p, "/**"), filepath.ToSlash(s.Dir))) {
-				consider(e.Name, e.Tier, "path "+p)
+			pats := []string{p}
+			if filepath.IsAbs(p) {
+				pats = append(pats, guard.CanonicalGlob(p))
+			}
+		match:
+			for _, d := range dirs {
+				for _, q := range pats {
+					if classify.MatchGlob(q, d) || classify.MatchGlob(strings.TrimSuffix(q, "/**"), d) {
+						why := "path " + p
+						if d != dirs[0] {
+							why += " (" + s.Dir + " resolves to " + d + ")"
+						}
+						consider(e.Name, e.Tier, why)
+						break match
+					}
+				}
 			}
 		}
 		for _, w := range m.Workspaces {
@@ -880,7 +908,7 @@ func (c *Config) Resolve(s Signals) Resolution {
 			}
 		}
 		for _, b := range m.Backends {
-			if s.Backend != "" && globEq(b, s.Backend) {
+			if s.Backend != "" && backendMatch(b, s.Backend) {
 				consider(e.Name, e.Tier, "backend "+s.Backend)
 			}
 		}
@@ -914,13 +942,25 @@ func (c *Config) Resolve(s Signals) Resolution {
 		}
 	}
 	if c.UseNameHints() {
-		rel := s.Dir
-		if c.Root != "" {
-			if r, err := filepath.Rel(c.Root, s.Dir); err == nil && !strings.HasPrefix(r, "..") {
-				rel = r
+		relOf := func(d string) string {
+			for _, root := range []string{c.Root, guard.Canonical(c.Root)} {
+				if root == "" || c.Root == "" {
+					continue
+				}
+				if r, err := filepath.Rel(root, d); err == nil && !strings.HasPrefix(r, "..") {
+					return r
+				}
+			}
+			return d
+		}
+		rel := relOf(s.Dir)
+		canonRel := ""
+		if len(dirs) > 1 {
+			if canonRel = relOf(dirs[1]); strings.EqualFold(canonRel, rel) {
+				canonRel = ""
 			}
 		}
-		hints := []struct{ what, v string }{{"path", rel}, {"workspace", s.Workspace}, {"backend", s.Backend}, {"AWS profile", s.AWSProfile}, {"backend config", s.BackendConfig},
+		hints := []struct{ what, v string }{{"path", rel}, {"resolved path", canonRel}, {"workspace", s.Workspace}, {"backend", s.Backend}, {"AWS profile", s.AWSProfile}, {"backend config", s.BackendConfig},
 			{"kube context", s.KubeContext}, {"GCP project", s.GCPProject}, {"Azure subscription", s.AzureSubscription}}
 		for _, k := range BackendHintKeys {
 			// Values already in the backend URL were checked above.
@@ -945,6 +985,27 @@ func (c *Config) Resolve(s Signals) Resolution {
 		return Resolution{Tier: t, Env: "unknown", Unknown: true, Matched: []string{"no environment matched; using default_tier " + string(t)}}
 	}
 	return best
+}
+
+// backendMatch matches a backend URL against a pattern in which * and **
+// match any text, / included (s3://bucket/* matches every key in the
+// bucket), and ? one character.
+func backendMatch(pattern, v string) bool {
+	var b strings.Builder
+	b.WriteString("^")
+	for _, r := range pattern {
+		switch r {
+		case '*':
+			b.WriteString(".*")
+		case '?':
+			b.WriteString(".")
+		default:
+			b.WriteString(regexp.QuoteMeta(string(r)))
+		}
+	}
+	b.WriteString("$")
+	re, err := regexp.Compile(b.String())
+	return err == nil && re.MatchString(v)
 }
 
 func globEq(pattern, v string) bool {

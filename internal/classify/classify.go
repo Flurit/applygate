@@ -42,10 +42,15 @@ type Action struct {
 	// Target is the cluster or cloud named on the command line: the kube
 	// context of kubectl (--context) and helm (--kube-context), the gcloud
 	// project (--project), the az subscription (--subscription).
-	Target   string
-	PlanFile string // for apply of a saved plan
-	Sub      string // engine subcommand, e.g. "destroy", "state rm"
-	Via      []string
+	Target string
+	// TargetEnv holds what the command line says about the CLI's own
+	// configuration (kubectl --kubeconfig, gcloud --configuration), as the
+	// environment variable that would say the same, for resolving the
+	// target when no --context or --project is given.
+	TargetEnv map[string]string
+	PlanFile  string // for apply of a saved plan
+	Sub       string // engine subcommand, e.g. "destroy", "state rm"
+	Via       []string
 	// BackendConfig holds the -backend-config values of an init (files or
 	// key=value pairs). Later commands in the same directory and command
 	// line run against the backend they describe, not the one recorded by
