@@ -263,8 +263,10 @@ func (a *analyzer) builtinOut(args []Word, st *state, in stdin) (string, bool) {
 		if err != nil {
 			return "", false
 		}
-		b, err := io.ReadAll(io.LimitReader(zr, maxDecodeBytes))
-		if err != nil {
+		// One byte past the cap: output that does not fit is not known,
+		// since what follows the cut could be the command.
+		b, err := io.ReadAll(io.LimitReader(zr, maxDecodeBytes+1))
+		if err != nil || len(b) > maxDecodeBytes {
 			return "", false
 		}
 		return string(b), true

@@ -48,7 +48,8 @@ What each host can do with the hook, as verified live, is the generated table in
 The v0.6.0 pre-release review ([review/v0.6.0](../review/v0.6.0)) left these open, by decision or because they need a live test. The next red-team round keeps this list current.
 
 - **Unknown wrappers around other CLIs.** A program applygate does not know that runs `aws`, `kubectl` or another CLI from its arguments (a team's own runner) is not seen through unless it is listed under `wrappers:`; only standalone `terraform`, `tofu` and `terragrunt` arguments trigger the backstop.
-- **Files written another way.** A file written by interpreter code (`open()` in Python) or by a program the analyzer does not model is read as it is on disk, not as unresolved.
+- **Files written another way.** A file written by interpreter code (`open()` in Python) or by a program the analyzer does not model is read as it is on disk, not as unresolved. Guard files are not affected: any program that names one is tampering unless it only reads ([threat-model.md](threat-model.md)).
+- **Guard files reached without naming them.** Default-deny looks at what a command names. A command that rewrites a guard file without naming it (`git checkout <branch>` to a commit with another `.applygate.yaml`, `git checkout-index -a`) is not caught by it; repository-config trust (next milestone) covers that.
 - **Code in a running REPL.** Input that an MCP shell server types into a running process is judged as a shell command, whatever the process is.
 - **The plan gate's own trust:** the `terraform` binary on the hook's `PATH`, a lock file committed with a replaced provider's hash, and the opt-in `preflight.live_state` pull, which is not provider-checked.
 - **Cursor's allow.** Under `failClosed`, applygate must print a permission for every call, so a call it does not judge gets `{"permission":"allow"}`. Whether that skips Cursor's own approval prompt is not documented and has not been tested live.

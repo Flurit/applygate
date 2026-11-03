@@ -37,6 +37,7 @@ import (
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/policy"
+	"github.com/Flurit/applygate/internal/safefile"
 )
 
 // Schema is the payload version.
@@ -75,7 +76,7 @@ func Path() string { return filepath.Join(config.UserDir(), fileName) }
 // Load reads the settings. A missing file means off.
 func Load() (Settings, error) {
 	var s Settings
-	b, err := os.ReadFile(Path())
+	b, err := safefile.ReadFile(Path())
 	if errors.Is(err, os.ErrNotExist) {
 		return s, nil
 	}
@@ -326,7 +327,7 @@ func Flush(ctx context.Context, logPath, version string, env map[string]string, 
 	defer unlock()
 
 	var entries []decisionlog.Entry
-	if f, err := os.Open(logPath); err == nil {
+	if f, err := safefile.OpenFile(logPath, os.O_RDONLY, 0); err == nil {
 		entries, _ = decisionlog.Read(f)
 		f.Close()
 	}

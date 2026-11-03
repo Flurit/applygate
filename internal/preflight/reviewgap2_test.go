@@ -28,7 +28,7 @@ func TestReview2S13GitConfigDoesNotRunInTheHook(t *testing.T) {
 	// The same git invocations the lock-file and provider checks make, without
 	// their timeout, so a slow machine cannot hide the hook.
 	_ = gitCommand(context.Background(), dir, "--no-optional-locks", "diff", "HEAD", "--", ".terraform.lock.hcl", "*.tf").Run()
-	_ = gitCommand(context.Background(), dir, "show", "HEAD:./.terraform.lock.hcl").Run()
+	_ = gitCommand(context.Background(), dir, "cat-file", "-p", "HEAD:./.terraform.lock.hcl").Run()
 	_, err := os.Stat(marker)
 	reviewgap.Check(t, "2S13", os.IsNotExist(err), "a program from the repository's git config ran inside the hook")
 }

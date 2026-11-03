@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Flurit/applygate/internal/policy"
+	"github.com/Flurit/applygate/internal/safefile"
 )
 
 // Cache keeps recent escalations (ask and block) so a call the agent
@@ -33,7 +34,7 @@ func DefaultCache(path string) Cache { return Cache{Path: path, TTL: 24 * time.H
 
 func (c Cache) load() map[string]cached {
 	m := map[string]cached{}
-	if b, err := os.ReadFile(c.Path); err == nil {
+	if b, err := safefile.ReadFile(c.Path); err == nil {
 		_ = json.Unmarshal(b, &m)
 	}
 	return m

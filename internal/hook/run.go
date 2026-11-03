@@ -354,8 +354,21 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		return pass // tools applygate does not inspect are not logged
 	}
 	var mcpNote string
+	var tr mcpmap.Result
 	if ev.Kind == policy.KindMCP {
-		tr, known := mcpmap.Rules().Translate(ev.Tool, ev.Args, ev.Cwd)
+		var known bool
+		tr, known = mcpmap.Rules().Translate(ev.Tool, ev.Args, ev.Cwd)
+		if !known {
+			// A tool outside the table that names a guard file is judged
+			// as a write to it, so it is blocked like the Write tool.
+			if gcfg, err := config.Load(opt.UserConfig, ev.Cwd); err == nil {
+				if p := policy.MCPGuardPath(gcfg, opt.Env, ev.Tool, ev.Cwd, ev.Args); p != "" {
+					ev.Kind, ev.Paths = policy.KindWrite, []string{p}
+					known = true
+					mcpNote = fmt.Sprintf("MCP tool %s names the guard file %s; judged as a write to it", mcpmap.ToolName(ev.Tool), p)
+				}
+			}
+		}
 		if !known {
 			// Other MCP calls are recorded, not judged, so nothing about
 			// them may block: a broken repository config still logs (to
@@ -383,6 +396,8 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		// A known infrastructure tool is judged as the command it runs.
 		// The server runs it in its own working directory, so without a
 		// directory argument the command's directory is unknown.
+	}
+	if ev.Kind == policy.KindMCP {
 		ev.Kind, ev.Command = policy.KindShell, tr.Command
 		ev.DirKnown = tr.Dir != ""
 		if tr.Dir != "" {

@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -310,38 +311,95 @@ func archiveStates(path string) []string {
 // LockfileDrift asks git whether .terraform.lock.hcl or module/provider
 // sources changed since HEAD. It runs git read-only with a short timeout and
 // returns nil when git or the repository is unavailable.
-// gitCommand is how the hook runs git in a repository.
+// gitCommand is how the hook runs git in a repository. The repository and
+// its config are the agent's to write, so git runs by an absolute path,
+// without the system and global config, and with the config keys that start
+// programs (fsmonitor, hooks, pagers) overridden; callers use plumbing that
+// runs no filters, diff drivers or textconv.
 func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	base := []string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat",
+		"-c", "core.sshCommand=false", "-c", "core.askPass=", "--no-pager"}
+	cmd := exec.CommandContext(ctx, gitPath(), append(base, args...)...)
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + os.Getenv("HOME"), "LANG=C", "GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1"}
 	return cmd
 }
 
+var gitBin struct {
+	once sync.Once
+	path string
+}
+
+// gitPath is git from the system directories first, so a git the agent
+// put earlier on PATH is not the one the hook runs.
+func gitPath() string {
+	gitBin.once.Do(func() {
+		for _, p := range []string{"/usr/bin/git", "/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"} {
+			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+				gitBin.path = p
+				return
+			}
+		}
+		gitBin.path, _ = exec.LookPath("git")
+		if gitBin.path == "" {
+			gitBin.path = "git"
+		}
+	})
+	return gitBin.path
+}
+
+// LockfileDrift reports lock-file and provider/module source changes since
+// the last commit in dir. It compares the committed blobs (git cat-file,
+// which runs no filters) with the files on disk, rather than running git
+// diff, which can start the repository's fsmonitor, textconv and filters.
 func LockfileDrift(dir string) *Finding {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := gitCommand(ctx, dir, "--no-optional-locks", "diff", "HEAD", "--no-color", "--no-ext-diff", "-U0", "--", ".terraform.lock.hcl", "*.tf")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if cmd.Run() != nil {
-		return nil
-	}
+	files, _ := filepath.Glob(filepath.Join(dir, "*.tf"))
+	files = append([]string{filepath.Join(dir, ".terraform.lock.hcl")}, files...)
 	var ev []string
-	file := ""
-	for _, l := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(l, "+++ b/") {
-			file = strings.TrimPrefix(l, "+++ b/")
+	for _, f := range files {
+		now, err := os.ReadFile(f)
+		if err != nil {
 			continue
 		}
-		if !strings.HasPrefix(l, "+") && !strings.HasPrefix(l, "-") || strings.HasPrefix(l, "+++") || strings.HasPrefix(l, "---") {
+		name := filepath.Base(f)
+		cmd := gitCommand(ctx, dir, "cat-file", "-p", "HEAD:./"+name)
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		if cmd.Run() != nil {
+			continue // not committed, or not a repository
+		}
+		if bytes.Equal(out.Bytes(), now) {
 			continue
 		}
-		body := strings.TrimSpace(l[1:])
-		if strings.HasSuffix(file, ".terraform.lock.hcl") || strings.HasPrefix(body, "source") || strings.HasPrefix(body, "version") && strings.HasSuffix(file, ".tf") {
-			ev = append(ev, file+": "+l)
+		old := map[string]bool{}
+		for _, l := range strings.Split(out.String(), "\n") {
+			old[l] = true
 		}
-		if len(ev) >= 8 {
-			break
+		cur := map[string]bool{}
+		for _, l := range strings.Split(string(now), "\n") {
+			cur[l] = true
+		}
+		var changed []string
+		for _, l := range strings.Split(string(now), "\n") {
+			if !old[l] {
+				changed = append(changed, "+"+l)
+			}
+		}
+		for _, l := range strings.Split(out.String(), "\n") {
+			if !cur[l] {
+				changed = append(changed, "-"+l)
+			}
+		}
+		for _, l := range changed {
+			body := strings.TrimSpace(l[1:])
+			if name == ".terraform.lock.hcl" && body != "" || strings.HasPrefix(body, "source") || strings.HasPrefix(body, "version") && strings.HasSuffix(name, ".tf") {
+				ev = append(ev, name+": "+l)
+			}
+			if len(ev) >= 8 {
+				break
+			}
 		}
 	}
 	if len(ev) == 0 {

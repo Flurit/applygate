@@ -8,7 +8,7 @@ func FileWrite(tool, path, dir string, opt Options) []Action {
 	p := absPath(dir, path, opt.Home)
 	base := Action{Engine: "file", Dir: dir, Command: tool + " " + p}
 	switch {
-	case opt.protected(p):
+	case opt.touches(p):
 		base.Class, base.Why = Tampering, tool+" edits guard file "+p
 	case isStateFile(p):
 		base.Class, base.Why, base.TouchesState = StateSurgery, tool+" edits state file "+p, true

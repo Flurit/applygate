@@ -17,6 +17,7 @@ import (
 
 	"github.com/Flurit/applygate/internal/classify"
 	"github.com/Flurit/applygate/internal/guard"
+	"github.com/Flurit/applygate/internal/safefile"
 	"github.com/Flurit/applygate/internal/shell"
 )
 
@@ -419,7 +420,7 @@ func LoadFile(path string) (*Config, error) {
 
 func merge(cfg *Config, path string, l layer) error {
 	repo := l != layerUser
-	b, err := os.ReadFile(path)
+	b, err := safefile.ReadFile(path)
 	if err != nil {
 		return err
 	}
@@ -728,6 +729,10 @@ func hostDirFiles() []string {
 	}
 	if d := os.Getenv("CODEX_HOME"); d != "" {
 		out = append(out, filepath.Join(d, "hooks.json"), filepath.Join(d, "config.toml"))
+	}
+	// hook install writes Copilot CLI's hook under COPILOT_HOME when set.
+	if d := os.Getenv("COPILOT_HOME"); d != "" {
+		out = append(out, filepath.Join(d, "hooks"), filepath.Join(d, "hooks", "**"), filepath.Join(d, "settings.json"))
 	}
 	return out
 }

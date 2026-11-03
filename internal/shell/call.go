@@ -41,6 +41,10 @@ func lits(ss ...string) []Word {
 // the enclosing shell state (mutated by cd, alias, and similar builtins).
 func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []string, depth int, in stdin) {
 	if len(args) == 0 {
+		// exec 5<>file: the redirections apply to the shell itself.
+		if len(redirs) > 0 && len(via) > 0 && via[len(via)-1] == "exec" {
+			a.res.Invocations = append(a.res.Invocations, Invocation{Dir: cmdSt.dir, Env: cmdSt.env(), Redirs: redirs, Via: append([]string(nil), via...)})
+		}
 		return
 	}
 	if depth > a.opt.MaxDepth {
