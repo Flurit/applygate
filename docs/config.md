@@ -25,7 +25,7 @@ version: 1
 mode: enforce            # observe | enforce; observe only from the user config
 strict: true             # unknown environment = protected
 default_tier: standard   # tier for unknown environments when strict is false
-on_error: auto           # auto (block in protected/unknown, allow elsewhere) | block | allow
+on_error: auto           # auto (block when anything under the repository root is protected/unknown) | block | allow
 name_hints: true         # treat prod/production/prd/live as a whole word in names (paths, workspaces, profiles, backend bucket/key/workspace_key_prefix/dynamodb_table/address) as protected; non-/not-/no-/pre- before the word and -like/-test/-sandbox after it cancel the hint (docs/policy.md step 4)
 unknown_dir: most_protected   # most_protected | session_root: how a command is judged when the host does not report its directory (Codex 0.165.0); a repository config may set most_protected but not session_root
 approvals: false         # user config only: on agents that cannot show an ask prompt, let a person allow one asked call with `applygate approve ID` (docs/policy.md step 9). Off by default: on one machine the agent can reach any terminal the person can, so turning this on trusts that no agent runs `applygate approve` in a way applygate does not recognise

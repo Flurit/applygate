@@ -29,6 +29,30 @@
   - **A planfile or `.terraform` written earlier in the same command.**
     - `terraform plan -destroy -out=tfplan && terraform apply tfplan` gets a critical `plan-unverifiable` finding instead of being judged on the old file.
     - A command after a step that rewrites `.terraform` is judged as protected.
+  - **The shell analyzer follows what the shell would run, or says it cannot** (findings C1 to C14, H1). Before, each of these let `terraform destroy` through in a protected directory:
+    - **Names:** program names are compared without case and without `.exe` (`TERRAFORM destroy` runs terraform on macOS).
+    - **Words:** a word the analyzer cannot reproduce exactly is unresolved: an unquoted glob, zsh's `=name`, `$'\u…'`, and `echo` of a backslash without `-e` or `-E`. `echo -e` decodes `\0NNN`, and `printf --` is understood.
+    - **State:** a background statement (`cd ../dev &`) runs on a copy. A function body runs in the caller's shell, as bash does, with its `local` variables restored. `pushd`/`popd` keep a stack. `shift` and `set --` change the positional parameters. The variables `read`, `printf -v`, `mapfile`, `getopts` assign are unresolved, and after `declare -n` no variable is known.
+    - **Constructs:** case words and patterns, declaration arguments, C-style `for` headers, `${x:-$(…)}`, arithmetic and `trap 'cmd' EXIT` are walked.
+    - **Placeholders:** `xargs -I`/`-i`/`-J` and GNU `parallel` substitute known input, and anything else is unresolved. `parallel` with no command runs each input line.
+    - **Interpreters:** options are parsed per language: `python3 -Ic`, `perl -we`, `node --eval`, `python3 -u script.py`, PowerShell `-EncodedCommand`, and so on. `awk`, `lua`, `tclsh`, `Rscript`, `julia` and `bun` are added. Code that cannot be resolved is a problem, and without a code argument the arguments themselves are searched.
+    - **Programs that run commands through their own options:**
+      - git: `-c alias.x='!…'`, `core.pager` and other command keys, `GIT_SSH_COMMAND`, `bisect run`, `rebase -x`, `submodule foreach`;
+      - `ssh`/`scp`/`sftp -o ProxyCommand`, `rsync -e`, `flock … -c`, `su`/`runuser -c`;
+      - `fish`, `csh`, `tcsh` and other shells' `-c`;
+      - `conda`/`mamba`/`uv`/`poetry run`, `nix run`, and `env -S"…"`.
+    - **Directories:** Terragrunt's `--working-dir`, `--terragrunt-working-dir`, `TG_WORKING_DIR` and `TERRAGRUNT_WORKING_DIR` are honoured anywhere. A command whose directory the analyzer loses (an unresolved `-chdir` or `cd`, a `cd` into a directory linked, moved or extracted earlier in the command) is judged at the most protected tier under the repository root.
+    - **make:** `-p` runs recipes. Under `-n`/`-q`/`-t`, `+` and `$(MAKE)` lines are still analyzed. `--directory=`, `--file=`, `-fFILE` and `include` are read, and `MAKEFILES`, `MAKEFLAGS` and `--eval` cannot be analyzed.
+    - **Written in the same command:** a script, sourced file, `$(cat f)` input or makefile written by an earlier step (a redirect, `tee`, `cp`, `curl -o`, `sed -i`, `git checkout`, an extraction) is unresolved instead of read as it is on disk.
+    - **Failures:** a parse error, an exhausted statement budget or work limit, and an internal error under `on_error: auto` are judged at the most protected tier under the repository root, not at the starting directory. Lines before a syntax error are analyzed, since a shell runs them.
+    - **Aliases** are parsed as shell text, and an alias that names itself (`alias terraform='terraform destroy'`) expands once.
+    - **Cloud CLIs:**
+      - The verb, not any word, decides, and a read word never turns a write into a read.
+      - `rm`, `remove` and `delete-*` are destructive.
+      - Flag values are skipped (`--verbosity info`).
+      - `TF_CLI_ARGS` and `TF_CLI_ARGS_<subcommand>` are part of the command.
+      - `gsutil` is classified.
+      - `kubectl --cluster`/`--server` and `helm --kube-apiserver` name the target.
 - **Behaviour changes:**
   - **One-time approvals are off by default.** Only the user config turns them on. The approval key now binds write content and full MCP arguments, the store's lock never waits more than about half a second, and the approve prompt escapes control characters.
   - **`applygate apply` has no `--yes` and no `--plan-json`.** An ask outside a terminal is refused; in CI, gate with `applygate plan-check` and run the engine yourself.
@@ -37,6 +61,8 @@
     - **`applygate init`** writes the repository config without a mode and starts the observe-mode trial in the user config.
     - **`applygate suggest`** no longer proposes a mode.
     - **Path patterns:** a repository's `**` patterns are rooted at its own directory.
+  - **`on_error: auto` judges an error at the most protected tier under the repository root.** An internal error from a disposable directory now blocks when the repository has a protected environment.
+  - **Stricter shell analysis asks more often in protected tiers.** A command that runs a file it wrote itself, or that globs or uses `=name` in its program name, is asked about there. On the 162 recorded agent-trial calls, one verdict changed: installing a freshly downloaded `terragrunt` and running `--version` in a directory the name hints mark as production is now an ask.
 - Model judge, opt-in (`judge:` in the user config, docs/judge.md). A call the rules let through without recognizing anything is sent to a language model, and the call gets the stricter of the two verdicts. That covers a shell command that starts a program outside a short list of local ones, every file write or edit (with up to 4,000 characters of content), and an MCP call to a tool the known-tool table does not cover.
   - **Backends, with no default model.** The user chooses one:
     - any OpenAI-compatible chat completions endpoint with their own key (`base_url`, `model`, `api_key_env`), local servers included;

@@ -116,7 +116,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 
 ## When something goes wrong
 
-- **If applygate hits an error it can handle** (bad config, unreadable input, internal error), it blocks in protected and unknown environments and allows elsewhere. You can change this with `on_error`.
+- **If applygate hits an error it can handle** (bad config, unreadable input, internal error), it blocks when anything under the repository could be a protected or unknown environment, and allows otherwise. You can change this with `on_error`.
 - **If a decision takes longer than 25 seconds,** it is cancelled and the command is blocked in every environment.
 - **If applygate cannot start at all,** the agent decides; see the table above. Where the call runs (Codex, Gemini CLI, Windsurf, Devin), use the agent's sandbox and approval settings as a second line, and run `applygate doctor` to confirm the hook binary is in place.
 - **Observe mode** never blocks, not even on errors.

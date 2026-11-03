@@ -1771,7 +1771,7 @@
    "cwd": "envs/dev",
    "tool": "Bash",
    "tool_input": {
-    "command": "$'cd ../prod && terraform destroy -auto-approve\\n)'"
+    "command": "cd ../prod && terraform destroy -auto-approve\n)"
    },
    "expect": [
     "block",

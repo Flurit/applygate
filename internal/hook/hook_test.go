@@ -124,7 +124,10 @@ func TestFailureBehavior(t *testing.T) {
 		{"malformed JSON fails closed", "enforce", "auto", "prod", "{not json", nil, "block(exit2)"},
 		{"missing tool_name fails closed", "enforce", "auto", "prod", `{"hook_event_name":"PreToolUse","cwd":"/"}`, nil, "block(exit2)"},
 		{"panic in protected tier blocks", "enforce", "auto", "prod", "", boom, "block(exit2)"},
-		{"panic in disposable tier allows (auto)", "enforce", "auto", "dev", "", boom, "allow"},
+		// The command was never analyzed, so it could reach prod from dev
+		// (review finding H1): auto judges it at the most protected tier
+		// under the repository root.
+		{"panic in disposable tier blocks when the root holds prod (auto)", "enforce", "auto", "dev", "", boom, "block(exit2)"},
 		{"panic with on_error block blocks in dev", "enforce", "block", "dev", "", boom, "block(exit2)"},
 		{"panic with on_error allow allows in prod", "enforce", "allow", "prod", "", boom, "allow"},
 		{"timeout in protected tier blocks", "enforce", "auto", "prod", "", slow, "block(exit2)"},

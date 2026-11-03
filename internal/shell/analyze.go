@@ -64,6 +64,11 @@ type Problem struct {
 	// Guard is the guard file opaque text names, if any: code that names
 	// one is guard tampering whatever else it does.
 	Guard string
+	// AnyDir is set when the analysis stopped (a parse error, the statement
+	// budget or the work limit): what it did not see may run in any
+	// directory, so the problem is judged at the most protected tier the
+	// command could reach, not at the directory it started in.
+	AnyDir bool
 }
 
 // Result is the outcome of Analyze.
@@ -142,6 +147,14 @@ type state struct {
 	dir      string
 	funcs    map[string]*syntax.Stmt
 	aliases  map[string]string
+	dirStack []string // pushd's stack, most recent last
+	// locals names the variables declared local in the running function
+	// body, with the value each had before; nil outside a function.
+	locals map[string]*value
+	// nameref is set once declare -n or local -n has run, or a declaration
+	// assigned a variable whose name is built at run time: any variable may
+	// then have changed, so no variable value is known.
+	nameref bool
 }
 
 func newState(opt Options) *state {
@@ -177,6 +190,13 @@ func (s *state) clone() *state {
 	for k, v := range s.aliases {
 		c.aliases[k] = v
 	}
+	c.dirStack = slices.Clone(s.dirStack)
+	if s.locals != nil {
+		c.locals = make(map[string]*value, len(s.locals))
+		for k, v := range s.locals {
+			c.locals[k] = v
+		}
+	}
 	return &c
 }
 
@@ -192,6 +212,7 @@ func (s *state) childState() *state {
 	c.funcs = map[string]*syntax.Stmt{}
 	c.params = nil
 	c.paramsOK = true
+	c.dirStack, c.locals = nil, nil
 	return c
 }
 
@@ -213,6 +234,14 @@ type analyzer struct {
 	budget int // statements left to walk
 	work   int // word parts and output evaluations done
 	quiet  int // >0 while resolving a word only for its value
+	// noGlob is >0 while resolving a word the shell does not glob: a
+	// here-document body or an assignment value.
+	noGlob int
+	// written holds the paths earlier steps of the command write
+	// (written.go); writtenUnknown is set when a step writes to a path
+	// that cannot be resolved.
+	written        map[string]writeKind
+	writtenUnknown bool
 }
 
 const maxWork = 50000
@@ -239,6 +268,12 @@ func (a *analyzer) problem(st *state, via []string, text, reason string) {
 	})
 }
 
+// unbounded records a problem after which the analysis stopped.
+func (a *analyzer) unbounded(st *state, via []string, text, reason string) {
+	a.problem(st, via, text, reason)
+	a.res.Problems[len(a.res.Problems)-1].AnyDir = true
+}
+
 func (a *analyzer) note(text string) {
 	if !slices.Contains(a.res.Notes, text) {
 		a.res.Notes = append(a.res.Notes, text)
@@ -248,12 +283,23 @@ func (a *analyzer) note(text string) {
 // source parses and walks a shell program.
 func (a *analyzer) source(src string, st *state, via []string, depth int) {
 	if depth > a.opt.MaxDepth {
-		a.problem(st, via, src, "nesting deeper than the analyzer follows")
+		a.unbounded(st, via, src, "nesting deeper than the analyzer follows")
 		return
 	}
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
 	if err != nil {
-		a.problem(st, via, src, "could not parse as shell: "+err.Error())
+		// A shell runs the lines before a syntax error: walk them too.
+		var pe syntax.ParseError
+		if errors.As(err, &pe) && pe.Pos.Line() > 1 {
+			lines := strings.SplitAfter(src, "\n")
+			before := strings.Join(lines[:min(int(pe.Pos.Line())-1, len(lines))], "")
+			if g, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(before), ""); err == nil {
+				for _, s := range g.Stmts {
+					a.stmt(s, st, via, depth, stdin{})
+				}
+			}
+		}
+		a.unbounded(st, via, src, "could not parse as shell: "+err.Error())
 		return
 	}
 	for _, s := range f.Stmts {
@@ -274,15 +320,21 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 	a.budget--
 	if a.budget < 0 {
 		if a.budget == -1 {
-			a.problem(st, via, "", "command too large to analyze")
+			a.unbounded(st, via, "", "command too large to analyze")
 		}
 		return
+	}
+	if s.Background {
+		// cmd & runs in a subshell: its cd and assignments stay there.
+		st = st.clone()
 	}
 	var redirs []Redir
 	for _, r := range s.Redirs {
 		switch r.Op {
 		case syntax.Hdoc, syntax.DashHdoc:
+			a.noGlob++
 			w := a.word(r.Hdoc, st, via, depth)
+			a.noGlob--
 			in = stdin{text: w.Text, known: w.Resolved, present: true, desc: "here-document"}
 		case syntax.WordHdoc:
 			w := a.word(r.Word, st, via, depth)
@@ -291,7 +343,7 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			w := a.word(r.Word, st, via, depth)
 			in = stdin{present: true, desc: "file " + w.Text}
 			if w.Resolved {
-				if b, err := a.opt.ReadFile(a.abs(st, w.Text)); err == nil {
+				if b, err := a.read(st, w.Text); err == nil {
 					in.text, in.known = string(b), true
 				}
 			}
@@ -302,6 +354,13 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			redirs = append(redirs, Redir{Op: r.Op.String(), Target: w, Write: write})
 		}
 	}
+	defer func() {
+		for _, r := range redirs {
+			if r.Write && r.Target.Text != "/dev/null" && !strings.HasPrefix(r.Target.Text, "&") {
+				a.wrote(st, r.Target, wroteFile)
+			}
+		}
+	}()
 	switch c := s.Cmd.(type) {
 	case *syntax.CallExpr:
 		a.callExpr(c, redirs, st, via, depth, in)
@@ -346,10 +405,16 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 				return
 			}
 			st.vars[wi.Name.Value] = value{}
+		} else {
+			a.substitutionsIn(c.Loop, st, via, depth)
 		}
 		a.stmts(c.Do, st, via, depth)
 	case *syntax.CaseClause:
+		a.word(c.Word, st, via, depth)
 		for _, it := range c.Items {
+			for _, p := range it.Patterns {
+				a.substitutionsIn(p, st, via, depth)
+			}
 			a.stmts(it.Stmts, st, via, depth)
 		}
 	case *syntax.FuncDecl:
@@ -360,22 +425,7 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 		}
 		st.funcs[c.Name.Value] = c.Body
 	case *syntax.DeclClause:
-		export := c.Variant.Value == "export"
-		for _, as := range c.Args {
-			if as.Name == nil {
-				continue
-			}
-			if as.Naked {
-				if export {
-					st.exported[as.Name.Value] = true
-				}
-				continue
-			}
-			a.assign(as, st, via, depth)
-			if export {
-				st.exported[as.Name.Value] = true
-			}
-		}
+		a.declClause(c, st, via, depth)
 	case *syntax.TimeClause:
 		a.stmt(c.Stmt, st, via, depth, in)
 	case *syntax.CoprocClause:
@@ -387,6 +437,7 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 		a.substitutionsIn(s, st, via, depth)
 	case nil:
 	default:
+		a.substitutionsIn(c, st, via, depth)
 		a.problem(st, via, nodeText(s), fmt.Sprintf("unsupported shell construct %T", c))
 	}
 }
@@ -406,6 +457,82 @@ func (a *analyzer) substitutionsIn(n syntax.Node, st *state, via []string, depth
 	})
 }
 
+// declClause handles declare, typeset, local, export, readonly and
+// nameref. Options apply to the names after them; -n makes a name refer to
+// another variable, and a name built at run time could be any variable.
+func (a *analyzer) declClause(c *syntax.DeclClause, st *state, via []string, depth int) {
+	variant := c.Variant.Value
+	export := variant == "export"
+	ref := variant == "nameref"
+	// Inside a function, local, declare and typeset make a local variable.
+	local := st.locals != nil && (variant == "local" || variant == "declare" || variant == "typeset")
+	for _, as := range c.Args {
+		if as.Name == nil {
+			if as.Value == nil {
+				continue
+			}
+			w := a.word(as.Value, st, via, depth)
+			switch {
+			case !w.Resolved:
+				st.nameref = true
+			case strings.HasPrefix(w.Text, "-") || strings.HasPrefix(w.Text, "+"):
+				on := w.Text[0] == '-'
+				for _, f := range w.Text[1:] {
+					switch f {
+					case 'n':
+						ref = ref || on
+					case 'x':
+						export = export || on
+					case 'g':
+						local = local && !on
+					}
+				}
+			default:
+				name, val, eq := strings.Cut(w.Text, "=")
+				a.declare(name, st, local)
+				if eq {
+					st.vars[name] = value{text: val, ok: true}
+				}
+				if export {
+					st.exported[name] = true
+				}
+				st.nameref = st.nameref || ref
+			}
+			continue
+		}
+		name := as.Name.Value
+		a.declare(name, st, local)
+		if ref {
+			st.nameref = true
+		}
+		if as.Naked {
+			if local {
+				st.vars[name] = value{ok: true}
+			}
+		} else {
+			a.assign(as, st, via, depth)
+		}
+		if export {
+			st.exported[name] = true
+		}
+	}
+}
+
+// declare records a function's local variable with the value it had before.
+func (a *analyzer) declare(name string, st *state, local bool) {
+	if !local || st.locals == nil {
+		return
+	}
+	if _, seen := st.locals[name]; seen {
+		return
+	}
+	if v, ok := st.vars[name]; ok {
+		st.locals[name] = &v
+	} else {
+		st.locals[name] = nil
+	}
+}
+
 func (a *analyzer) assign(as *syntax.Assign, st *state, via []string, depth int) {
 	if as.Array != nil || as.Index != nil {
 		st.vars[as.Name.Value] = value{}
@@ -414,7 +541,9 @@ func (a *analyzer) assign(as *syntax.Assign, st *state, via []string, depth int)
 	}
 	var w Word
 	if as.Value != nil {
+		a.noGlob++
 		w = a.word(as.Value, st, via, depth)
+		a.noGlob--
 	} else {
 		w = Word{Resolved: true}
 	}
@@ -591,7 +720,7 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 	a.work++
 	if a.work > maxWork {
 		if a.work == maxWork+1 {
-			a.res.Problems = append(a.res.Problems, Problem{Text: "", Reason: "command too complex to analyze", Dir: st.dir})
+			a.res.Problems = append(a.res.Problems, Problem{Text: "", Reason: "command too complex to analyze", Dir: st.dir, AnyDir: true})
 		}
 		mark()
 		return
@@ -603,6 +732,17 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 			b.WriteString(unescapeDbl(v))
 			return
 		}
+		if i := globAt(v); a.noGlob == 0 && (i >= 0 || first && len(v) > 1 && v[0] == '=') {
+			// The shell expands a glob against the file system, and zsh
+			// expands =name to the path of name: neither is known here.
+			if i < 0 {
+				i = 0
+			}
+			b.WriteString(unescapeLit(v[:i]))
+			mark()
+			b.WriteString(unescapeLit(v[i:]))
+			return
+		}
 		v = unescapeLit(v)
 		if first && (v == "~" || strings.HasPrefix(v, "~/")) {
 			if home, ok := a.opt.Env["HOME"]; ok {
@@ -612,7 +752,11 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 		b.WriteString(v)
 	case *syntax.SglQuoted:
 		if x.Dollar {
-			b.WriteString(ansiC(x.Value))
+			v, ok := ansiC(x.Value)
+			if !ok {
+				mark()
+			}
+			b.WriteString(v)
 		} else {
 			b.WriteString(x.Value)
 		}
@@ -621,6 +765,10 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 			a.part(q, st, via, depth, b, mark, false, true)
 		}
 	case *syntax.ParamExp:
+		if a.quiet == 0 && (x.Exp != nil || x.Repl != nil || x.Slice != nil || x.Index != nil) {
+			// ${x:-$(cmd)} and ${a[$(cmd)]} run cmd.
+			a.substitutionsIn(x, st, via, depth)
+		}
 		v, ok := a.param(x, st)
 		if ok {
 			b.WriteString(v)
@@ -642,9 +790,22 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 		}
 		mark()
 	case *syntax.ExtGlob:
+		mark()
 		b.WriteString(x.Op.String() + x.Pattern.Value + ")")
 	default:
-		// Arithmetic and anything else: not resolved statically.
+		// Arithmetic and anything else: not resolved statically, but any
+		// command substitution inside still runs.
+		if a.quiet == 0 {
+			if be, ok := p.(*syntax.BraceExp); ok {
+				// syntax.Walk does not know brace expansions; walk each
+				// element's words.
+				for _, e := range be.Elems {
+					a.substitutionsIn(e, st, via, depth)
+				}
+			} else {
+				a.substitutionsIn(p, st, via, depth)
+			}
+		}
 		mark()
 	}
 }
@@ -662,6 +823,9 @@ func (a *analyzer) param(x *syntax.ParamExp, st *state) (string, bool) {
 		return "", false
 	}
 	name := x.Param.Value
+	if st.nameref {
+		return "", false
+	}
 	if v, ok := st.vars[name]; ok {
 		return v.text, v.ok
 	}
@@ -800,8 +964,28 @@ func unescapeDbl(s string) string {
 	return b.String()
 }
 
-// ansiC decodes the body of a $'...' string.
-func ansiC(s string) string {
+// globAt returns the index of the first unescaped glob character in an
+// unquoted literal (*, ?, or a [ closed later in the word), or -1.
+func globAt(s string) int {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++
+		case '*', '?':
+			return i
+		case '[':
+			if strings.Contains(s[i+1:], "]") {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// ansiC decodes the body of a $'...' string. ok is false for escapes whose
+// result depends on the locale or that it does not model (\u, \U, \c).
+func ansiC(s string) (string, bool) {
+	ok := true
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -843,11 +1027,19 @@ func ansiC(s string) string {
 				n++
 			}
 			b.WriteByte(byte(v))
+		case 'u', 'U', 'c':
+			ok = false
+			b.WriteByte('\\')
+			b.WriteByte(s[i])
+		case '\\', '\'', '"', '?':
+			b.WriteByte(s[i])
 		default:
+			// Bash keeps the backslash of an escape it does not know.
+			b.WriteByte('\\')
 			b.WriteByte(s[i])
 		}
 	}
-	return b.String()
+	return b.String(), ok
 }
 
 func isHex(c byte) bool {

@@ -12,9 +12,25 @@ import (
 // the invocation and the classifier falls back to the target name.
 func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) bool {
 	dir := cmdSt.dir
-	file := ""
+	var files []string
 	vars := map[string]string{}
 	var targets []string
+	// Under -n, -q and -t make runs only the recipe lines marked + or that
+	// use $(MAKE). -p prints its database and still runs everything.
+	dry := false
+	for _, k := range []string{"MAKEFILES", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS"} {
+		if v, ok := cmdSt.vars[k]; ok && cmdSt.exported[k] && (v.text != "" || !v.ok) {
+			a.problem(st, via, k+"="+v.text+" "+joinWords(args), k+" in the environment changes what make reads or does; it cannot be analyzed")
+			return true
+		}
+	}
+	setDir := func(d string) {
+		if filepath.IsAbs(d) {
+			dir = d
+		} else if dir != "" {
+			dir = filepath.Join(dir, d)
+		}
+	}
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
 		w := rest[i]
@@ -23,26 +39,44 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 			a.problem(st, via, joinWords(args), "make argument cannot be resolved statically")
 			return true
 		}
+		next := func() (string, bool) {
+			if i+1 < len(rest) {
+				i++
+				return rest[i].Text, rest[i].Resolved
+			}
+			return "", false
+		}
+		name, val, eq := strings.Cut(t, "=")
 		switch {
-		case t == "-n" || t == "--dry-run" || t == "--just-print" || t == "--recon" || t == "-p" || t == "-q" || t == "--question":
-			return true // prints or queries only
+		case t == "-n" || t == "--dry-run" || t == "--just-print" || t == "--recon" || t == "-q" || t == "--question" || t == "-t" || t == "--touch":
+			dry = true
 		case t == "-C" || t == "--directory":
-			if i+1 < len(rest) {
-				dir = filepath.Join(dir, rest[i+1].Text)
-				if filepath.IsAbs(rest[i+1].Text) {
-					dir = rest[i+1].Text
-				}
-				i++
+			if d, ok := next(); ok {
+				setDir(d)
 			}
+		case strings.HasPrefix(t, "--") && eq && name == "--directory":
+			setDir(val)
 		case strings.HasPrefix(t, "-C") && len(t) > 2:
-			dir = filepath.Join(dir, t[2:])
+			setDir(t[2:])
 		case t == "-f" || t == "--file" || t == "--makefile":
-			if i+1 < len(rest) {
-				file = rest[i+1].Text
-				i++
+			if f, ok := next(); ok {
+				files = append(files, f)
 			}
-		case t == "-j" || t == "-l" || t == "-o" || t == "-W" || t == "-I":
+		case strings.HasPrefix(t, "--") && eq && (name == "--file" || name == "--makefile"):
+			files = append(files, val)
+		case strings.HasPrefix(t, "-f") && len(t) > 2 && !strings.HasPrefix(t, "--"):
+			files = append(files, t[2:])
+		case t == "-j" || t == "-l" || t == "-o" || t == "-W" || t == "-I" || t == "--eval" || t == "-E":
+			if t == "--eval" || t == "-E" {
+				a.problem(st, via, joinWords(args), "make --eval adds makefile text; it cannot be analyzed")
+				return true
+			}
 			i++
+		case strings.HasPrefix(t, "--eval="):
+			a.problem(st, via, joinWords(args), "make --eval adds makefile text; it cannot be analyzed")
+			return true
+		case strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && strings.ContainsAny(t[1:], "nqt") && strings.Trim(t[1:], "nqtksiBeSrRwp") == "":
+			dry = true
 		case strings.HasPrefix(t, "-"):
 		case strings.Contains(t, "="):
 			k, v, _ := strings.Cut(t, "=")
@@ -56,17 +90,57 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 	}
 	var src []byte
 	var err error
-	if file != "" {
-		src, err = a.opt.ReadFile(filepath.Join(dir, file))
+	read := func(f string) ([]byte, error) {
+		if !filepath.IsAbs(f) {
+			f = filepath.Join(dir, f)
+		}
+		return a.read(cmdSt, f)
+	}
+	if len(files) > 0 {
+		for _, f := range files {
+			b, e := read(f)
+			if e != nil {
+				err = e
+				break
+			}
+			src = append(append(src, b...), '\n')
+		}
 	} else {
 		for _, n := range []string{"GNUmakefile", "makefile", "Makefile"} {
-			if src, err = a.opt.ReadFile(filepath.Join(dir, n)); err == nil {
+			if src, err = read(n); err == nil {
 				break
 			}
 		}
 	}
+	if errorsIsWritten(err) {
+		a.problem(st, via, joinWords(args), "make reads a makefile that "+err.Error())
+		return true
+	}
 	if err != nil {
 		return false
+	}
+	// include, -include and sinclude pull other makefiles in.
+	for n, seen := 0, map[string]bool{}; n < 8; n++ {
+		m := makeInclude.FindAllStringSubmatch(string(src), -1)
+		added := false
+		for _, inc := range m {
+			for _, f := range strings.Fields(inc[2]) {
+				if seen[f] || strings.Contains(f, "$") {
+					continue
+				}
+				seen[f] = true
+				if b, e := read(f); e == nil {
+					src = append(append(src, '\n'), b...)
+					added = true
+				} else if inc[1] == "" {
+					a.problem(st, via, joinWords(args), "make includes "+f+", which cannot be read: "+e.Error())
+					return true
+				}
+			}
+		}
+		if !added {
+			break
+		}
 	}
 	mf := parseMakefile(string(src))
 	for k, v := range vars {
@@ -92,6 +166,10 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 			visit(mf.expand(p), d+1)
 		}
 		for _, line := range r.recipe {
+			prefix := line[:len(line)-len(strings.TrimLeft(line, "@-+ \t"))]
+			if dry && !strings.Contains(prefix, "+") && !strings.Contains(line, "$(MAKE)") && !strings.Contains(line, "${MAKE}") {
+				continue
+			}
 			line = strings.TrimLeft(line, "@-+ \t")
 			line = mf.expand(line)
 			child := cmdSt.childState()
@@ -117,9 +195,10 @@ type makefile struct {
 }
 
 var (
-	makeAssign = regexp.MustCompile(`^(?:export\s+|override\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*(\?=|:=|::=|\+=|=)\s*(.*)$`)
-	makeRuleRe = regexp.MustCompile(`^([^:=#\t][^:=#]*?)\s*::?\s*([^=].*)?$`)
-	makeVarRef = regexp.MustCompile(`\$[({]([A-Za-z_][A-Za-z0-9_.-]*)[)}]`)
+	makeInclude = regexp.MustCompile(`(?m)^(-|s)?include\s+(.+)$`)
+	makeAssign  = regexp.MustCompile(`^(?:export\s+|override\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*(\?=|:=|::=|\+=|=)\s*(.*)$`)
+	makeRuleRe  = regexp.MustCompile(`^([^:=#\t][^:=#]*?)\s*::?\s*([^=].*)?$`)
+	makeVarRef  = regexp.MustCompile(`\$[({]([A-Za-z_][A-Za-z0-9_.-]*)[)}]`)
 )
 
 func parseMakefile(src string) *makefile {

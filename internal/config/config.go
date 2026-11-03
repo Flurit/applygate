@@ -965,6 +965,16 @@ func globEq(pattern, v string) bool {
 // considered: only the config decides what is under the root. agent names
 // the host for the message.
 func (c *Config) ResolveUnknownDir(agent, root string, s Signals) Resolution {
+	if agent == "" {
+		agent = "the host"
+	}
+	return c.ResolveUnder(root, s, "command directory not reported by "+agent)
+}
+
+// ResolveUnder resolves a command whose directory is not known, only that
+// it is root or somewhere under it, at the most protected tier that could
+// apply there. why says why the directory is not known.
+func (c *Config) ResolveUnder(root string, s Signals, why string) Resolution {
 	s.Dir = root
 	best := c.Resolve(s)
 	consider := func(env string, t Tier, why string) {
@@ -1000,11 +1010,8 @@ func (c *Config) ResolveUnknownDir(agent, root string, s Signals) Resolution {
 			consider("unknown", t, "a directory under the root that matches no environment uses default_tier "+string(t))
 		}
 	}
-	if agent == "" {
-		agent = "the host"
-	}
 	best.DirUnknown = true
-	best.Matched = append([]string{fmt.Sprintf("command directory not reported by %s; judged at the most protected tier under %s (%s, tier %s)", agent, root, best.Env, best.Tier)}, best.Matched...)
+	best.Matched = append([]string{fmt.Sprintf("%s; judged at the most protected tier under %s (%s, tier %s)", why, root, best.Env, best.Tier)}, best.Matched...)
 	return best
 }
 

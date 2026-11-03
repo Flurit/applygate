@@ -176,9 +176,6 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		}
 		return o
 	}
-	// dirKnown is whether the parsed event's cwd is the command's directory;
-	// until an event is parsed nothing is known.
-	dirKnown := false
 	// fail applies the error behavior. Without a usable config the guard
 	// fails closed: an unknown environment is treated as protected.
 	fail := func(cfg *config.Config, cwd, msg string) Output {
@@ -190,13 +187,16 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 			case "allow":
 				block = false
 			case "auto":
+				// The command was not analyzed, so it may run anywhere under
+				// the repository: judge it at the most protected tier there,
+				// not at the directory it starts in.
 				tier := config.Protected
-				switch {
-				case cwd == "":
-				case dirKnown || !cfg.UnknownDirMostProtected():
-					tier = cfg.Resolve(config.Signals{Dir: cwd}).Tier
-				default:
-					tier = cfg.ResolveUnknownDir(a.Name(), cwd, config.Signals{}).Tier
+				root := cfg.Root
+				if root == "" {
+					root = cwd
+				}
+				if root != "" {
+					tier = cfg.ResolveUnder(root, config.Signals{}, "applygate could not decide").Tier
 				}
 				block = tier == config.Protected
 			}
@@ -252,7 +252,6 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		return pass // not an event we check; nothing to log
 	}
 	entry.Session, entry.Tool, entry.Cwd, entry.Command, entry.Paths = ev.Session, ev.Tool, ev.Cwd, ev.Command, ev.Paths
-	dirKnown = ev.DirKnown
 	if ev.Kind == policy.KindOther {
 		return pass // tools applygate does not inspect are not logged
 	}
@@ -291,7 +290,6 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		if tr.Dir != "" {
 			ev.Cwd = tr.Dir
 		}
-		dirKnown = ev.DirKnown
 		mcpNote = fmt.Sprintf("MCP tool %s (%s) judged as the equivalent of: %s", mcpmap.ToolName(ev.Tool), tr.Server, tr.Command)
 		if tr.Note != "" {
 			mcpNote += " (" + tr.Note + ")"

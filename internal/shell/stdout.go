@@ -28,7 +28,9 @@ func (a *analyzer) stdout(s *syntax.Stmt, st *state, in stdin, depth int) (strin
 	for _, r := range s.Redirs {
 		switch r.Op {
 		case syntax.Hdoc, syntax.DashHdoc:
+			a.noGlob++
 			w := a.wordQuiet(r.Hdoc, st)
+			a.noGlob--
 			in = stdin{text: w.Text, known: w.Resolved, present: true}
 		case syntax.WordHdoc:
 			w := a.wordQuiet(r.Word, st)
@@ -38,7 +40,7 @@ func (a *analyzer) stdout(s *syntax.Stmt, st *state, in stdin, depth int) (strin
 			if !w.Resolved {
 				return "", false
 			}
-			b, err := a.opt.ReadFile(a.abs(st, w.Text))
+			b, err := a.read(st, w.Text)
 			if err != nil {
 				return "", false
 			}
@@ -105,26 +107,45 @@ func (a *analyzer) builtinOut(args []Word, st *state, in stdin) (string, bool) {
 	rest := texts(args[1:])
 	switch name {
 	case "echo":
-		nl, esc := true, false
+		// Bash's echo interprets escapes only with -e; zsh's echo and a
+		// POSIX sh with xpg_echo always do. Text with a backslash is known
+		// only when -e or -E says which.
+		nl, esc, raw := true, false, false
 		for len(rest) > 0 && len(rest[0]) > 1 && rest[0][0] == '-' && strings.Trim(rest[0][1:], "neE") == "" {
-			if strings.Contains(rest[0], "n") {
-				nl = false
-			}
-			if strings.Contains(rest[0], "e") {
-				esc = true
+			for _, c := range rest[0][1:] {
+				switch c {
+				case 'n':
+					nl = false
+				case 'e':
+					esc, raw = true, false
+				case 'E':
+					esc, raw = false, true
+				}
 			}
 			rest = rest[1:]
 		}
 		out := strings.Join(rest, " ")
 		if esc {
-			out = ansiC(out)
+			var ok, stop bool
+			if out, ok, stop = echoEscapes(out); !ok {
+				return "", false
+			}
+			if stop {
+				return out, true
+			}
+		} else if !raw && strings.Contains(out, `\`) {
+			return "", false
 		}
 		if nl {
 			out += "\n"
 		}
 		return out, true
 	case "printf":
-		if len(rest) == 0 {
+		if len(rest) > 0 && rest[0] == "--" {
+			rest = rest[1:]
+		}
+		if len(rest) == 0 || strings.HasPrefix(rest[0], "-") {
+			// No format, or an option such as -v that prints nothing.
 			return "", false
 		}
 		format := rest[0]
@@ -132,16 +153,25 @@ func (a *analyzer) builtinOut(args []Word, st *state, in stdin) (string, bool) {
 		if strings.Count(format, "%") != strings.Count(format, "%s")+2*strings.Count(format, "%%") {
 			return "", false
 		}
+		esc := func(s string) (string, bool) { return ansiC(s) }
 		var b strings.Builder
 		for first := true; first || len(vals) > 0; first = false {
 			f := format
 			for {
 				i := strings.Index(f, "%")
 				if i < 0 {
-					b.WriteString(ansiC(f))
+					t, ok := esc(f)
+					if !ok {
+						return "", false
+					}
+					b.WriteString(t)
 					break
 				}
-				b.WriteString(ansiC(f[:i]))
+				t, ok := esc(f[:i])
+				if !ok {
+					return "", false
+				}
+				b.WriteString(t)
 				if strings.HasPrefix(f[i:], "%%") {
 					b.WriteByte('%')
 				} else {
@@ -166,7 +196,7 @@ func (a *analyzer) builtinOut(args []Word, st *state, in stdin) (string, bool) {
 			if strings.HasPrefix(f, "-") {
 				return "", false
 			}
-			data, err := a.opt.ReadFile(a.abs(st, f))
+			data, err := a.read(st, f)
 			if err != nil {
 				return "", false
 			}
@@ -340,4 +370,65 @@ func (a *analyzer) stdoutSeq(stmts []*syntax.Stmt, st *state) (string, bool) {
 		b.WriteString(out)
 	}
 	return b.String(), true
+}
+
+// echoEscapes decodes the escapes bash's echo -e understands: \0NNN is
+// octal with up to three digits after the 0, and \c ends all output (stop).
+// ok is false for \u and \U, whose result depends on the locale.
+func echoEscapes(s string) (out string, ok, stop bool) {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c != '\\' || i+1 >= len(s) {
+			b.WriteByte(c)
+			continue
+		}
+		i++
+		switch s[i] {
+		case 'a':
+			b.WriteByte(7)
+		case 'b':
+			b.WriteByte(8)
+		case 'c':
+			return b.String(), true, true
+		case 'e', 'E':
+			b.WriteByte(27)
+		case 'f':
+			b.WriteByte(12)
+		case 'n':
+			b.WriteByte('\n')
+		case 'r':
+			b.WriteByte('\r')
+		case 't':
+			b.WriteByte('\t')
+		case 'v':
+			b.WriteByte(11)
+		case '\\':
+			b.WriteByte('\\')
+		case '0':
+			v := 0
+			for n := 0; n < 3 && i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '7'; n++ {
+				i++
+				v = v*8 + int(s[i]-'0')
+			}
+			b.WriteByte(byte(v))
+		case 'x':
+			if i+1 >= len(s) || !isHex(s[i+1]) {
+				b.WriteString(`\x`)
+				continue
+			}
+			v := 0
+			for n := 0; n < 2 && i+1 < len(s) && isHex(s[i+1]); n++ {
+				i++
+				v = v*16 + hexVal(s[i])
+			}
+			b.WriteByte(byte(v))
+		case 'u', 'U':
+			return "", false, false
+		default:
+			b.WriteByte('\\')
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String(), true, false
 }
