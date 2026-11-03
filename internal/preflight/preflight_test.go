@@ -149,9 +149,10 @@ func TestBackendFromConfig(t *testing.T) {
 func TestBackendFromConfigFormats(t *testing.T) {
 	dir := t.TempDir()
 	for name, body := range map[string]string{
-		"bare.backend":   "bucket=acme-prod-tfstate\nkey=app/terraform.tfstate\n",
 		"quoted.backend": "bucket=\"acme-prod-tfstate\"\nkey=\"app/terraform.tfstate\"\n",
 		"spaced.backend": "# comment\nbucket = \"acme-prod-tfstate\"\nkey    = \"app/terraform.tfstate\"\n",
+		"b.json":         `{"bucket": "acme-prod-tfstate", "key": "app/terraform.tfstate"}`,
+		"template.hcl":   "bucket = \"acme-${\"prod\"}-tfstate\"\nkey = \"app/terraform.tfstate\"\n",
 	} {
 		os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644)
 		// No declared block and no recorded backend: the type is unknown,
@@ -159,6 +160,17 @@ func TestBackendFromConfigFormats(t *testing.T) {
 		be, err := BackendFromConfig(dir, nil, nil, []string{name}, os.ReadFile)
 		if err != nil || be.Config["bucket"] != "acme-prod-tfstate" || be.Config["key"] != "app/terraform.tfstate" {
 			t.Errorf("%s: %v %v", name, be, err)
+		}
+	}
+	// Terraform rejects these, so the backend they lead to is unknown (4T4).
+	for name, body := range map[string]string{
+		"bare.backend": "bucket=acme-prod-tfstate\nkey=app/terraform.tfstate\n",
+		"ref.hcl":      "bucket = var.bucket\n",
+		"broken.hcl":   "bucket = \"acme\n",
+	} {
+		os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644)
+		if be, err := BackendFromConfig(dir, nil, nil, []string{name}, os.ReadFile); err == nil || be != nil {
+			t.Errorf("%s: be=%v err=%v", name, be, err)
 		}
 	}
 }

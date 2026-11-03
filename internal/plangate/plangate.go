@@ -385,12 +385,23 @@ var exposureAttrs = map[string][]string{
 	"aws_vpc_security_group_ingress_rule": {"cidr_ipv4", "cidr_ipv6", "from_port", "to_port", "ip_protocol"},
 	"aws_s3_bucket_public_access_block":   {"block_public_acls", "block_public_policy", "ignore_public_acls", "restrict_public_buckets"},
 	"aws_s3_account_public_access_block":  {"block_public_acls", "block_public_policy", "ignore_public_acls", "restrict_public_buckets"},
-	"aws_s3_bucket_acl":                   {"acl"},
+	"aws_s3_bucket_acl":                   {"acl", "access_control_policy"},
 	"aws_s3_bucket_policy":                {"policy"},
 	"aws_iam_policy":                      {"policy"},
 	"aws_iam_role_policy":                 {"policy"},
 	"aws_iam_user_policy":                 {"policy"},
 	"aws_iam_group_policy":                {"policy"},
+	// 4H14: every type exposed reads.
+	"aws_default_security_group":      {"ingress"},
+	"aws_db_instance":                 {"publicly_accessible"},
+	"aws_rds_cluster_instance":        {"publicly_accessible"},
+	"aws_redshift_cluster":            {"publicly_accessible"},
+	"aws_dms_replication_instance":    {"publicly_accessible"},
+	"aws_iam_role":                    {"assume_role_policy", "managed_policy_arns", "inline_policy"},
+	"aws_iam_role_policy_attachment":  {"policy_arn"},
+	"aws_iam_user_policy_attachment":  {"policy_arn"},
+	"aws_iam_group_policy_attachment": {"policy_arn"},
+	"aws_iam_policy_attachment":       {"policy_arn"},
 }
 
 // unknownWatched lists the attributes of a created, updated or replaced

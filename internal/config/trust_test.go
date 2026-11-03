@@ -38,3 +38,21 @@ func TestRepoConfigNeedsTrust(t *testing.T) {
 		t.Fatalf("changed config still read")
 	}
 }
+
+// A directory reached through a symlink from outside the repository still
+// finds the repository's config (4H15).
+func TestRepoConfigsThroughSymlink(t *testing.T) {
+	repo, out := t.TempDir(), t.TempDir()
+	if err := os.MkdirAll(filepath.Join(repo, "envs", "prod"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(repo, FileName), []byte("environments: []\n"), 0o644)
+	link := filepath.Join(out, "p")
+	if err := os.Symlink(filepath.Join(repo, "envs", "prod"), link); err != nil {
+		t.Fatal(err)
+	}
+	got := RepoConfigs(link)
+	if len(got) != 1 || !sameEntry(got[0], filepath.Join(repo, FileName)) {
+		t.Fatalf("got %v", got)
+	}
+}

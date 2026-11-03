@@ -65,6 +65,9 @@ type Config struct {
 	OnError     string `yaml:"on_error"` // auto | block | allow
 	LogPath     string `yaml:"log_path"`
 	NameHints   *bool  `yaml:"name_hints"`
+	// StrictShapes asks, in protected tiers, about any shell command that
+	// is not a plain list or pipeline of known programs (default on).
+	StrictShapes *bool `yaml:"strict_shapes"`
 	// UnknownDir says how to judge a command whose directory the host did
 	// not report: "most_protected" (default) takes the most protected tier
 	// the command could be in under the session root; "session_root" judges
@@ -203,6 +206,11 @@ type PlanGate struct {
 	Scope       []string     `yaml:"scope"`
 	RunShow     *bool        `yaml:"run_show"`
 	ShowTimeout string       `yaml:"show_timeout"`
+	// Engines are the terraform, tofu and terragrunt binaries the hook runs
+	// (show -json, state pull), by name, as absolute paths. Without one the
+	// hook looks the name up on PATH. User or system config only; under a
+	// managed install, system config only.
+	Engines map[string]string `yaml:"engines"`
 }
 
 // Preflight configures preflight checks.
@@ -231,6 +239,7 @@ func (c *Config) UnknownDirMostProtected() bool {
 	return c.UnknownDir != UnknownDirSessionRoot
 }
 func (c *Config) UseNameHints() bool    { return on(c.NameHints, true) }
+func (c *Config) StrictShapesOn() bool  { return on(c.StrictShapes, true) }
 func (c *Config) ApprovalsOn() bool     { return on(c.Approvals, false) }
 func (c *Config) Observe() bool         { return c.Mode == "observe" }
 func (c *Config) StaleStateCheck() bool { return on(c.Preflight.StaleState, true) }
@@ -360,8 +369,44 @@ func FindRepoConfig(dir string) string {
 }
 
 // RepoConfigs returns every repository config from the outermost ancestor
-// of dir down to dir, outermost first.
+// of dir down to dir, outermost first. The ancestors are those of where dir
+// really is, after symlinks: a directory reached through a link from outside
+// the repository still gets the repository's config (4H15). Configs on the
+// path as written that are not among those follow, as nested configs that
+// may only tighten.
 func RepoConfigs(dir string) []string {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil || real == dir {
+		return repoConfigChain(dir)
+	}
+	out, written := repoConfigChain(real), repoConfigChain(dir)
+	for i, q := range out {
+		// One the written path also finds keeps its written name, which
+		// environment paths and the session root are compared with.
+		if j := slices.IndexFunc(written, func(p string) bool { return sameEntry(p, q) }); j >= 0 {
+			out[i] = written[j]
+		}
+	}
+	for _, p := range written {
+		if !slices.Contains(out, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// sameEntry reports whether two paths name the same directory entry (the
+// same file, or the same symlink).
+func sameEntry(a, b string) bool {
+	if a == b {
+		return true
+	}
+	fa, ea := os.Lstat(a)
+	fb, eb := os.Lstat(b)
+	return ea == nil && eb == nil && os.SameFile(fa, fb)
+}
+
+func repoConfigChain(dir string) []string {
 	var out []string
 	for d := dir; d != "" && d != "."; d = filepath.Dir(d) {
 		for _, name := range []string{FileName, LegacyFileName} {
@@ -563,7 +608,13 @@ func merge(cfg *Config, path string, l layer) error {
 			ignored("approvals: true")
 		}
 	}
-	if repo {
+	switch {
+	case l == layerUserManaged && !reflect.DeepEqual(c.Judge, Judge{}):
+		// Under a managed install the judge is the system config's: the
+		// agent's user may neither turn it off (R5-5) nor name a command
+		// for it to run.
+		ignored("judge (under a managed install it comes from the system config)")
+	case repo:
 		// The judge sends calls off the machine with the user's key: a
 		// repository may turn it off, nothing else.
 		if c.Judge.Enabled != nil && !*c.Judge.Enabled {
@@ -571,7 +622,7 @@ func merge(cfg *Config, path string, l layer) error {
 		} else if !reflect.DeepEqual(c.Judge, Judge{}) {
 			userOnly("judge (a repository config may only turn it off)")
 		}
-	} else if l == layerUser || !reflect.DeepEqual(c.Judge, Judge{}) {
+	case l == layerUser || !reflect.DeepEqual(c.Judge, Judge{}):
 		cfg.Judge = c.Judge
 	}
 	switch c.UnknownDir {
@@ -649,8 +700,24 @@ func merge(cfg *Config, path string, l layer) error {
 		}
 	}
 	tighten("plan_gate.run_show", &cfg.PlanGate.RunShow, c.PlanGate.RunShow)
+	tighten("strict_shapes", &cfg.StrictShapes, c.StrictShapes)
 	if c.PlanGate.ShowTimeout != "" {
 		cfg.PlanGate.ShowTimeout = c.PlanGate.ShowTimeout
+	}
+	for name, p := range c.PlanGate.Engines {
+		switch {
+		case repo && l != layerUserManaged:
+			userOnly("plan_gate.engines")
+		case repo:
+			ignored("plan_gate.engines (under a managed install it comes from the system config)")
+		case !filepath.IsAbs(p) || (name != "terraform" && name != "tofu" && name != "terragrunt"):
+			ignored("plan_gate.engines." + name + ": an absolute path for terraform, tofu or terragrunt")
+		default:
+			if cfg.PlanGate.Engines == nil {
+				cfg.PlanGate.Engines = map[string]string{}
+			}
+			cfg.PlanGate.Engines[name] = p
+		}
 	}
 	tighten("preflight.stale_state", &cfg.Preflight.StaleState, c.Preflight.StaleState)
 	tighten("preflight.lockfile", &cfg.Preflight.Lockfile, c.Preflight.Lockfile)
@@ -879,11 +946,15 @@ func (c *Config) GuardTargets(home string) []string {
 		}
 	}
 	out = append(out, launchTargets(home)...)
+	for _, p := range c.PlanGate.Engines {
+		out = append(out, p)
+	}
 	return append(out, guard.Executable()...)
 }
 
 // launchTargets are the places that decide which applygate binary runs and
-// with which environment: an applygate or seatbelt in any PATH directory or
+// with which environment: an applygate or seatbelt (or an engine the plan
+// gate runs) in any PATH directory or
 // the usual user bin directories (a plant there runs instead of the real
 // hook), and the shell start-up files (an export there, such as
 // APPLYGATE_BIN or XDG_CONFIG_HOME, reaches the next session's hook).
@@ -900,6 +971,9 @@ func launchTargets(home string) []string {
 			continue
 		}
 		out = append(out, filepath.Join(d, "applygate"), filepath.Join(d, "seatbelt"))
+		// The engines the plan gate runs: a plant could answer show -json
+		// with any plan (4H1).
+		out = append(out, filepath.Join(d, "terraform"), filepath.Join(d, "tofu"), filepath.Join(d, "terragrunt"))
 	}
 	if home != "" {
 		for _, rc := range []string{".zshrc", ".zshenv", ".zprofile", ".zlogin", ".bashrc", ".bash_profile", ".bash_login", ".profile",
@@ -956,8 +1030,19 @@ type Signals struct {
 	// configuration's aws provider blocks name; each is a possible target.
 	ProviderProfiles []string
 	ProviderRoles    []string
+	// ProviderUnknown says why a provider's profile or role is not known:
+	// it may target any account.
+	ProviderUnknown string
 	// WorkspaceUnknown says why the selected workspace is not known.
 	WorkspaceUnknown string
+	// StateDirs are the directories of local state files the command
+	// reads or writes (-state=, -state-out=, a local backend's path): each
+	// brings its own directory's environment (4H11).
+	StateDirs []string
+	// SourceDirs are local directories the configuration that runs comes
+	// from (a terragrunt terraform.source or --source): their backend
+	// block, and so their environment, may be the one used (4H12).
+	SourceDirs []string
 }
 
 // BackendHintKeys are the backend settings whose values can name an
@@ -1137,6 +1222,9 @@ func (c *Config) Resolve(s Signals) Resolution {
 	if s.BackendUnknown != "" {
 		consider("unknown backend", Protected, s.BackendUnknown+", so the state it points at is unknown and judged as protected")
 	}
+	if s.ProviderUnknown != "" {
+		consider("unknown provider target", Protected, s.ProviderUnknown+", so the account it changes is unknown and judged as protected")
+	}
 	if c.UseNameHints() {
 		relOf := func(d string) string {
 			for _, root := range []string{c.Root, guard.Canonical(c.Root)} {
@@ -1174,6 +1262,16 @@ func (c *Config) Resolve(s Signals) Resolution {
 			if h.v != "" && LooksProd(h.v) {
 				consider("prod (name hint)", Protected, h.what+" "+h.v+" looks like production")
 			}
+		}
+	}
+	for _, d := range s.StateDirs {
+		if r := c.Resolve(Signals{Dir: d}); !r.Unknown {
+			consider(r.Env, r.Tier, "the state file it uses is in "+d+" ("+strings.Join(r.Matched, "; ")+")")
+		}
+	}
+	for _, d := range s.SourceDirs {
+		if r := c.Resolve(Signals{Dir: d}); !r.Unknown {
+			consider(r.Env, r.Tier, "the configuration it runs is from "+d+" ("+strings.Join(r.Matched, "; ")+")")
 		}
 	}
 	if best.Unknown {

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 )
@@ -150,4 +151,31 @@ func managedGuards() []string {
 		out = append(out, filepath.Join(CodexManagedDir, "requirements.toml"))
 	}
 	return out
+}
+
+// EngineBinary is the program the hook runs for an engine (show -json, state
+// pull): plan_gate.engines first, else the name on PATH. A name with a path
+// separator (TG_TF_PATH) is that path. Under a managed
+// install the binary, after symlinks, and the directory holding it must be
+// root's alone: one the agent's user can replace could answer the plan gate
+// with any plan it likes (4H1).
+func (c *Config) EngineBinary(name string) (string, error) {
+	p := c.PlanGate.Engines[name]
+	if p == "" {
+		var err error
+		if p, err = exec.LookPath(name); err != nil {
+			return "", err
+		}
+	}
+	if !Managed() {
+		return p, nil
+	}
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", err
+	}
+	if err := CheckSystemFile(real); err != nil {
+		return "", fmt.Errorf("under a managed install the %s the hook runs must be root's alone (%v); set plan_gate.engines.%s in %s to a root-owned copy", name, err, name, SystemPath())
+	}
+	return real, nil
 }

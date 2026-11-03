@@ -2,8 +2,10 @@ package decisionlog
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Flurit/applygate/internal/policy"
 )
@@ -40,5 +42,29 @@ func TestRedactLeavesOrdinaryCommands(t *testing.T) {
 		if got := Redact(c); got != c {
 			t.Errorf("%q became %q", c, got)
 		}
+	}
+}
+
+// A huge entry is redacted within a bounded time, and a private key cut at
+// the redaction limit is still redacted (4H3, R5-2).
+func TestRedactBounded(t *testing.T) {
+	big := strings.Repeat("mysql -h x ", 6000)
+	e := Entry{Command: big}
+	for i := 0; i < 400; i++ {
+		e.Actions = append(e.Actions, policy.ActionResult{Command: big + strconv.Itoa(i)})
+	}
+	start := time.Now()
+	redactEntry(&e)
+	// The budget is what bounds the work; the time is loose for the race
+	// detector, which is ten times slower.
+	if d := time.Since(start); d > 60*time.Second {
+		t.Fatalf("redacting took %s", d)
+	}
+	if !strings.Contains(e.Actions[399].Command, "redaction budget") {
+		t.Fatalf("last action not cut: %.80q", e.Actions[399].Command)
+	}
+	key := "x -----BEGIN RSA PRIVATE KEY-----" + strings.Repeat("A", 3*maxField) + "-----END RSA PRIVATE KEY-----"
+	if got := RedactCut(key, maxField); strings.Contains(got, "AAAA") {
+		t.Fatalf("key body kept: %.80q", got)
 	}
 }

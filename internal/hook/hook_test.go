@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Flurit/applygate/internal/approval"
+	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/policy"
 )
@@ -184,7 +185,7 @@ func TestShowPlanCancelledByContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(200 * time.Millisecond); cancel() }()
 	start := time.Now()
-	_, err := ShowPlan(ctx, 30*time.Second)("terraform", t.TempDir(), "tfplan")
+	_, err := ShowPlan(ctx, 30*time.Second, config.Default().EngineBinary)("terraform", t.TempDir(), "tfplan")
 	if err == nil {
 		t.Fatal("expected an error when the context is cancelled")
 	}
@@ -491,7 +492,7 @@ func TestMCPArgumentsCapped(t *testing.T) {
 	if err != nil || !ok || ev.Kind != policy.KindMCP {
 		t.Fatalf("parse: %v %v %+v", err, ok, ev)
 	}
-	if len(ev.Command) > maxMCPArgs+40 || !strings.Contains(ev.Command, "truncated") || !utf8.ValidString(ev.Command) {
+	if len(ev.Command) > maxMCPArgs+40 || !strings.Contains(ev.Command, "cut for the log") || !utf8.ValidString(ev.Command) {
 		t.Fatalf("arguments not capped cleanly: %d bytes, valid utf8 %v", len(ev.Command), utf8.ValidString(ev.Command))
 	}
 	// A tool that only looks like MCP, and other tools applygate does not

@@ -151,9 +151,10 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			st.dirStack = append(st.dirStack, st.dir)
 		}
 		target := ""
-		ok := true
+		ok, physical := true, false
 		for _, w := range rest {
 			if strings.HasPrefix(w.Text, "-") && w.Resolved && w.Text != "-" {
+				physical = physical || w.Text != "--" && strings.Contains(w.Text, "P")
 				continue
 			}
 			target, ok = w.Text, w.Resolved
@@ -177,8 +178,18 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			st.dir = a.cdPathDir(st, target)
 		case st.dir == "" && !filepath.IsAbs(target):
 		default:
+			logical := target
+			if !filepath.IsAbs(target) {
+				logical = filepath.Join(st.dir, target)
+			}
 			st.dir = a.abs(st, target)
-			if a.writtenAt(st.dir, true) != "" {
+			if !physical && !samePlace(filepath.Clean(logical), st.dir) {
+				// cd follows .. in the text of the path, cd -P (and set -P)
+				// where a symlink really leads: which one runs is not
+				// known here.
+				st.dir = ""
+			}
+			if st.dir != "" && a.writtenAt(st.dir, true) != "" {
 				// An earlier step linked, moved or extracted something
 				// here: it may be a symlink to anywhere.
 				st.dir = ""

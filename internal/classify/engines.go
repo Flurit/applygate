@@ -157,6 +157,28 @@ func terraformArgs(a *Action, args []shell.Word) {
 		rest = append(cliArgs(a.Env, sub), rest...)
 	}
 	flags, pos, unresolved := splitTF(rest)
+	for _, f := range flags {
+		switch {
+		case (f.name == "var" || f.name == "var-file") && strings.Contains(f.value, "<?>"):
+			a.VarsUnknown = "a -" + f.name + " cannot be resolved statically"
+		case f.name == "var":
+			if k, v, ok := strings.Cut(f.value, "="); ok {
+				if a.Vars == nil {
+					a.Vars = map[string]string{}
+				}
+				a.Vars[k] = v
+			}
+		case f.name == "var-file" && a.Dir != "":
+			a.VarFiles = append(a.VarFiles, absPath(a.Dir, f.value, ""))
+		}
+		if (f.name == "state" || f.name == "state-out" || f.name == "backup") && f.value != "" && f.value != "-" && a.Dir != "" {
+			if strings.Contains(f.value, "<?>") {
+				a.StateUnknown = true
+			} else {
+				a.StateFiles = append(a.StateFiles, absPath(a.Dir, f.value, ""))
+			}
+		}
+	}
 	set := func(c Class, why string) {
 		a.Class, a.Why = c, why
 		if unresolved && severityRank(c) < severityRank(Destroy) {
@@ -815,8 +837,9 @@ func terragruntDir(a *Action, args []shell.Word) []shell.Word {
 			a.Dir, a.AnyDir = "", true
 		}
 	}
-	// --config names the terragrunt.hcl to run, whose directory is the
-	// unit's: a config in prod is prod's, wherever the command runs.
+	// --config names the terragrunt.hcl to run. Terraform still runs in the
+	// working directory, so the call is judged in both: a config in prod is
+	// prod's, and a dev config does not make a prod directory dev (4H26).
 	var config *shell.Word
 	setConfig := func(w shell.Word) { config = &w }
 	for _, k := range []string{"TERRAGRUNT_WORKING_DIR", "TG_WORKING_DIR"} {
@@ -829,6 +852,20 @@ func terragruntDir(a *Action, args []shell.Word) []shell.Word {
 			setConfig(shell.Word{Text: v, Resolved: v != "", Prefix: v})
 		}
 	}
+	// --source replaces the unit's terraform.source: the configuration
+	// that runs, and its backend block, come from there (4H12).
+	setSource := func(w shell.Word) {
+		if !w.Resolved || w.Text == "" {
+			a.SourceUnknown = true
+		} else {
+			a.Source = w.Text
+		}
+	}
+	for _, k := range []string{"TERRAGRUNT_SOURCE", "TG_SOURCE"} {
+		if v, ok := a.Env[k]; ok {
+			setSource(shell.Word{Text: v, Resolved: v != "", Prefix: v})
+		}
+	}
 	defer func() {
 		if config == nil {
 			return
@@ -838,7 +875,7 @@ func terragruntDir(a *Action, args []shell.Word) []shell.Word {
 			return
 		}
 		if a.Dir != "" || filepath.IsAbs(config.Text) {
-			a.Dir = filepath.Dir(absPath(a.Dir, config.Text, ""))
+			a.ConfigDir = filepath.Dir(absPath(a.Dir, config.Text, ""))
 		}
 	}()
 	out := make([]shell.Word, 0, len(args))
@@ -854,6 +891,8 @@ func terragruntDir(a *Action, args []shell.Word) []shell.Word {
 		case "--working-dir", "--terragrunt-working-dir":
 		case "--config", "--terragrunt-config":
 			set = setConfig
+		case "--source", "--terragrunt-source":
+			set = setSource
 		default:
 			out = append(out, w)
 			continue

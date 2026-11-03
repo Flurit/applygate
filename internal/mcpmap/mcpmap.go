@@ -213,14 +213,25 @@ func translateOne(s Server, tl Tool, tool string, args map[string]any, parseErr 
 				}
 			}
 			for i, c := range cmds {
-				if f := strings.Fields(c); len(f) == 0 || f[0] != tl.Program {
-					if tl.Prepend {
-						cmds[i] = tl.Program + " " + c
-						continue
-					}
-					r.Command = unresolved(tool, "the server runs "+tl.Program+", and "+quote(c)+" does not start with it")
+				// The server splits the words itself, with shell quoting but
+				// no shell: a newline or ; is a space or an argument there,
+				// so the command is judged as the one argv it becomes (4M1).
+				f, why := splitWords(c)
+				if why != "" {
+					r.Command = unresolved(tool, "the server splits "+quote(c)+" into words itself, and "+why)
 					return r
 				}
+				if len(f) == 0 || f[0] != tl.Program {
+					if !tl.Prepend {
+						r.Command = unresolved(tool, "the server runs "+tl.Program+", and "+quote(c)+" does not start with it")
+						return r
+					}
+					f = append([]string{tl.Program}, f...)
+				}
+				for j := range f {
+					f[j] = quote(f[j])
+				}
+				cmds[i] = strings.Join(f, " ")
 			}
 		}
 		r.Command = strings.Join(cmds, "\n")
@@ -570,6 +581,70 @@ func kebab(s string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// splitWords splits s as Python's shlex.split does, which is how servers
+// that run a CLI without a shell are taken to split its command (not checked
+// against each server's source): words are separated by
+// space, tab, carriage return or newline; quotes and backslashes group them; nothing
+// else is special. A word that is a shell operator is refused, since some
+// servers do run pipes, and so is an unclosed quote.
+func splitWords(s string) (words []string, why string) {
+	var w strings.Builder
+	in, quoteCh := false, rune(0)
+	rs := []rune(s)
+	for i := 0; i < len(rs); i++ {
+		r := rs[i]
+		switch {
+		case quoteCh == '\'':
+			if r == '\'' {
+				quoteCh = 0
+			} else {
+				w.WriteRune(r)
+			}
+		case quoteCh == '"':
+			switch {
+			case r == '"':
+				quoteCh = 0
+			case r == '\\' && i+1 < len(rs) && (rs[i+1] == '"' || rs[i+1] == '\\'):
+				i++
+				w.WriteRune(rs[i])
+			default:
+				w.WriteRune(r)
+			}
+		case r == '\'' || r == '"':
+			quoteCh, in = r, true
+		case r == '\\':
+			if i+1 == len(rs) {
+				return nil, "it ends in a backslash"
+			}
+			i++
+			w.WriteRune(rs[i])
+			in = true
+		case r == ' ' || r == '\t' || r == '\r' || r == '\n':
+			if in {
+				words = append(words, w.String())
+				w.Reset()
+				in = false
+			}
+		default:
+			w.WriteRune(r)
+			in = true
+		}
+	}
+	if quoteCh != 0 {
+		return nil, "it has an unclosed quote"
+	}
+	if in {
+		words = append(words, w.String())
+	}
+	for _, x := range words {
+		switch x {
+		case "|", "||", "&&", ";", "&", ">", ">>", "<", "<<":
+			return nil, "the word " + quote(x) + " may be a pipe or redirection there"
+		}
+	}
+	return words, ""
 }
 
 func quote(s string) string {

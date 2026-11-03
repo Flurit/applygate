@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,18 +140,6 @@ func InitBackendEnv(dir string, env map[string]string) *Backend {
 	}
 	return be
 }
-
-var (
-	// The label may be unquoted: Terraform accepts backend s3 { }.
-	attrLine = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"`)
-	// anyAttr is every attribute line; a value that refers to anything
-	// (OpenTofu allows variables and locals in a backend) or is a template
-	// is not known.
-	// configLine also accepts unquoted values (bucket=acme-prod-tfstate) in
-	// -backend-config files. Terraform rejects those as HCL, but reading
-	// them can only make the tier stricter.
-	configLine = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:"([^"]*)"|([^\s"#]+))`)
-)
 
 // DeclaredBackend reads the backend or cloud block from dir's configuration
 // files as Terraform and OpenTofu do, with HashiCorp's HCL parser: .tf and
@@ -299,6 +288,18 @@ func readBody(be *Backend, body hcl.Body) {
 	nested, rest, _ := body.PartialContent(nestedSchema)
 	for _, nb := range nested.Blocks {
 		if nb.Type != "workspaces" {
+			// assume_role and the like: their values (role_arn) are
+			// name hints like any other.
+			attrs, _ := attributesOf(nb.Body)
+			for k, a := range attrs {
+				if v, ok := scalar(a.Expr); ok {
+					if _, set := be.Config[k]; !set {
+						be.Config[k] = v
+					}
+				} else {
+					be.Unreadable = "the backend's " + nb.Type + "." + k + " is computed"
+				}
+			}
 			continue
 		}
 		attrs, _ := nb.Body.JustAttributes()
@@ -319,17 +320,36 @@ func readBody(be *Backend, body hcl.Body) {
 	}
 	for k, a := range attrs {
 		v, err := a.Expr.Value(emptyCtx)
-		switch {
-		case err.HasErrors() || !v.IsWhollyKnown():
+		if err.HasErrors() || !v.IsWhollyKnown() {
 			be.Unreadable = "the backend's " + k + " is computed"
-		case v.Type() == cty.String:
-			be.Config[k] = v.AsString()
-		case v.Type() == cty.Bool:
-			be.Config[k] = strconv.FormatBool(v.True())
-		case v.Type() == cty.Number:
-			be.Config[k] = v.AsBigFloat().Text('f', -1)
+		} else if t, ok := scalarText(v); ok {
+			be.Config[k] = t
 		}
 	}
+}
+
+// scalar is a literal string, bool or number as text; false when the value
+// is computed or is a list or object.
+func scalar(e hcl.Expression) (string, bool) {
+	v, diags := e.Value(emptyCtx)
+	if diags.HasErrors() || !v.IsWhollyKnown() {
+		return "", false
+	}
+	return scalarText(v)
+}
+
+func scalarText(v cty.Value) (string, bool) {
+	switch {
+	case v.IsNull():
+		return "", false
+	case v.Type() == cty.String:
+		return v.AsString(), true
+	case v.Type() == cty.Bool:
+		return strconv.FormatBool(v.True()), true
+	case v.Type() == cty.Number:
+		return v.AsBigFloat().Text('f', -1), true
+	}
+	return "", false
 }
 
 // attributesOf returns a body's attributes. A native-syntax body is read
@@ -366,31 +386,56 @@ var (
 	roleARN     = regexp.MustCompile(`(?m)^\s*role_arn\s*=\s*"([^"]*)"`)
 )
 
+// Vars are the input variable values a command gives Terraform: -var
+// NAME=value pairs, -var-file files (absolute) and the environment
+// (TF_VAR_NAME). Unknown says why some cannot be read.
+type Vars struct {
+	Values  map[string]string
+	Files   []string
+	Env     map[string]string
+	Unknown string
+}
+
 // ProviderAWS returns the profile and role_arn values of the aws provider
 // blocks in dir's configuration files, aliases included: each is a target
-// the configuration may change. Only literal values are read.
-func ProviderAWS(dir string) (profiles, roles []string) {
-	tf, tofu := configFiles(dir)
-	seen := map[string]bool{}
-	for _, f := range append(tf, tofu...) {
-		if seen[f] {
-			continue
+// the configuration may change. A value that is var.NAME gives every value
+// the variable may have (-var, -var-file, TF_VAR_NAME, terraform.tfvars,
+// *.auto.tfvars, its default). Any other computed value, or a variable with
+// no value found, is unknown, and unknown says why (4H10).
+func ProviderAWS(dir string, vars Vars) (profiles, roles []string, unknown string) {
+	files := parsedFiles(dir)
+	var vv *varValues
+	values := func(what string, e hcl.Expression) []string {
+		if v, ok := literal(e); ok {
+			return []string{v}
 		}
-		seen[f] = true
-		src, err := os.ReadFile(f)
-		if err != nil {
-			continue
+		tr, d := hcl.AbsTraversalForExpr(e)
+		if d.HasErrors() || len(tr) != 2 || tr.RootName() != "var" {
+			unknown = "the aws provider's " + what + " is computed"
+			return nil
 		}
-		var file *hcl.File
-		var diags hcl.Diagnostics
-		if strings.HasSuffix(f, ".json") {
-			file, diags = hcljson.Parse(src, f)
-		} else {
-			file, diags = hclsyntax.ParseConfig(src, f, hcl.Pos{Line: 1, Column: 1})
+		at, ok := tr[1].(hcl.TraverseAttr)
+		if !ok {
+			unknown = "the aws provider's " + what + " is computed"
+			return nil
 		}
-		if diags.HasErrors() || file == nil {
-			continue
+		if vv == nil {
+			vv = readVarValues(dir, files, vars)
 		}
+		got := vv.of(at.Name)
+		why := vars.Unknown
+		if why == "" {
+			why = vv.bad
+		}
+		if len(got) == 0 || why != "" {
+			unknown = "the aws provider's " + what + " is var." + at.Name + ", whose value is not known"
+			if why != "" {
+				unknown += " (" + why + ")"
+			}
+		}
+		return got
+	}
+	for _, file := range files {
 		top, _, _ := file.Body.PartialContent(providerSchema)
 		for _, pb := range top.Blocks {
 			if pb.Labels[0] != "aws" {
@@ -399,59 +444,127 @@ func ProviderAWS(dir string) (profiles, roles []string) {
 			inner, rest, _ := pb.Body.PartialContent(nestedSchema)
 			attrs, _ := attributesOf(rest)
 			if a, ok := attrs["profile"]; ok {
-				if v, ok := literal(a.Expr); ok {
-					profiles = append(profiles, v)
-				}
+				profiles = append(profiles, values("profile", a.Expr)...)
 			}
 			if a, ok := attrs["assume_role"]; ok {
-				if v, d := a.Expr.Value(emptyCtx); !d.HasErrors() && v.IsWhollyKnown() && (v.Type().IsObjectType() || v.Type().IsMapType()) && v.Type().HasAttribute("role_arn") {
-					if r := v.GetAttr("role_arn"); r.Type() == cty.String {
-						roles = append(roles, r.AsString())
+				if v, d := a.Expr.Value(emptyCtx); !d.HasErrors() && v.IsWhollyKnown() && (v.Type().IsObjectType() || v.Type().IsMapType()) {
+					if v.Type().HasAttribute("role_arn") {
+						if r := v.GetAttr("role_arn"); r.Type() == cty.String && !r.IsNull() {
+							roles = append(roles, r.AsString())
+						}
 					}
+				} else {
+					unknown = "the aws provider's assume_role is computed"
 				}
 			}
 			for _, nb := range inner.Blocks {
-				if nb.Type != "assume_role" {
+				if nb.Type != "assume_role" && nb.Type != "assume_role_with_web_identity" {
 					continue
 				}
-				na, _ := nb.Body.JustAttributes()
+				na, _ := attributesOf(nb.Body)
 				if a, ok := na["role_arn"]; ok {
-					if v, ok := literal(a.Expr); ok {
-						roles = append(roles, v)
-					}
+					roles = append(roles, values(nb.Type+".role_arn", a.Expr)...)
 				}
 			}
 		}
 	}
-	return profiles, roles
+	return profiles, roles, unknown
 }
 
-func stripComments(s string) string {
-	var out []string
-	for _, l := range strings.Split(s, "\n") {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(t, "#") || strings.HasPrefix(t, "//") {
+// parsedFiles parses dir's configuration files, Terraform's and OpenTofu's,
+// each once; files that do not parse are left out.
+func parsedFiles(dir string) []*hcl.File {
+	tf, tofu := configFiles(dir)
+	seen := map[string]bool{}
+	var out []*hcl.File
+	for _, f := range append(tf, tofu...) {
+		if seen[f] {
 			continue
 		}
-		out = append(out, l)
+		seen[f] = true
+		if file := parseFile(f); file != nil {
+			out = append(out, file)
+		}
 	}
-	return strings.Join(out, "\n")
+	return out
 }
 
-func braceBody(s string, open int) string {
-	depth := 0
-	for i := open; i < len(s); i++ {
-		switch s[i] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return s[open+1 : i]
+func parseFile(f string) *hcl.File {
+	src, err := os.ReadFile(f)
+	if err != nil {
+		return nil
+	}
+	var file *hcl.File
+	var diags hcl.Diagnostics
+	if strings.HasSuffix(f, ".json") {
+		file, diags = hcljson.Parse(src, f)
+	} else {
+		file, diags = hclsyntax.ParseConfig(src, f, hcl.Pos{Line: 1, Column: 1})
+	}
+	if diags.HasErrors() {
+		return nil
+	}
+	return file
+}
+
+// varValues are the values each input variable may have; bad says why a
+// -var-file the command names cannot be read.
+type varValues struct {
+	m   map[string][]string
+	bad string
+}
+
+func (v *varValues) of(name string) []string { return v.m[name] }
+
+var variableSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "variable", LabelNames: []string{"name"}}}}
+
+func readVarValues(dir string, files []*hcl.File, vars Vars) *varValues {
+	vv := &varValues{m: map[string][]string{}}
+	add := func(name, v string) {
+		if !slices.Contains(vv.m[name], v) {
+			vv.m[name] = append(vv.m[name], v)
+		}
+	}
+	for _, file := range files {
+		top, _, _ := file.Body.PartialContent(variableSchema)
+		for _, b := range top.Blocks {
+			attrs, _ := attributesOf(b.Body)
+			if a, ok := attrs["default"]; ok {
+				if v, ok := scalar(a.Expr); ok {
+					add(b.Labels[0], v)
+				}
 			}
 		}
 	}
-	return s[open+1:]
+	tfvars := []string{filepath.Join(dir, "terraform.tfvars"), filepath.Join(dir, "terraform.tfvars.json")}
+	for _, pat := range []string{"*.auto.tfvars", "*.auto.tfvars.json"} {
+		m, _ := filepath.Glob(filepath.Join(dir, pat))
+		tfvars = append(tfvars, m...)
+	}
+	for i, f := range append(tfvars, vars.Files...) {
+		file := parseFile(f)
+		if file == nil {
+			if i >= len(tfvars) {
+				vv.bad = "the -var-file " + f + " cannot be read"
+			}
+			continue
+		}
+		attrs, _ := attributesOf(file.Body)
+		for k, a := range attrs {
+			if v, ok := scalar(a.Expr); ok {
+				add(k, v)
+			}
+		}
+	}
+	for k, v := range vars.Env {
+		if name, ok := strings.CutPrefix(k, "TF_VAR_"); ok {
+			add(name, v)
+		}
+	}
+	for k, v := range vars.Values {
+		add(k, v)
+	}
+	return vv
 }
 
 // BackendChanged compares the declared backend with the one recorded at
@@ -801,14 +914,10 @@ func ParseState(b []byte) (StateInfo, bool) {
 	return StateInfo{Lineage: raw.Lineage, Serial: raw.Serial}, true
 }
 
-// PullState runs "<engine> state pull" in dir and returns the remote state.
+// PullState runs "<bin> state pull" in dir and returns the remote state.
 // It is read-only but contacts the backend, so it is only called when
 // preflight.live_state is enabled in the user config.
-func PullState(parent context.Context, engine, dir string, timeout time.Duration) ([]byte, error) {
-	bin := engine
-	if bin == "" || bin == "terragrunt" {
-		bin = "terraform"
-	}
+func PullState(parent context.Context, bin, dir string, timeout time.Duration) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, "state", "pull")
@@ -882,7 +991,9 @@ func BackendFromConfig(dir string, declared, recorded *Backend, configs []string
 	be := &Backend{Config: map[string]string{}}
 	switch {
 	case declared != nil:
-		be.Type = declared.Type
+		// A computed value in the block stays unknown: a file or pair
+		// may not set it (4H9).
+		be.Type, be.Unreadable = declared.Type, declared.Unreadable
 		for k, v := range declared.Config {
 			be.Config[k] = v
 		}
@@ -902,9 +1013,35 @@ func BackendFromConfig(dir string, declared, recorded *Backend, configs []string
 		if err != nil {
 			return nil, err
 		}
-		for _, m := range configLine.FindAllStringSubmatch(stripComments(string(b)), -1) {
-			be.Config[m[1]] = m[2] + m[3]
+		if err := applyConfigFile(be, p, b); err != nil {
+			return nil, err
 		}
 	}
 	return be, nil
+}
+
+// applyConfigFile reads a -backend-config file as Terraform does, as HCL or
+// (with a .json name) JSON, and sets its values on be. A file that does not
+// parse, or a value that is not a literal, is an error: the target is then
+// unknown.
+func applyConfigFile(be *Backend, path string, src []byte) error {
+	var file *hcl.File
+	var diags hcl.Diagnostics
+	if strings.HasSuffix(path, ".json") {
+		file, diags = hcljson.Parse(src, path)
+	} else {
+		file, diags = hclsyntax.ParseConfig(src, path, hcl.Pos{Line: 1, Column: 1})
+	}
+	if diags.HasErrors() || file == nil {
+		return fmt.Errorf("%s does not parse: %s", filepath.Base(path), diags.Error())
+	}
+	got := &Backend{Config: map[string]string{}}
+	readBody(got, file.Body)
+	if got.Unreadable != "" {
+		return fmt.Errorf("%s: %s", filepath.Base(path), got.Unreadable)
+	}
+	for k, v := range got.Config {
+		be.Config[k] = v
+	}
+	return nil
 }

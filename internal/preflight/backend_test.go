@@ -3,6 +3,7 @@ package preflight
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,8 +52,34 @@ func TestDeclaredBackendForms(t *testing.T) {
 func TestProviderAWS(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "p.tf"), []byte("provider \"aws\" {\n  profile = \"dev\"\n}\nprovider \"aws\" {\n  alias = \"prod\"\n  assume_role {\n    role_arn = \"arn:aws:iam::111122223333:role/admin\"\n  }\n}\n"), 0o644)
-	p, r := ProviderAWS(dir)
-	if len(p) != 1 || p[0] != "dev" || len(r) != 1 || r[0] != "arn:aws:iam::111122223333:role/admin" {
-		t.Fatalf("profiles %v roles %v", p, r)
+	p, r, u := ProviderAWS(dir, Vars{})
+	if len(p) != 1 || p[0] != "dev" || len(r) != 1 || r[0] != "arn:aws:iam::111122223333:role/admin" || u != "" {
+		t.Fatalf("profiles %v roles %v unknown %q", p, r, u)
+	}
+}
+
+// A profile or role held in a variable gives each value the variable may
+// have; one with no known value, or computed otherwise, is unknown (4H10).
+func TestProviderAWSVars(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) { os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644) }
+	write("p.tf", "variable \"profile\" {\n  default = \"dev\"\n}\nvariable \"role\" {}\nprovider \"aws\" {\n  profile = var.profile\n  assume_role_with_web_identity {\n    role_arn = var.role\n  }\n}\n")
+	write("prod.tfvars", "profile = \"prod-admin\"\n")
+	write("x.auto.tfvars", "role = \"arn:aws:iam::1:role/ci\"\n")
+	p, r, u := ProviderAWS(dir, Vars{Files: []string{filepath.Join(dir, "prod.tfvars")}, Env: map[string]string{"TF_VAR_profile": "stage"}})
+	if strings.Join(p, ",") != "dev,prod-admin,stage" || strings.Join(r, ",") != "arn:aws:iam::1:role/ci" || u != "" {
+		t.Fatalf("profiles %v roles %v unknown %q", p, r, u)
+	}
+	os.Remove(filepath.Join(dir, "x.auto.tfvars"))
+	if _, _, u := ProviderAWS(dir, Vars{}); !strings.Contains(u, "var.role") {
+		t.Fatalf("role with no value: unknown %q", u)
+	}
+	write("p.tf", "provider \"aws\" {\n  profile = local.p\n}\n")
+	if _, _, u := ProviderAWS(dir, Vars{}); u == "" {
+		t.Fatal("a local is not unknown")
+	}
+	write("p.tf", "variable \"profile\" {\n  default = \"dev\"\n}\nprovider \"aws\" {\n  profile = var.profile\n}\n")
+	if _, _, u := ProviderAWS(dir, Vars{Files: []string{filepath.Join(dir, "missing.tfvars")}}); u == "" {
+		t.Fatal("an unreadable -var-file is not unknown")
 	}
 }

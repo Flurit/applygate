@@ -31,8 +31,11 @@ const (
 	CloudDestructive Class = "cloud-destructive"
 	CredentialAccess Class = "credential-access" // not in the spec table
 	UnknownWrapper   Class = "unknown-wrapper"
-	Dynamic          Class = "dynamic"
-	Tampering        Class = "guard-tampering"
+	// ComplexShape is a shell command in a protected tier that is not a
+	// plain list or pipeline of known programs (strict shapes).
+	ComplexShape Class = "complex-shape"
+	Dynamic      Class = "dynamic"
+	Tampering    Class = "guard-tampering"
 )
 
 // Action is one classified, policy-relevant operation.
@@ -79,6 +82,27 @@ type Action struct {
 	// .terraform (workspace, backend): the workspace and backend recorded
 	// there now are not the ones the command will use.
 	DataDirWritten bool
+	// BackendConfigWritten is set when an earlier step of the same command
+	// wrote one of the -backend-config files: what the init reads is then
+	// not what is there now.
+	BackendConfigWritten bool
+	// Vars and VarFiles are the -var NAME=value pairs and the -var-file
+	// files (absolute) the command gives; VarsUnknown says why one cannot
+	// be resolved.
+	Vars        map[string]string
+	VarFiles    []string
+	VarsUnknown string
+	// StateFiles are the local state files -state, -state-out and -backup
+	// name (absolute); StateUnknown is set when one cannot be resolved.
+	StateFiles   []string
+	StateUnknown bool
+	// Source is the terragrunt --source (or TG_SOURCE) as given;
+	// SourceUnknown is set when it cannot be resolved.
+	Source        string
+	SourceUnknown bool
+	// ConfigDir is the directory of the terragrunt.hcl that --config names,
+	// when it is not Dir; the call is judged in both.
+	ConfigDir string
 	// AnyDir is set when the action may run in a directory the analysis
 	// could not follow (cd to a computed path, a symlink made earlier in
 	// the command, an analysis that stopped): it is judged at the most
@@ -122,6 +146,10 @@ func Invocations(res *shell.Result, opt Options) []Action {
 	// a planfile or reads .terraform is judged on what will be there, not on
 	// what is there now.
 	var written []string
+	// named collects the paths earlier steps name in their arguments: a
+	// program applygate does not model (aws s3 cp, scp, rclone, a script)
+	// may write any of them (4H13).
+	var named []string
 	// retarget holds the cluster, project or subscription an earlier step
 	// selected (kubectl config use-context, gcloud config set project, az
 	// account set): later calls that name none target it.
@@ -134,7 +162,8 @@ func Invocations(res *shell.Result, opt Options) []Action {
 				a.Target = t
 			}
 			if a.PlanFile != "" && a.Dir != "" {
-				a.PlanWritten = slices.Contains(written, writtenUnknown) || writtenAt(written, absPath(a.Dir, a.PlanFile, opt.Home))
+				plan := absPath(a.Dir, a.PlanFile, opt.Home)
+				a.PlanWritten = slices.Contains(written, writtenUnknown) || writtenAt(written, plan) || namedExactly(named, plan)
 			}
 			if a.Engine == "terraform" || a.Engine == "tofu" || a.Engine == "terragrunt" {
 				dataDir := ".terraform"
@@ -143,11 +172,17 @@ func Invocations(res *shell.Result, opt Options) []Action {
 				}
 				if a.Dir != "" {
 					a.DataDirWritten = writtenAt(written, absPath(a.Dir, dataDir, opt.Home))
+					for _, c := range a.BackendConfig {
+						if backendConfigFile(c) && (slices.Contains(written, writtenUnknown) || writtenAt(written, absPath(a.Dir, c, opt.Home))) {
+							a.BackendConfigWritten = true
+						}
+					}
 				}
 			}
 		}
 		out = append(out, acts...)
 		written = append(written, stepWrites(inv, opt)...)
+		named = append(named, stepNames(inv, opt)...)
 		if engines, t, ok := selects(inv); ok {
 			for _, e := range engines {
 				retarget[e] = t
@@ -287,6 +322,11 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 			// 1.9.0": terraform was an argument, not a command to run.
 			return out
 		}
+		if a.ConfigDir != "" && a.ConfigDir != a.Dir {
+			c := a
+			c.Dir, c.AnyDir, c.ConfigDir = a.ConfigDir, false, ""
+			return append(out, a, c)
+		}
 		return append(out, a)
 	}
 	switch name {
@@ -408,13 +448,10 @@ func absPath(dir, p, home string) string {
 	if strings.HasPrefix(p, "~/") && home != "" {
 		p = filepath.Join(home, p[2:])
 	}
-	if filepath.IsAbs(p) {
-		return filepath.Clean(p)
+	if filepath.IsAbs(p) || dir == "" {
+		return shell.PhysicalJoin("", p)
 	}
-	if dir == "" {
-		return filepath.Clean(p)
-	}
-	return filepath.Join(dir, p)
+	return shell.PhysicalJoin(dir, p)
 }
 
 func isStateFile(p string) bool {
@@ -633,6 +670,98 @@ func selects(inv shell.Invocation) ([]string, string, bool) {
 // tell: an unresolved -out, or one relative to a lost -chdir.
 const writtenUnknown = "\x00unknown"
 
+// pathReaders only read the files they name.
+var pathReaders = map[string]bool{"cat": true, "less": true, "more": true, "head": true, "tail": true, "ls": true, "stat": true,
+	"file": true, "wc": true, "grep": true, "egrep": true, "rg": true, "sha256sum": true, "shasum": true, "md5sum": true, "test": true,
+	"[": true, "du": true, "echo": true, "printf": true, "realpath": true, "readlink": true, "basename": true, "dirname": true}
+
+// stepNames returns the absolute paths a step names in its arguments (a
+// word, or the value of --flag=value), for programs that are not readers or
+// the engines or remote copies, whose writes stepWrites knows.
+func stepNames(inv shell.Invocation, opt Options) []string {
+	if len(inv.Args) == 0 || !inv.Args[0].Resolved || inv.Dir == "" {
+		return nil
+	}
+	name := shell.ProgName(inv.Args[0].Text)
+	if _, engine := engines[name]; engine || pathReaders[name] || remoteCopy(name, inv.Args[1:]) {
+		return nil // stepWrites knows what these write
+	}
+	var out []string
+	for _, w := range inv.Args[1:] {
+		if !w.Resolved || w.Text == "" {
+			continue
+		}
+		t := w.Text
+		if strings.HasPrefix(t, "-") {
+			_, v, ok := strings.Cut(t, "=")
+			if !ok || v == "" {
+				continue
+			}
+			t = v
+		}
+		if strings.Contains(t, "://") {
+			continue
+		}
+		out = append(out, absPath(inv.Dir, t, opt.Home))
+	}
+	return out
+}
+
+// remoteCopy reports whether a command copies between a remote store and
+// local files, with the destination last: scp, rclone copy, aws s3 cp,
+// gsutil cp, gcloud storage cp.
+func remoteCopy(name string, args []shell.Word) bool {
+	var sub []string
+	for _, w := range args {
+		if !strings.HasPrefix(w.Text, "-") {
+			sub = append(sub, w.Text)
+		}
+	}
+	at := func(i int, ws ...string) bool { return len(sub) > i && slices.Contains(ws, sub[i]) }
+	switch name {
+	case "scp":
+		return true
+	case "rclone":
+		return at(0, "copy", "copyto", "sync", "move", "moveto", "copyurl")
+	case "aws":
+		return at(0, "s3") && at(1, "cp", "mv", "sync")
+	case "gsutil":
+		return at(0, "cp", "mv", "rsync")
+	case "gcloud":
+		return at(0, "storage") && at(1, "cp", "mv", "rsync")
+	}
+	return false
+}
+
+// remotePath reports whether p names a remote location: a URL, or
+// host:path with no slash before the colon.
+func remotePath(p string) bool {
+	if strings.Contains(p, "://") {
+		return true
+	}
+	host, _, ok := strings.Cut(p, ":")
+	return ok && host != "" && !strings.Contains(host, "/")
+}
+
+// namedExactly reports whether p itself is among named.
+func namedExactly(named []string, p string) bool {
+	p = guard.Fold(filepath.Clean(p))
+	for _, n := range named {
+		if guard.Fold(filepath.Clean(n)) == p {
+			return true
+		}
+	}
+	return false
+}
+
+// backendConfigFile reports whether a -backend-config value names a file
+// rather than a key=value pair, by the rule preflight.BackendFromConfig
+// reads it with.
+func backendConfigFile(c string) bool {
+	k, _, ok := strings.Cut(c, "=")
+	return !ok || strings.ContainsAny(k, "/\\.")
+}
+
 // writtenAt reports whether p, or a directory holding it, is among written.
 // Names are compared as the file system does (case folded on macOS and
 // Windows).
@@ -707,6 +836,12 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 		for _, p := range paths(args) {
 			out = append(out, abs(p))
 		}
+	case remoteCopy(name, args):
+		// The last argument is the destination; a remote one (s3://b,
+		// host:path) is not written here.
+		if ps := paths(args); len(ps) >= 2 && !remotePath(ps[len(ps)-1]) {
+			out = append(out, abs(ps[len(ps)-1]))
+		}
 	case copiers[name]:
 		// Only cp and install take -t DIR; rsync's -t keeps times.
 		if t, ok := flagValue('t', "--target-directory"); ok && (name == "cp" || name == "install") {
@@ -725,6 +860,16 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 			} else {
 				out = append(out, abs("."))
 			}
+		}
+	case name == "7z" || name == "7za" || name == "7zz" || name == "7zr":
+		if len(args) > 0 && (args[0].Text == "x" || args[0].Text == "e") {
+			d := "."
+			for _, w := range args {
+				if v, ok := strings.CutPrefix(w.Text, "-o"); ok && v != "" {
+					d = v
+				}
+			}
+			out = append(out, abs(d))
 		}
 	case name == "unzip":
 		if d, ok := flagValue('d', ""); ok {
