@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Flurit/applygate/internal/classify"
@@ -24,6 +25,9 @@ type Output struct {
 	// LogPath is the decision log the run appended to ("" when logging was
 	// off), so the caller can do after-decision work such as telemetry.
 	LogPath string
+	// Deadline is when the run's whole budget ends; after-decision work
+	// gets only what is left of it.
+	Deadline time.Time
 }
 
 // Adapter converts one agent's hook format.

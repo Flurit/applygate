@@ -64,6 +64,34 @@
     - **Replace counts as destroy:** a plan that replaces a resource is judged like one that deletes it.
     - **Instance keys:** `protected_resources` ignore `count` and `for_each` keys, so `aws_instance.bastion` covers `aws_instance.bastion[0]`.
     - **Values known only after apply:** a watched attribute unknown until apply (an ingress CIDR, or `deletion_protection` on an update) is a high `unknown-watched` finding.
+  - **The model judge** (findings A13, F1 to F4, F7, F8, F10, F12):
+    - **The cache** keeps only asks and blocks, ignores entries dated in the future, and is keyed on the endpoint and model or the whole command line. Before, a pre-filled `allow` skipped the judge. `applygate check` keeps its own cache.
+    - **The filter** sends these to the judge:
+      - programs started through a local tool's own options (`git -c`, `git config` writes, `tar --to-command`, `sort --compress-program`, `rg --pre`, `go test -exec`, `go build -toolexec`);
+      - `mvn`, `gradle`, `dotnet` and `npm init`;
+      - forced pushes in clustered flags;
+      - files the shell writes outside `/tmp`;
+      - paths outside the working directory after `cd`;
+      - reads of Terraform state, `.tfvars` and more credential files.
+    - **A call that breaks the judge is asked about:** one too large to send, one the model refuses, or one whose answer holds no verdict, in protected and standard environments. The last JSON object with a verdict is the answer.
+    - **Edit content from other hosts:** the judge sees the content of Copilot, OpenCode and Cline edits.
+    - **`claude-cli.sh`** runs from an empty directory with only the user's settings.
+    - **One budget:** the hook's whole run, the judge and telemetry included, fits in 29 seconds.
+  - **MCP translations** (F5, F6, F9, F11):
+    - **Flags:** `is_destroy: 1` or `"yes"` counts as true, and `params` sent as a string is asked about.
+    - **Clusters:** the EKS and GKE cluster names, and Flux159's `flags`, reach the translated command.
+    - **Programs:** a `call_aws` command that is not `aws` is asked about, and so are shell operators in argv arrays.
+  - **Secrets and data** (G1, G2):
+    - **Redaction** covers:
+      - private keys inside JSON;
+      - `--token X`, `--password X` and `set <secret> X`;
+      - `mysql -pX`, `curl -u user:X` and URL userinfo;
+      - `github_pat_`, `glpat-`, `sk-`, `sk_live_` and `AIza` tokens;
+      - names such as `db_pass`.
+
+      `Via` is redacted too.
+    - **Telemetry** sends only known agents, modes, verdicts and version numbers.
+  - **Failure handling** (H2): one function decides whether an error, a panic or the deadline blocks. A panic now follows `on_error` like any other error.
 - **Behaviour changes:**
   - **One-time approvals are off by default.** Only the user config turns them on. The approval key now binds write content and full MCP arguments, the store's lock never waits more than about half a second, and the approve prompt escapes control characters.
   - **`applygate apply` has no `--yes` and no `--plan-json`.** An ask outside a terminal is refused; in CI, gate with `applygate plan-check` and run the engine yourself.

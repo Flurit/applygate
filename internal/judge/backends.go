@@ -78,7 +78,7 @@ func (c Command) Judge(ctx context.Context, in Input) Result {
 		r.Err = fmt.Sprintf("judge command: %v: %s", err, firstLine(errb.String()))
 		return r
 	}
-	answer(&r, out.Bytes())
+	answer(&r, []byte(jsonObject(out.String())))
 	return r
 }
 

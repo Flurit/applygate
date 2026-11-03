@@ -144,9 +144,32 @@ func TestCache(t *testing.T) {
 	if _, ok := c.Get("e", now); ok {
 		t.Fatal("error cached")
 	}
+	c.Put("allow", Result{Verdict: policy.Allow}, now)
+	if _, ok := c.Get("allow", now); ok {
+		t.Fatal("an allow was cached")
+	}
 	c.Max = 1
-	c.Put("b", Result{Verdict: policy.Allow}, now.Add(time.Minute))
+	c.Put("b", Result{Verdict: policy.Block}, now.Add(time.Minute))
 	if _, ok := c.Get("a", now.Add(2*time.Minute)); ok {
 		t.Fatal("oldest entry kept beyond Max")
+	}
+}
+
+func TestJSONObjectTakesTheLastVerdict(t *testing.T) {
+	for in, want := range map[string]string{
+		`{"verdict":"ask","reason":"r"}`: "ask",
+		"Sure. {not json} then ```json\n{\"verdict\":\"block\",\"reason\":\"x {y}\"}\n```": "block",
+		`{"note": {"a":1}} {"verdict":"allow","reason":"ok"}`:                              "allow",
+	} {
+		var r Result
+		answer(&r, []byte(jsonObject(in)))
+		if string(r.Verdict) != want {
+			t.Errorf("%q: got %q (%s), want %s", in, r.Verdict, r.Err, want)
+		}
+	}
+	var r Result
+	answer(&r, []byte(jsonObject("I cannot help with that.")))
+	if !r.Unjudgeable {
+		t.Errorf("an answer without a verdict is not unjudgeable: %+v", r)
 	}
 }

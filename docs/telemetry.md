@@ -25,7 +25,7 @@ One JSON report, schema 1:
 }
 ```
 
-That is the whole list: the applygate version, operating system and architecture, the period the report covers, the number of decisions and of internal errors, and one count per (version, agent, mode, verdict). `agent` is the hook host (`claude`, `codex`) or `human` for `applygate apply`.
+That is the whole list: the applygate version, operating system and architecture, the period the report covers, the number of decisions and of internal errors, and one count per (version, agent, mode, verdict). `agent` is the hook host (`claude`, `codex`, and the other supported hosts) or `human` for `applygate apply`. Only known values leave the machine: an agent, mode or verdict applygate does not know, or a version that is not a version number, is sent as `other`, so text written into the decision log cannot reach a report.
 
 Not sent, ever: commands, paths, repository or directory names, workspace or backend names, AWS profiles or accounts, plan contents, findings, host names, user names, IP-derived data on our side beyond what any HTTP request carries, and no install id, machine id or session id. There is nothing in a report that ties it to the previous one.
 

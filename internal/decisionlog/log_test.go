@@ -26,3 +26,19 @@ func TestReportCountsMCPCallsPerServer(t *testing.T) {
 		t.Fatalf("no MCP line without MCP calls:\n%s", b.String())
 	}
 }
+
+// Ordinary commands keep their text.
+func TestRedactLeavesOrdinaryCommands(t *testing.T) {
+	for _, c := range []string{
+		"terraform plan -out=tfplan",
+		"kubectl get secret app-tls -n prod",
+		"git commit -m 'reset password flow'",
+		"docker run -p 8080:80 nginx",
+		"curl -u admin https://example.com",
+		"aws s3 ls s3://acme-prod-data",
+	} {
+		if got := Redact(c); got != c {
+			t.Errorf("%q became %q", c, got)
+		}
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Flurit/applygate/internal/policy"
+	"github.com/Flurit/applygate/internal/preflight"
 )
 
 // Entry is one logged decision.
@@ -51,35 +52,84 @@ type Judge struct {
 	Error   string         `json:"error,omitempty"`
 }
 
-var secretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`),
-	regexp.MustCompile(`(?i)((?:aws_)?secret_access_key|aws_session_token|password|passwd|token|secret|api[_-]?key|private[_-]?key)(["']?\s*[=:]\s*["']?)([^\s"'&]+)`),
-	regexp.MustCompile(`(?i)(authorization:\s*(?:bearer|basic)\s+)(\S+)`),
-	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`),
-	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`),
-	regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`),
+// Values stop at whitespace, quotes and the shell's separators.
+const secretValue = `[^\s"'&;|$]+`
+
+// secretName matches names of settings, flags and variables that hold a
+// secret: db_pass, aws_secret_access_key, API_TOKEN, client-secret.
+const secretName = `[A-Za-z0-9_.-]*(?:pass|passwd|password|pwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|credentials?)[A-Za-z0-9_-]*`
+
+// redaction is one pattern and what replaces a match; group 1, when
+// present, is kept (the name or flag before the value).
+type redaction struct {
+	re   *regexp.Regexp
+	keep bool
+}
+
+var secretPatterns = []redaction{
+	// Private keys first: the name=value pattern would otherwise eat the
+	// -----BEGIN line and leave the key body.
+	{regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`), false},
+	// Token formats.
+	{regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`), false},
+	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`), false},
+	{regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`), false},
+	{regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{16,}`), false},
+	{regexp.MustCompile(`\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}`), false},
+	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{20,}`), false},
+	{regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`), false},
+	{regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`), false},
+	// Credentials in a URL: scheme://user:PASSWORD@host.
+	{regexp.MustCompile(`(://[^/\s:@]+:)[^@\s/]+(@)`), true},
+	{regexp.MustCompile(`(?i)(authorization:\s*(?:bearer|basic)\s+)\S+`), true},
+	// curl -u user:PASSWORD, --user user:PASSWORD.
+	{regexp.MustCompile(`((?:^|\s)(?:-u|--user)(?:\s+|=)[^\s:"']+:)` + secretValue), true},
+	// mysql -pPASSWORD (attached, as the client takes it).
+	{regexp.MustCompile(`(\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b[^|;&\n]*?\s-p)` + secretValue), true},
+	// name=value and name: value, quoted or not ("password": "x").
+	{regexp.MustCompile(`(?i)(` + secretName + `["']?\s*[=:]\s*["']?)` + secretValue), true},
+	// --token VALUE, --password VALUE: a secret-named flag and the next word.
+	{regexp.MustCompile(`(?i)((?:^|\s)--?` + secretName + `\s+)` + secretValue), true},
+	// aws configure set aws_secret_access_key VALUE, vault write k token VALUE.
+	{regexp.MustCompile(`(?i)(\bset\s+` + secretName + `\s+)` + secretValue), true},
 }
 
 // Redact removes likely secrets from s.
 func Redact(s string) string {
-	for i, re := range secretPatterns {
-		switch i {
-		case 1:
-			s = re.ReplaceAllString(s, "${1}${2}[REDACTED]")
-		case 2:
-			s = re.ReplaceAllString(s, "${1}[REDACTED]")
-		default:
-			s = re.ReplaceAllString(s, "[REDACTED]")
+	for _, r := range secretPatterns {
+		if r.keep {
+			s = r.re.ReplaceAllStringFunc(s, func(m string) string {
+				sub := r.re.FindStringSubmatch(m)
+				out := sub[1] + "[REDACTED]"
+				if len(sub) > 2 {
+					out += sub[2]
+				}
+				return out
+			})
+		} else {
+			s = r.re.ReplaceAllString(s, "[REDACTED]")
 		}
 	}
 	return s
 }
 
 func redactEntry(e *Entry) {
+	// The actions are shared with the caller's decision: redact copies.
+	e.Actions = append([]policy.ActionResult(nil), e.Actions...)
+	for i := range e.Actions {
+		e.Actions[i].Via = append([]string(nil), e.Actions[i].Via...)
+		e.Actions[i].Findings = append([]preflight.Finding(nil), e.Actions[i].Findings...)
+		for j := range e.Actions[i].Findings {
+			e.Actions[i].Findings[j].Evidence = append([]string(nil), e.Actions[i].Findings[j].Evidence...)
+		}
+	}
 	e.Command = Redact(e.Command)
 	for i := range e.Actions {
 		e.Actions[i].Command = Redact(e.Actions[i].Command)
 		e.Actions[i].Why = Redact(e.Actions[i].Why)
+		for j := range e.Actions[i].Via {
+			e.Actions[i].Via[j] = Redact(e.Actions[i].Via[j])
+		}
 		for j := range e.Actions[i].Findings {
 			f := &e.Actions[i].Findings[j]
 			f.Message = Redact(f.Message)

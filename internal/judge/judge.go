@@ -52,12 +52,34 @@ type Result struct {
 	CostUSD float64        `json:"cost_usd"`
 	Cached  bool           `json:"cached,omitempty"`
 	Err     string         `json:"error,omitempty"`
+	// Unjudgeable is set when the call itself kept the judge from
+	// answering: too large to send, refused, or answered with something
+	// that is not a verdict. A network error or a timeout is not, since
+	// the call had no part in it.
+	Unjudgeable bool `json:"unjudgeable,omitempty"`
 }
+
+// MaxCall caps the command or MCP arguments sent to the judge; a larger
+// call is not sent and counts as unjudgeable.
+const MaxCall = 16000
 
 // Judge returns a verdict for one input.
 type Judge interface {
 	Judge(ctx context.Context, in Input) Result
 	Name() string
+}
+
+// Identity names a judge for the cache: the endpoint and model, or the
+// whole command line, so two judges with the same short name never share
+// answers.
+func Identity(j Judge) string {
+	switch x := j.(type) {
+	case OpenAI:
+		return "openai\x00" + x.BaseURL + "\x00" + x.Model + "\x00" + x.ReasoningEffort
+	case Command:
+		return "command\x00" + strings.Join(x.Argv, "\x00")
+	}
+	return j.Name()
 }
 
 // Residual reports whether the rules let the call through without
@@ -169,20 +191,21 @@ const Class = "model-judge"
 func answer(r *Result, b []byte) {
 	var a struct{ Verdict, Reason string }
 	if err := json.Unmarshal(bytes.TrimSpace(b), &a); err != nil {
-		r.Err = "unreadable answer: " + err.Error()
+		r.Err, r.Unjudgeable = "unreadable answer: "+err.Error(), true
 		return
 	}
 	switch v := policy.Verdict(a.Verdict); v {
 	case policy.Allow, policy.Ask, policy.Block:
 		r.Verdict, r.Reason = v, a.Reason
 	default:
-		r.Err = "unknown verdict " + strconv.Quote(a.Verdict)
+		r.Err, r.Unjudgeable = "unknown verdict "+strconv.Quote(a.Verdict), true
 	}
 }
 
 // WriteContent is what a file-writing tool's input puts in the file, as the
 // judge sees it: a Write's content, an Edit's replacement with the text it
-// replaces, each edit of a MultiEdit, a notebook cell, or a patch.
+// replaces, each edit of a MultiEdit, a notebook cell, or a patch, in the
+// field names of every host applygate supports.
 func WriteContent(input json.RawMessage) string {
 	var m map[string]any
 	if json.Unmarshal(input, &m) != nil {
@@ -196,20 +219,31 @@ func WriteContent(input json.RawMessage) string {
 		return "replace:\n" + old + "\nwith:\n" + new
 	}
 	var parts []string
-	for _, k := range []string{"content", "file_text", "new_source", "patch", "patchText"} {
+	// Whole-file and patch fields: Claude Code, Codex, Copilot (file_text),
+	// Cline's write_to_file (content) and replace_in_file (diff, SEARCH and
+	// REPLACE blocks).
+	for _, k := range []string{"content", "file_text", "new_source", "patch", "patchText", "diff"} {
 		if s := str(k); s != "" {
 			parts = append(parts, s)
 		}
 	}
-	if s := str("new_string"); s != "" {
-		parts = append(parts, edit(str("old_string"), s))
+	// Edit pairs: Claude Code (old_string/new_string), Copilot's edit
+	// (old_str/new_str), OpenCode's edit (oldString/newString).
+	pairs := [][2]string{{"old_string", "new_string"}, {"old_str", "new_str"}, {"oldString", "newString"}}
+	for _, p := range pairs {
+		if s := str(p[1]); s != "" {
+			parts = append(parts, edit(str(p[0]), s))
+		}
 	}
 	if edits, ok := m["edits"].([]any); ok {
 		for _, e := range edits {
 			if em, ok := e.(map[string]any); ok {
-				o, _ := em["old_string"].(string)
-				n, _ := em["new_string"].(string)
-				parts = append(parts, edit(o, n))
+				for _, p := range pairs {
+					if n, _ := em[p[1]].(string); n != "" {
+						o, _ := em[p[0]].(string)
+						parts = append(parts, edit(o, n))
+					}
+				}
 			}
 		}
 	}

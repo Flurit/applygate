@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -46,6 +47,9 @@ type Tool struct {
 	Dir string `json:"dir,omitempty"`
 	// Note is shown with the verdict (what the server does, in short).
 	Note string `json:"note,omitempty"`
+	// Program is the program the server runs (call_aws runs aws): a
+	// translation whose command starts with another program is unresolved.
+	Program string `json:"program,omitempty"`
 }
 
 // Case is one command template. In Command, {arg} is replaced by the
@@ -144,19 +148,54 @@ func (t *Table) Translate(fullName string, raw json.RawMessage, cwd string) (Res
 				r.Dir = filepath.Clean(d)
 			}
 			if tl.Shell != "" {
-				// A list holds several commands, each run on its own.
-				r.Command = strings.Join(list(args[tl.Shell], false), "\n")
+				// A list holds several commands, each run on its own; a
+				// string holding a JSON array of strings is that list.
+				v := args[tl.Shell]
+				if sv, ok := v.(string); ok && strings.HasPrefix(strings.TrimSpace(sv), "[") {
+					var arr []any
+					if json.Unmarshal([]byte(sv), &arr) == nil {
+						v = arr
+					}
+				}
+				cmds := list(v, false)
+				r.Command = strings.Join(cmds, "\n")
 				if strings.TrimSpace(r.Command) == "" {
 					r.Command = unresolved(tool, "argument "+tl.Shell+" is missing")
 				}
+				if tl.Program != "" {
+					for _, c := range cmds {
+						if f := strings.Fields(c); len(f) == 0 || f[0] != tl.Program {
+							r.Command = unresolved(tool, "the server runs "+tl.Program+", and "+quote(c)+" does not start with it")
+							break
+						}
+					}
+				}
 				return r, true
+			}
+			// An argument the cases look into must be an object: params
+			// sent as a JSON string cannot be read the way the server does.
+			for _, c := range tl.Cases {
+				for k := range c.When {
+					if head, _, nested := strings.Cut(k, "."); nested {
+						if v, present := args[head]; present {
+							if _, isMap := v.(map[string]any); !isMap {
+								r.Command = unresolved(tool, "argument "+head+" is not an object")
+								return r, true
+							}
+						}
+					}
+				}
 			}
 			for _, c := range tl.Cases {
 				if matches(c.When, args) {
+					var cmd, op string
 					if why, ok := strings.CutPrefix(c.Command, "?"); ok {
-						r.Command = unresolved(tool, expand(strings.TrimSpace(why), args))
+						w, _ := expand(strings.TrimSpace(why), args)
+						r.Command = unresolved(tool, w)
+					} else if cmd, op = expand(c.Command, args); op != "" {
+						r.Command = unresolved(tool, "an argument holds the shell operator "+quote(op))
 					} else {
-						r.Command = expand(c.Command, args)
+						r.Command = cmd
 					}
 					return r, true
 				}
@@ -174,7 +213,13 @@ func unresolved(tool, why string) string {
 	return fmt.Sprintf(`eval "$APPLYGATE_MCP_UNREADABLE" # MCP tool %s: %s`, tool, why)
 }
 
-func expand(tmpl string, args map[string]any) string {
+// shellOps are operator tokens that a server building a command line from
+// argv may hand to a shell; only a bare "|" is modelled (as a pipe).
+var shellOps = map[string]bool{"&&": true, "||": true, ";": true, "&": true, ">": true, ">>": true, "<": true, "|&": true, "<<": true, "2>": true, "&>": true}
+
+// expand fills a template. op is set to the first bare shell operator an
+// array argument holds, which the caller treats as unresolved.
+func expand(tmpl string, args map[string]any) (cmd, op string) {
 	var words []string
 	for _, w := range strings.Fields(tmpl) {
 		m := placeholder.FindStringSubmatch(w)
@@ -183,6 +228,9 @@ func expand(tmpl string, args map[string]any) string {
 			words = append(words, w)
 		case m[3] != "":
 			for _, v := range list(lookup(args, m[1]), true) {
+				if shellOps[v] && op == "" {
+					op = v
+				}
 				if v != "|" {
 					v = quote(v)
 				}
@@ -201,15 +249,18 @@ func expand(tmpl string, args map[string]any) string {
 			}
 		}
 	}
-	return strings.Join(words, " ")
+	return strings.Join(words, " "), op
 }
 
 func matches(when map[string][]string, args map[string]any) bool {
 	for k, vals := range when {
-		v := strings.ToLower(str(lookup(args, k)))
+		raw := lookup(args, k)
+		v := strings.ToLower(str(raw))
 		ok := false
 		for _, want := range vals {
-			if want == "*" && v != "" || strings.ToLower(want) == v {
+			// "true" matches any present value that is not a falsy one:
+			// servers read is_destroy: 1 or "yes" as true.
+			if want == "*" && v != "" || strings.ToLower(want) == v || want == "true" && truthy(raw) {
 				ok = true
 			}
 		}
@@ -251,10 +302,55 @@ func str(v any) string {
 	return ""
 }
 
+// truthy reports whether a present argument counts as true.
+func truthy(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return x
+	case float64:
+		return x != 0
+	case string:
+		switch strings.ToLower(strings.TrimSpace(x)) {
+		case "", "false", "0", "no", "off", "n", "f", "null", "none":
+			return false
+		}
+		return true
+	case []any:
+		return len(x) > 0
+	case map[string]any:
+		return len(x) > 0
+	}
+	return true
+}
+
 // list returns an array argument's elements; a string is one element, or
-// its words when split is set.
+// its words when split is set; an object is its entries as --key=value
+// flags (true alone is --key).
 func list(v any, split bool) []string {
 	switch x := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var out []string
+		for _, k := range keys {
+			name := "--" + strings.TrimLeft(k, "-")
+			switch val := x[k].(type) {
+			case bool:
+				if val {
+					out = append(out, name)
+				}
+			default:
+				if s := str(val); s != "" {
+					out = append(out, name+"="+s)
+				}
+			}
+		}
+		return out
 	case []any:
 		var out []string
 		for _, e := range x {

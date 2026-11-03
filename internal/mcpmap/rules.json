@@ -4,7 +4,7 @@
       "name": "awslabs aws-api-mcp-server",
       "source": "github.com/awslabs/mcp@c6951b9 src/aws-api-mcp-server/awslabs/aws_api_mcp_server/server.py:249-261 (cli_command: one 'aws ...' string or a list of up to 20), core/parser/lexer.py:41-51 (shlex split, must start with aws)",
       "tools": [
-        {"names": ["call_aws"], "requires": ["cli_command"], "shell": "cli_command",
+        {"names": ["call_aws"], "requires": ["cli_command"], "shell": "cli_command", "program": "aws",
          "note": "the server runs each aws command itself, without a shell"}
       ]
     },
@@ -48,7 +48,7 @@
            {"when": {"operation": ["read"]}, "command": "kubectl get {kind} {name} --namespace={namespace}"}
          ]},
         {"names": ["apply_yaml"], "requires": ["yaml_path", "cluster_name"],
-         "cases": [{"command": "kubectl apply -f {yaml_path} --namespace={namespace}"}]},
+         "cases": [{"command": "kubectl apply -f {yaml_path} --namespace={namespace} --cluster={cluster_name}"}]},
         {"names": ["manage_eks_stacks"], "requires": ["operation"],
          "cases": [
            {"when": {"operation": ["delete"]}, "command": "aws cloudformation delete-stack --stack-name eks-{cluster_name}-stack"},
@@ -194,7 +194,7 @@
       "source": "github.com/Flux159/mcp-server-kubernetes@5536776 src/tools/kubectl-generic.ts:16-173, kubectl-delete.ts:16-67, kubectl-scale.ts:11-36, exec_in_pod.ts:29-133, node-management.ts:28-89, kubectl-context.ts:263-322, helm-operations.ts:39-139; kubectl runs via execFileSync, no shell",
       "tools": [
         {"names": ["kubectl_generic"], "requires": ["command"],
-         "cases": [{"command": "kubectl {command} {subCommand} {resourceType} {name} --namespace={namespace} --context={context} {args...}"}]},
+         "cases": [{"command": "kubectl {command} {subCommand} {resourceType} {name} --namespace={namespace} --context={context} {flags...} {args...}"}]},
         {"names": ["kubectl_delete"],
          "cases": [{"command": "kubectl delete {resourceType} {name} --namespace={namespace} --selector={labelSelector} --filename={filename} --context={context}"}]},
         {"names": ["kubectl_apply"],
@@ -253,7 +253,7 @@
            {"command": "kubectl apply -f -"}
          ]},
         {"names": ["patch_k8s_resource"], "requires": ["resourceType", "name", "cluster_name"],
-         "cases": [{"command": "kubectl patch {resourceType} {name} --namespace={namespace}"}]},
+         "cases": [{"command": "kubectl patch {resourceType} {name} --namespace={namespace} --cluster={cluster_name}"}]},
         {"names": ["delete_cluster"], "requires": ["project_id", "location", "cluster_name"],
          "cases": [{"command": "gcloud container clusters delete {cluster_name} --project={project_id} --location={location}"}]},
         {"names": ["delete_node_pool"], "requires": ["project_id", "cluster_name", "node_pool_name"],

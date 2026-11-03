@@ -166,7 +166,7 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// The verdict is out. Usage counts, if the person turned them on, go
 	// after it and are bounded, so they can neither delay nor change it.
 	if o.LogPath != "" {
-		telemetry.AfterDecision(o.LogPath, hook.Version, opt.Env)
+		telemetry.AfterDecision(o.LogPath, hook.Version, opt.Env, o.Deadline)
 	}
 	return o.Exit
 }
@@ -198,7 +198,9 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 		fmt.Fprintln(stderr, "config error:", err)
 		return 2
 	}
-	opt := hook.Options{Env: hook.EnvMap()}
+	// check keeps its own judge cache: what it is asked must never decide
+	// what the hook serves (review finding A13).
+	opt := hook.Options{Env: hook.EnvMap(), JudgeCache: strings.TrimSuffix(config.JudgeCachePath(), ".json") + "-check.json"}
 	if len(planJSON) > 0 {
 		m := map[string]string{}
 		for _, kv := range planJSON {

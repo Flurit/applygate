@@ -54,6 +54,10 @@ type Options struct {
 	NoLog      bool              // tests and selftest
 	Env        map[string]string // process environment
 	Timeout    time.Duration     // internal decision deadline
+	// Budget is how long the whole run may take, judge, approvals, log and
+	// telemetry included: under the host's own hook timeout (30 s in the
+	// Claude Code plugin). Zero means DefaultBudget.
+	Budget time.Duration
 	// PlanJSON overrides how saved plans are read (tests, harness replay).
 	PlanJSON func(engine, dir, planfile string) ([]byte, error)
 	// NoGit disables the git lockfile check (tests).
@@ -209,11 +213,57 @@ func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
 // onFailure equivalent: a hook process that panics and exits non-cleanly would
 // otherwise let the tool call run. With this recovery the only remaining
 // Codex fail-open case is the binary not starting at all.
+// DefaultBudget is the whole run's time limit, one second under the
+// Claude Code plugin's 30-second hook timeout.
+const DefaultBudget = 29 * time.Second
+
+// judgeReserve is kept back from the budget when the judge is asked: the
+// command backend's WaitDelay (1 s) and a 2 s margin for the log and
+// rendering.
+const judgeReserve = 3 * time.Second
+
+// failureBlocks decides, for every way a run can fail (an error, a panic,
+// the internal deadline), whether the call is blocked. Observe mode never
+// blocks; without a config the guard fails closed. A timeout blocks in
+// every tier, because the call was never analyzed. Other failures follow
+// on_error, where auto judges the call at the most protected tier under the
+// repository root, since a command that was not analyzed could run anywhere
+// under it.
+func failureBlocks(cfg *config.Config, cwd string, timeout bool) bool {
+	switch {
+	case cfg == nil:
+		return true
+	case cfg.Observe():
+		return false
+	case timeout:
+		return true
+	}
+	switch cfg.OnError {
+	case "allow":
+		return false
+	case "auto":
+		root := cfg.Root
+		if root == "" {
+			root = cwd
+		}
+		if root == "" {
+			return true
+		}
+		return cfg.ResolveUnder(root, config.Signals{}, "applygate could not decide").Tier == config.Protected
+	}
+	return true
+}
+
 func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	start := time.Now()
 	if opt.Timeout == 0 {
 		opt.Timeout = 25 * time.Second
 	}
+	if opt.Budget == 0 {
+		opt.Budget = DefaultBudget
+	}
+	deadline := start.Add(opt.Budget)
+	cwd := ""
 	raw, err := io.ReadAll(io.LimitReader(in, 8<<20))
 	entry := decisionlog.Entry{Time: start.UTC(), Version: Version, Agent: a.Name()}
 	userCfg, uerr := config.Load(opt.UserConfig, "")
@@ -230,6 +280,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		return config.DefaultLogPath()
 	}
 	finish := func(cfg *config.Config, o Output) Output {
+		o.Deadline = deadline
 		entry.DurationMS = float64(time.Since(start).Microseconds()) / 1000
 		if !opt.NoLog {
 			o.LogPath = logPath(cfg)
@@ -242,30 +293,10 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	// fail applies the error behavior. Without a usable config the guard
 	// fails closed: an unknown environment is treated as protected.
 	fail := func(cfg *config.Config, cwd, msg string) Output {
-		block := true
+		block := failureBlocks(cfg, cwd, false)
 		mode := "enforce"
 		if cfg != nil {
 			mode = cfg.Mode
-			switch cfg.OnError {
-			case "allow":
-				block = false
-			case "auto":
-				// The command was not analyzed, so it may run anywhere under
-				// the repository: judge it at the most protected tier there,
-				// not at the directory it starts in.
-				tier := config.Protected
-				root := cfg.Root
-				if root == "" {
-					root = cwd
-				}
-				if root != "" {
-					tier = cfg.ResolveUnder(root, config.Signals{}, "applygate could not decide").Tier
-				}
-				block = tier == config.Protected
-			}
-			if cfg.Observe() {
-				block = false
-			}
 		}
 		entry.Error, entry.Mode = msg, mode
 		entry.Verdict = policy.Block
@@ -279,22 +310,11 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		return finish(cfg, a.Fail(block, "applygate: "+msg))
 	}
 	// A panic that escapes the normal paths (including policy.Run's own
-	// recover) still fails closed: block unless observe mode is in effect.
-	// This is what makes a Codex hook that panics block rather than fail open.
+	// recover) is a failure like any other. This is what makes a Codex hook
+	// that panics block rather than fail open.
 	defer func() {
 		if p := recover(); p != nil {
-			msg := fmt.Sprintf("internal error: %v", p)
-			block := recoverCfg == nil || !recoverCfg.Observe()
-			entry.Error = msg
-			entry.Verdict = policy.Block
-			entry.Enforced = policy.Allow
-			if block {
-				entry.Enforced = policy.Block
-				msg += " (applygate fails closed here)"
-			} else {
-				msg += " (observe mode: allowed)"
-			}
-			out = finish(recoverCfg, a.Fail(block, "applygate: "+msg))
+			out = fail(recoverCfg, cwd, fmt.Sprintf("internal error: %v", p))
 		}
 	}()
 	if err != nil {
@@ -315,6 +335,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		return pass // not an event we check; nothing to log
 	}
 	entry.Session, entry.Tool, entry.Cwd, entry.Command, entry.Paths = ev.Session, ev.Tool, ev.Cwd, ev.Command, ev.Paths
+	cwd = ev.Cwd
 	if ev.Kind == policy.KindOther {
 		return pass // tools applygate does not inspect are not logged
 	}
@@ -337,7 +358,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 				return finish(cfg, pass)
 			}
 			d := policy.Decision{Verdict: policy.Allow, Enforced: policy.Allow, Mode: cfg.Mode, Notes: entry.Notes}
-			jctx, cancel := judgeContext(start, opt)
+			jctx, cancel := judgeContext(deadline)
 			d, entry.Judge = Judge(jctx, ev, d, cfg, opt)
 			cancel()
 			if d.Verdict == policy.Allow {
@@ -377,7 +398,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 			// in every tier (not just protected), because an unchecked command
 			// in a disposable tier can still reach a protected one. Observe
 			// mode still never blocks. In-flight work was cancelled via ctx.
-			block := !cfg.Observe()
+			block := failureBlocks(cfg, ev.Cwd, true)
 			msg := fmt.Sprintf("decision timed out after %s; cancelled in-flight plan/subprocess work", opt.Timeout)
 			entry.Error, entry.Verdict, entry.Enforced = msg, policy.Block, policy.Allow
 			if block {
@@ -390,17 +411,17 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		}
 		return fail(cfg, ev.Cwd, err.Error())
 	}
-	jctx, cancel := judgeContext(start, opt)
+	jctx, cancel := judgeContext(deadline)
 	defer cancel()
 	d, entry.Judge = Judge(jctx, ev, d, cfg, opt)
 	return finish(cfg, decided(a, ev, d, cfg, opt, &entry))
 }
 
-// judgeContext ends 3 seconds after the rules' own deadline, so the hook
-// stays inside the host's timeout (30s in the Claude Code plugin) even when
-// the rules used all of theirs; the judge's own timeout applies within it.
-func judgeContext(start time.Time, opt Options) (context.Context, context.CancelFunc) {
-	return context.WithDeadline(context.Background(), start.Add(opt.Timeout+3*time.Second))
+// judgeContext gives the judge what is left of the run's budget, less the
+// reserve for its process to exit and for the log; the judge's own timeout
+// applies within it.
+func judgeContext(deadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(context.Background(), deadline.Add(-judgeReserve))
 }
 
 // decided applies one-time approvals, records the decision and renders it.

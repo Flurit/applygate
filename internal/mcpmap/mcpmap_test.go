@@ -77,3 +77,20 @@ func TestDocsListEveryServer(t *testing.T) {
 		}
 	}
 }
+
+func TestTranslateEdgeCases(t *testing.T) {
+	for _, c := range []struct{ tool, args, want string }{
+		// Falsy values are not true.
+		{"mcp__tfc__create_run", `{"workspace_id":"ws-1","params":{"is_destroy":0}}`, "terraform plan"},
+		{"mcp__tfc__create_run", `{"workspace_id":"ws-1","params":{"is_destroy":"false"}}`, "terraform plan"},
+		// A bare shell operator in an argv array is not quoted away (F11).
+		{"mcp__sh__run_process", `{"argv":["ls","&&","terraform","destroy"]}`, "APPLYGATE_MCP_UNREADABLE"},
+		// flags of kubectl_generic become command-line flags (F6).
+		{"mcp__k8s__kubectl_generic", `{"command":"delete","resourceType":"ns","name":"x","flags":{"context":"prod-eks","wait":true}}`, "--context=prod-eks --wait"},
+	} {
+		r, ok := Rules().Translate(c.tool, json.RawMessage(c.args), "/repo")
+		if !ok || !strings.Contains(r.Command, c.want) {
+			t.Errorf("%s %s: got %q, want it to contain %q", c.tool, c.args, r.Command, c.want)
+		}
+	}
+}

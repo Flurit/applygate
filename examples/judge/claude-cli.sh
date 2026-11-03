@@ -9,12 +9,19 @@
 #
 # applygate writes one request as JSON on stdin ({"system", "prompt",
 # "schema", "call"}); this prints {"verdict": ..., "reason": ...}.
+#
+# claude runs from an empty temporary directory with only the user's
+# settings, so the agent's repository (its CLAUDE.md, settings and hooks)
+# does not reach the judge.
 set -eu
 req=$(cat)
 system=$(printf '%s' "$req" | jq -r .system)
 schema=$(printf '%s' "$req" | jq -c .schema)
+tmp=$(mktemp -d)
+trap 'rmdir "$tmp"' EXIT
+cd "$tmp"
 printf '%s' "$req" | jq -r .prompt |
 	claude -p --model "${APPLYGATE_JUDGE_MODEL:-claude-haiku-5-5}" --effort low \
 		--system-prompt "$system" --tools "" --json-schema "$schema" \
-		--output-format json --no-session-persistence |
+		--setting-sources user --output-format json --no-session-persistence |
 	jq -ce '.structured_output // error("no structured answer")'
