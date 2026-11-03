@@ -290,7 +290,7 @@
       "source": "wonderwhy-er/DesktopCommanderMCP@9a171d1 src/tools/schemas.ts:27-181 (start_process runs <shell> -c command; interact_with_process writes input to a running shell); g0t4/mcp-server-commands@bc62283 src/tools.ts:25-57 (run_process command_line through a shell, or argv) and @fb52a13 src/index.ts:97-120 (run_command); tumf/mcp-shell-server@c1c8059 server.py:151-190 (command argv, a bare | starts a pipeline); MladenSU/cli-mcp-server@5d30d70 server.py:343-360 (run_command); rusiaaman/wcgw@339201a src/wcgw/types_.py:145-241 (BashCommand into a persistent bash); oraios/serena@ede329a src/serena/tools/cmd_tools.py:27-54; ferrislucas/iterm-mcp@936182b src/index.ts:29-82 (types into the active terminal)",
       "tools": [
         {"names": ["start_process"], "requires": ["command", "timeout_ms"], "shell": "command", "shell_arg": "shell"},
-        {"names": ["interact_with_process"], "requires": ["pid", "input"], "shell": "input",
+        {"names": ["interact_with_process"], "requires": ["pid", "input"], "shell": "input", "persistent": true,
          "note": "input typed into a running process, judged as a shell command"},
         {"names": ["run_process"], "requires": ["command_line"], "shell": "command_line", "dir": "cwd", "stdin": ["stdin", "stdin_text"]},
         {"names": ["run_process"], "requires": ["argv"], "dir": "cwd", "stdin": ["stdin", "stdin_text"],
@@ -299,7 +299,7 @@
          "note": "cli-mcp-server's run_command has no workdir argument, so a workdir is not proof of the directory"},
         {"names": ["shell_execute"], "requires": ["command"], "dir": "directory",
          "cases": [{"command": "{command...}"}]},
-        {"names": ["BashCommand"],
+        {"names": ["BashCommand"], "persistent": true,
          "note": "typed into a persistent bash session",
          "cases": [
            {"when": {"type": ["command"]}, "command": "{command|raw}"},
@@ -312,7 +312,7 @@
            {"when": {"action_json.type": ["status_check", "send_specials"]}, "command": "true"}
          ]},
         {"names": ["execute_shell_command"], "requires": ["command"], "shell": "command", "dir": "cwd"},
-        {"names": ["write_to_terminal"], "requires": ["command"], "shell": "command",
+        {"names": ["write_to_terminal"], "requires": ["command"], "shell": "command", "persistent": true,
          "note": "typed into the active iTerm tab"}
       ]
     }

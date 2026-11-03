@@ -66,6 +66,10 @@ type Tool struct {
 	// directory argument, so the directory argument is not proof of where
 	// the command runs; the call is judged as if it named none.
 	SharedDir bool `json:"shared_dir,omitempty"`
+	// Persistent is set when the input goes to a shell that keeps running
+	// between calls, so what one call defines (an alias, a function, an
+	// exported variable) applies to the next.
+	Persistent bool `json:"persistent,omitempty"`
 }
 
 // Case is one command template. In Command, {arg} is replaced by the
@@ -90,6 +94,9 @@ type Result struct {
 	Command string
 	Dir     string // "" when the call names no absolute directory
 	Note    string
+	// Persistent: the input is typed into a shell that keeps its state
+	// between calls.
+	Persistent bool
 }
 
 var table Table
@@ -172,19 +179,21 @@ func (t *Table) Translate(fullName string, raw json.RawMessage, cwd string) (Res
 	// directory is the one they agree on, else unknown.
 	var cmds, servers []string
 	dir := all[0].Dir
+	persistent := false
 	for _, r := range all {
+		persistent = persistent || r.Persistent
 		cmds = append(cmds, "( "+r.Command+"\n)")
 		servers = append(servers, r.Server)
 		if r.Dir != dir {
 			dir = ""
 		}
 	}
-	return Result{Server: strings.Join(servers, " or "), Command: strings.Join(cmds, "\n"), Dir: dir,
+	return Result{Server: strings.Join(servers, " or "), Command: strings.Join(cmds, "\n"), Dir: dir, Persistent: persistent,
 		Note: "the tool name and arguments fit several servers; each reading is judged"}, true
 }
 
 func translateOne(s Server, tl Tool, tool string, args map[string]any, parseErr error) Result {
-	r := Result{Server: s.Name, Note: tl.Note}
+	r := Result{Server: s.Name, Note: tl.Note, Persistent: tl.Persistent}
 	if parseErr != nil {
 		r.Command = unresolved(tool, "its arguments are not a JSON object")
 		return r

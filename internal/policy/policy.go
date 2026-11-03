@@ -129,6 +129,9 @@ type Event struct {
 	// cd or -chdir inside the command establishes the directory for that
 	// invocation. The zero value fails closed on purpose.
 	DirKnown bool `json:"dir_known"`
+	// Persistent is set for input typed into a shell that keeps running
+	// between calls (an MCP terminal tool).
+	Persistent bool `json:"persistent,omitempty"`
 	// Args are an MCP call's raw arguments (KindMCP); Command then holds
 	// the compact copy kept in the log.
 	Args json.RawMessage `json:"-"`
@@ -139,6 +142,9 @@ type Event struct {
 
 // Deps are the effects Decide may use. Tests replace them.
 type Deps struct {
+	// Ctx bounds the subprocesses a decision runs (git for the lock file);
+	// nil means context.Background.
+	Ctx      context.Context
 	Env      map[string]string // process environment of the hook
 	ReadFile func(string) ([]byte, error)
 	// PlanJSON returns "show -json" output for a saved plan.
@@ -398,7 +404,16 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 		actions = classify.Invocations(res, copt)
 		notes = res.Notes
 		if cfg.StrictShapesOn() {
-			actions = append(actions, shapeActions(ev, res)...)
+			actions = append(actions, shapeActions(ev, res, deps)...)
+		}
+		if ev.Persistent {
+			// Each call is judged on its own, so state one call leaves in
+			// the shell (an alias for git, a function, an exported
+			// profile) would change what a later, plain-looking call runs.
+			if why := shell.DefinesState(ev.Command); why != "" {
+				actions = append(actions, classify.Action{Class: classify.Tampering, Engine: "shell", Command: ev.Command, Dir: ev.Cwd,
+					Why: "typed into a shell that keeps running between calls: " + why + " stays for later calls, which are judged on their own"})
+			}
 		}
 		// apply_patch run from the shell (Codex puts it on PATH) edits the
 		// files its patch names, like the apply_patch tool.
@@ -1200,10 +1215,16 @@ func isTerraform(engine string) bool {
 // plain: one per directory its programs are known to run in, each judged at
 // that directory's tier: ask in protected, allow elsewhere. A part the
 // analysis lost is judged by the command's own actions.
-func shapeActions(ev Event, res *shell.Result) []classify.Action {
+func shapeActions(ev Event, res *shell.Result, deps Deps) []classify.Action {
 	ok, why := shell.PlainShape(ev.Command, res)
 	if ok {
-		return nil
+		ctx := deps.Ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if why = engineState(ctx, res, deps.Env); why == "" {
+			return nil
+		}
 	}
 	dirs := map[string]bool{ev.Cwd: true}
 	for _, inv := range res.Invocations {

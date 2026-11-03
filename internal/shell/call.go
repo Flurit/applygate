@@ -287,6 +287,13 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			case !rest[i].Resolved:
 				a.problem(st, via, "hash "+joinWords(rest), "hash with an argument that cannot be resolved statically")
 				return
+			case strings.Contains(t, "=") && !strings.HasPrefix(t, "-"):
+				// zsh: hash NAME=PATH makes NAME run PATH.
+				n, p, _ := strings.Cut(t, "=")
+				if st.hashed == nil {
+					st.hashed = map[string]Word{}
+				}
+				st.hashed[n] = Word{Text: p, Resolved: true, Prefix: p}
 			}
 		}
 		return
