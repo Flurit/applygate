@@ -18,6 +18,7 @@ import (
 
 	"github.com/Flurit/applygate/internal/classify"
 	"github.com/Flurit/applygate/internal/config"
+	"github.com/Flurit/applygate/internal/guard"
 	"github.com/Flurit/applygate/internal/plangate"
 	"github.com/Flurit/applygate/internal/preflight"
 	"github.com/Flurit/applygate/internal/shell"
@@ -184,6 +185,24 @@ type Decision struct {
 	Notes    []string       `json:"notes,omitempty"`
 }
 
+// GuardOptions returns the classifier options for cfg in env: the guard
+// patterns, and the guard set that also knows where guard files live under
+// the user's home and the repository root.
+func GuardOptions(cfg *config.Config, env map[string]string) classify.Options {
+	home := env["HOME"]
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	paths := cfg.GuardPaths()
+	return classify.Options{ProtectedPaths: paths, Guard: guard.New(paths, cfg.GuardTargets(home)), Home: home}
+}
+
+// ShellOptions returns the analyzer options for a command run in dir.
+func ShellOptions(cfg *config.Config, copt classify.Options, dir string, env map[string]string, read func(string) ([]byte, error)) shell.Options {
+	return shell.Options{Dir: dir, Env: env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ReadFile: read,
+		ProtectedPaths: copt.ProtectedPaths, ProtectedPath: copt.Guard.Protected, GuardNeedles: copt.Guard.Needles(copt.Home)}
+}
+
 // Decide evaluates an event. It does not write the log.
 func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 	if deps.ReadFile == nil {
@@ -192,14 +211,21 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 	if deps.Rules == nil {
 		deps.Rules = plangate.DefaultRules()
 	}
-	copt := classify.Options{ProtectedPaths: cfg.GuardPaths(), Home: deps.Env["HOME"]}
+	copt := GuardOptions(cfg, deps.Env)
 	var actions []classify.Action
 	var notes []string
 	switch ev.Kind {
 	case KindShell:
-		res := shell.Analyze(ev.Command, shell.Options{Dir: ev.Cwd, Env: deps.Env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ReadFile: deps.ReadFile, ProtectedPaths: copt.ProtectedPaths, ProtectedPath: func(p string) bool { return classify.IsProtectedPath(p, copt.ProtectedPaths) }})
+		res := shell.Analyze(ev.Command, ShellOptions(cfg, copt, ev.Cwd, deps.Env, deps.ReadFile))
 		actions = classify.Invocations(res, copt)
 		notes = res.Notes
+		// apply_patch run from the shell (Codex puts it on PATH) edits the
+		// files its patch names, like the apply_patch tool.
+		if strings.Contains(ev.Command, "apply_patch") || strings.Contains(ev.Command, "applypatch") {
+			for _, p := range classify.PatchPaths(ev.Command) {
+				actions = append(actions, classify.FileWrite("apply_patch", p, ev.Cwd, copt)...)
+			}
+		}
 	case KindWrite:
 		for _, p := range ev.Paths {
 			actions = append(actions, classify.FileWrite(ev.Tool, p, ev.Cwd, copt)...)
@@ -389,6 +415,12 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		res.Matched = append([]string{fmt.Sprintf("command directory not reported by %s; judged at the session root %s (unknown_dir: session_root)", orHost(ev.Agent), a.Dir)}, res.Matched...)
 	}
 	r.Tier, r.Env, r.Matched = res.Tier, res.Env, res.Matched
+	if a.DataDirWritten && r.Tier.Rank() < config.Protected.Rank() {
+		// The workspace and backend this directory records are rewritten by
+		// an earlier step of the command, so they cannot tell the target.
+		r.Tier, r.Env = config.Protected, "unknown"
+		r.Matched = append(r.Matched, "an earlier step of this command rewrites "+filepath.Join(a.Dir, ".terraform")+", so the workspace and backend it selects are unknown; judged as protected")
+	}
 	r.Matched = append(r.Matched, dirNotes...)
 	if a.Dir == "" && tf {
 		r.Matched = append(r.Matched, "working directory could not be resolved statically")
@@ -462,6 +494,13 @@ func lineageCheck(a classify.Action, be *preflight.Backend, stale preflight.Find
 // planGate runs the saved-plan checks and returns the effective class
 // (Destroy when the plan deletes resources).
 func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps, recorded, declared *preflight.Backend) classify.Class {
+	if a.PlanWritten {
+		// The plan on disk now is not the one that will be applied: an
+		// earlier step of this command writes it (plan -out, cp, a download).
+		r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-unverifiable", Severity: preflight.Critical,
+			Message: "an earlier step of this command writes the saved plan " + a.PlanFile + ", so the plan that would be applied cannot be checked; run the steps separately"})
+		return classify.ApplySavedPlan
+	}
 	planPath := a.PlanFile
 	if !filepath.IsAbs(planPath) && a.Dir != "" {
 		planPath = filepath.Join(a.Dir, planPath)

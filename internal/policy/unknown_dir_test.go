@@ -26,8 +26,22 @@ func writeRepo(t *testing.T, cfg string, dirs ...string) string {
 	return root
 }
 
+// loadCfg loads root's config with userYAML as the user config. Settings
+// that loosen protection (strict: false, default_tier, name_hints: false)
+// apply only from the user config, so those lines of the repository's
+// config are passed to it as user settings, which is what a team using them
+// does.
 func loadCfg(t *testing.T, userYAML, root string) *config.Config {
 	t.Helper()
+	if b, err := os.ReadFile(filepath.Join(root, config.FileName)); err == nil {
+		for _, line := range strings.Split(string(b), "\n") {
+			for _, k := range []string{"strict:", "default_tier:", "name_hints:"} {
+				if strings.HasPrefix(line, k) {
+					userYAML += line + "\n"
+				}
+			}
+		}
+	}
 	user := ""
 	if userYAML != "" {
 		user = filepath.Join(t.TempDir(), "config.yaml")

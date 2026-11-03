@@ -60,20 +60,20 @@ var isTerminal = func(r io.Reader) bool {
 	return errno == 0
 }
 
+// applyPlanJSON replaces how apply reads a saved plan's JSON (tests only).
+var applyPlanJSON func(engine, dir, planfile string) ([]byte, error)
+
 func cmdApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("apply", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	cwd := fs.String("cwd", "", "directory the plan belongs to (default: current)")
 	engine := fs.String("engine", "terraform", "binary that applies the plan: terraform, tofu or a path")
-	yes := fs.Bool("yes", false, "outside a terminal, approve an ask verdict without a prompt (never in a protected tier)")
 	noLog := fs.Bool("no-log", false, "do not write the decision log")
-	var planJSON multiFlag
-	fs.Var(&planJSON, "plan-json", "PLANFILE=JSON: use this JSON for the saved plan instead of running show (tests)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() < 1 {
-		fmt.Fprintln(stderr, "usage: applygate apply [--cwd DIR] [--engine terraform|tofu] [--yes] <planfile> [engine apply arguments]")
+		fmt.Fprintln(stderr, "usage: applygate apply [--cwd DIR] [--engine terraform|tofu] <planfile> [engine apply arguments]")
 		return 2
 	}
 	planfile, extra := fs.Arg(0), fs.Args()[1:]
@@ -91,20 +91,10 @@ func cmdApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	for _, d := range cfg.Deprecations {
 		fmt.Fprintln(stderr, "applygate: note:", d)
 	}
-	opt := hook.Options{Env: hook.EnvMap()}
-	if len(planJSON) > 0 {
-		m := map[string]string{}
-		for _, kv := range planJSON {
-			k, v, _ := strings.Cut(kv, "=")
-			m[k] = v
-		}
-		opt.PlanJSON = func(_, _, pf string) ([]byte, error) {
-			if p, ok := m[pf]; ok {
-				return os.ReadFile(p)
-			}
-			return nil, fmt.Errorf("no --plan-json for %s", pf)
-		}
-	}
+	// The plan is always read with the engine's own show: there is no flag
+	// that substitutes it, because an agent could use one to have a harmless
+	// plan judged and a destructive one applied. Tests set applyPlanJSON.
+	opt := hook.Options{Env: hook.EnvMap(), PlanJSON: applyPlanJSON}
 	// The policy judges the engine by name (terraform, tofu, terragrunt); the
 	// path given to --engine is only what gets executed.
 	engineName := filepath.Base(*engine)
@@ -157,15 +147,10 @@ func cmdApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				return 4
 			}
 			logIt("ask: confirmed at the terminal by typing " + token)
-		case *yes && tier != config.Protected:
-			fmt.Fprintf(stderr, "applygate: ask approved with --yes (tier %s)\n", tier)
-			logIt("ask: approved non-interactively with --yes")
-		case *yes:
-			fmt.Fprintln(stderr, "applygate: --yes cannot approve an apply in a protected tier; run this in a terminal")
-			logIt("ask: --yes refused in a protected tier")
-			return 4
 		default:
-			fmt.Fprintln(stderr, "applygate: this apply needs an interactive confirmation; run it in a terminal (or pass --yes outside protected tiers)")
+			// There is no non-interactive approval: in CI, gate with
+			// applygate plan-check and run the engine yourself.
+			fmt.Fprintf(stderr, "applygate: this apply needs an interactive confirmation (tier %s); run it in a terminal, or in CI use applygate plan-check before terraform apply\n", tier)
 			logIt("ask: no terminal to confirm")
 			return 4
 		}

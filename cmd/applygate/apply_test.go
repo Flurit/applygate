@@ -11,7 +11,7 @@ import (
 
 // applyRepo writes a repository with protected, standard and disposable
 // directories, an empty saved plan in each (the plan's JSON comes from
-// --plan-json), and returns the root.
+// applyPlanJSON), and returns the root.
 func applyRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -35,6 +35,18 @@ type fakeExec struct {
 	code  int
 }
 
+// withPlan makes apply read tfplan's JSON from file.
+func withPlan(t *testing.T, file *string) {
+	old := applyPlanJSON
+	applyPlanJSON = func(_, _, pf string) ([]byte, error) {
+		if pf != "tfplan" {
+			return nil, os.ErrNotExist
+		}
+		return os.ReadFile(*file)
+	}
+	t.Cleanup(func() { applyPlanJSON = old })
+}
+
 func (f *fakeExec) run(bin string, args []string, dir string, _ io.Reader, _, _ io.Writer) int {
 	f.calls = append(f.calls, append([]string{bin}, args...))
 	f.dir = dir
@@ -49,9 +61,12 @@ func TestApplyJudgesThePlanBeforeRunningTheEngine(t *testing.T) {
 	oldExec, oldTTY := applyExec, isTerminal
 	applyExec, isTerminal = fe.run, func(io.Reader) bool { return false }
 	defer func() { applyExec, isTerminal = oldExec, oldTTY }()
+	var plan string
+	withPlan(t, &plan)
 	run := func(dir string, planJSON string, extra ...string) (int, string) {
 		var out, errb bytes.Buffer
-		args := append([]string{"--no-log", "--cwd", filepath.Join(root, dir), "--plan-json", "tfplan=" + planJSON}, extra...)
+		plan = planJSON
+		args := append([]string{"--no-log", "--cwd", filepath.Join(root, dir)}, extra...)
 		args = append(args, "tfplan")
 		rc := cmdApply(args, &bytes.Buffer{}, &out, &errb)
 		return rc, out.String() + errb.String()
@@ -67,22 +82,12 @@ func TestApplyJudgesThePlanBeforeRunningTheEngine(t *testing.T) {
 	if rc != 7 || len(fe.calls) != 1 || strings.Join(fe.calls[0], " ") != "terraform apply tfplan" || fe.dir != filepath.Join(root, "envs/dev") {
 		t.Fatalf("disposable destroy: rc %d calls %v dir %s", rc, fe.calls, fe.dir)
 	}
-	// Standard tier asks; without a terminal and without --yes it is refused.
+	// Standard tier asks; without a terminal it is refused: there is no
+	// non-interactive approval.
 	fe.calls = nil
-	rc, text = run("envs/stage", destroy)
+	rc, text = run("envs/stage", destroy, "--engine", "tofu")
 	if rc != 4 || len(fe.calls) != 0 || !strings.Contains(text, "interactive confirmation") {
 		t.Fatalf("standard destroy, no tty: rc %d calls %v text %q", rc, fe.calls, text)
-	}
-	// --yes approves outside protected tiers and forwards extra engine arguments.
-	rc, _ = run("envs/stage", destroy, "--yes", "--engine", "tofu")
-	if rc != 7 || len(fe.calls) != 1 || strings.Join(fe.calls[0], " ") != "tofu apply tfplan" {
-		t.Fatalf("standard destroy --yes: rc %d calls %v", rc, fe.calls)
-	}
-	// --yes never approves a protected ask (a create plan asks in protected here because of the exposure rule).
-	fe.calls = nil
-	rc, text = run("envs/prod", create, "--yes")
-	if rc != 4 || len(fe.calls) != 0 || !strings.Contains(text, "protected tier") {
-		t.Fatalf("protected ask --yes: rc %d calls %v text %q", rc, fe.calls, text)
 	}
 	// A clean plan in a standard directory applies without a prompt.
 	fe.calls = nil
@@ -99,9 +104,10 @@ func TestApplyTypedConfirmationAtTheTerminal(t *testing.T) {
 	oldExec, oldTTY := applyExec, isTerminal
 	applyExec, isTerminal = fe.run, func(io.Reader) bool { return true }
 	defer func() { applyExec, isTerminal = oldExec, oldTTY }()
+	withPlan(t, &destroy)
 	run := func(typed string) (int, string) {
 		var out, errb bytes.Buffer
-		rc := cmdApply([]string{"--no-log", "--cwd", filepath.Join(root, "envs/stage"), "--plan-json", "tfplan=" + destroy, "tfplan"},
+		rc := cmdApply([]string{"--no-log", "--cwd", filepath.Join(root, "envs/stage"), "tfplan"},
 			strings.NewReader(typed), &out, &errb)
 		return rc, errb.String()
 	}

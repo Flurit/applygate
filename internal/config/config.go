@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/Flurit/applygate/internal/classify"
+	"github.com/Flurit/applygate/internal/guard"
 	"github.com/Flurit/applygate/internal/shell"
 )
 
@@ -69,8 +70,9 @@ type Config struct {
 	UnknownDir string            `yaml:"unknown_dir"`
 	Aliases    map[string]string `yaml:"aliases"`
 	// Approvals lets a person allow one asked command with `applygate
-	// approve` on agents that cannot show an ask prompt (default true). A
-	// repository config may turn it off but not on.
+	// approve` on agents that cannot show an ask prompt. It is off by
+	// default: on one machine the agent can reach any terminal the person
+	// can, so only the user config may turn it on, knowing that.
 	Approvals *bool `yaml:"approvals"`
 	// Judge sends calls the rules let through without recognizing anything
 	// to a language model, which may make the verdict stricter, never
@@ -223,7 +225,7 @@ func (c *Config) UnknownDirMostProtected() bool {
 	return c.UnknownDir != UnknownDirSessionRoot
 }
 func (c *Config) UseNameHints() bool    { return on(c.NameHints, true) }
-func (c *Config) ApprovalsOn() bool     { return on(c.Approvals, true) }
+func (c *Config) ApprovalsOn() bool     { return on(c.Approvals, false) }
 func (c *Config) Observe() bool         { return c.Mode == "observe" }
 func (c *Config) StaleStateCheck() bool { return on(c.Preflight.StaleState, true) }
 func (c *Config) LockfileCheck() bool   { return on(c.Preflight.Lockfile, true) }
@@ -347,18 +349,48 @@ func FindRepoConfig(dir string) string {
 	return ""
 }
 
-// Load reads the user config (if userPath is non-empty and exists) and the
-// repository config found from dir, repository values taking precedence.
+// RepoConfigs returns every repository config from the outermost ancestor
+// of dir down to dir, outermost first.
+func RepoConfigs(dir string) []string {
+	var out []string
+	for d := dir; d != "" && d != "."; d = filepath.Dir(d) {
+		for _, name := range []string{FileName, LegacyFileName} {
+			p := filepath.Join(d, name)
+			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+				out = append([]string{p}, out...)
+				break
+			}
+		}
+		if parent := filepath.Dir(d); parent == d {
+			break
+		}
+	}
+	return out
+}
+
+// Load reads the user config (if userPath is non-empty and exists) and every
+// repository config from the outermost ancestor of dir down to dir.
+//
+// Only the user config may loosen protection. The outermost repository
+// config is the repository's: it defines the environments, and may tighten
+// the rest. A nested one (a subproject, a cloned tool) may only add
+// protected environments and other protection; it never replaces the
+// repository's config. Settings a repository config may not make are
+// ignored and noted in Deprecations.
 func Load(userPath, dir string) (*Config, error) {
 	cfg := Default()
 	if userPath != "" {
-		if err := merge(cfg, userPath, false); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := merge(cfg, userPath, layerUser); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
 	}
 	if dir != "" {
-		if p := FindRepoConfig(dir); p != "" {
-			if err := merge(cfg, p, true); err != nil {
+		for i, p := range RepoConfigs(dir) {
+			l := layerRepo
+			if i > 0 {
+				l = layerNested
+			}
+			if err := merge(cfg, p, l); err != nil {
 				return nil, err
 			}
 		}
@@ -366,16 +398,26 @@ func Load(userPath, dir string) (*Config, error) {
 	return cfg, cfg.validate()
 }
 
-// LoadFile reads one config file on top of the defaults.
+type layer int
+
+const (
+	layerUser   layer = iota
+	layerRepo         // the outermost repository config
+	layerNested       // a repository config inside another
+)
+
+// LoadFile reads one config file on top of the defaults, as a repository
+// config.
 func LoadFile(path string) (*Config, error) {
 	cfg := Default()
-	if err := merge(cfg, path, true); err != nil {
+	if err := merge(cfg, path, layerRepo); err != nil {
 		return nil, err
 	}
 	return cfg, cfg.validate()
 }
 
-func merge(cfg *Config, path string, repo bool) error {
+func merge(cfg *Config, path string, l layer) error {
+	repo := l != layerUser
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -390,27 +432,57 @@ func merge(cfg *Config, path string, repo bool) error {
 	if filepath.Base(path) == LegacyFileName {
 		cfg.Deprecations = append(cfg.Deprecations, path+" uses the pre-rename file name; rename it to "+FileName+" (the old name keeps working for one release)")
 	}
-	if repo {
+	if l == layerRepo {
 		cfg.Root = filepath.Dir(path)
 	}
+	// ignored notes a setting a repository config may not make: it would
+	// loosen protection, which only the user config may do.
+	ignored := func(field string) {
+		cfg.Deprecations = append(cfg.Deprecations, path+": "+field+" would loosen protection and is ignored in a repository config; only the user config ("+UserPath()+") may set it")
+	}
 	if c.Mode != "" {
-		cfg.Mode = c.Mode
+		switch {
+		case !repo || c.Mode == "enforce":
+			cfg.Mode = c.Mode
+		default:
+			ignored("mode: " + c.Mode)
+		}
 	}
 	if c.Strict != nil {
-		cfg.Strict = c.Strict
+		switch {
+		case !repo || *c.Strict:
+			cfg.Strict = c.Strict
+		default:
+			ignored("strict: false")
+		}
 	}
 	if c.DefaultTier != "" {
-		cfg.DefaultTier = c.DefaultTier
+		switch {
+		case !repo || cfg.DefaultTier == "" && c.DefaultTier == Protected || cfg.DefaultTier != "" && c.DefaultTier.Rank() >= cfg.DefaultTier.Rank():
+			cfg.DefaultTier = c.DefaultTier
+		default:
+			ignored("default_tier: " + string(c.DefaultTier))
+		}
 	}
 	if c.OnError != "" {
-		cfg.OnError = c.OnError
+		switch {
+		case !repo || onErrorRank(c.OnError) >= onErrorRank(cfg.OnError):
+			cfg.OnError = c.OnError
+		default:
+			ignored("on_error: " + c.OnError)
+		}
 	}
 	if c.LogPath != "" && !repo {
 		// A repository cannot redirect the log; only the user config can.
 		cfg.LogPath = c.LogPath
 	}
 	if c.NameHints != nil {
-		cfg.NameHints = c.NameHints
+		switch {
+		case !repo || *c.NameHints:
+			cfg.NameHints = c.NameHints
+		default:
+			ignored("name_hints: false")
+		}
 	}
 	if c.Approvals != nil && (!repo || !*c.Approvals) {
 		// A repository may turn approvals off, never back on.
@@ -436,13 +508,30 @@ func merge(cfg *Config, path string, repo bool) error {
 	default:
 		return fmt.Errorf("%s: unknown_dir must be %s or %s, not %q", path, UnknownDirMostProtected, UnknownDirSessionRoot, c.UnknownDir)
 	}
+	// An alias rebinds a program name (terraform: ls would hide every
+	// terraform command), so only the user config may set one.
 	for k, v := range c.Aliases {
+		if repo {
+			ignored("aliases: " + k)
+			continue
+		}
 		cfg.Aliases[k] = v
 	}
 	base := filepath.Dir(path)
 	for _, e := range c.Environments {
+		// A nested config may only add protection, so only its protected
+		// environments count: a disposable one would lower the tier of the
+		// directories it matches.
+		if l == layerNested && e.Tier != Protected {
+			ignored("environment " + e.Name + " (tier " + string(e.Tier) + ", in a config nested inside the repository's)")
+			continue
+		}
+		// A repository's patterns, "**" ones included, are rooted at its
+		// config's directory, so another repository's "**" cannot claim
+		// this one's directories. The user config's "**" patterns match
+		// anywhere.
 		for i, p := range e.Match.Paths {
-			if !filepath.IsAbs(p) && !strings.HasPrefix(p, "**") {
+			if !filepath.IsAbs(p) && (repo || !strings.HasPrefix(p, "**")) {
 				e.Match.Paths[i] = filepath.ToSlash(filepath.Join(base, p))
 			}
 		}
@@ -453,27 +542,36 @@ func merge(cfg *Config, path string, repo bool) error {
 			cfg.PlanGate.MaxDestroy = map[Tier]int{}
 		}
 		for k, v := range c.PlanGate.MaxDestroy {
+			if cur := cfg.MaxDestroy(k); repo && v != cur && (v < 0 || (cur >= 0 && v > cur)) {
+				ignored(fmt.Sprintf("plan_gate.max_destroy.%s: %d", k, v))
+				continue
+			}
 			cfg.PlanGate.MaxDestroy[k] = v
 		}
 	}
 	if len(c.PlanGate.Scope) > 0 {
-		cfg.PlanGate.Scope = c.PlanGate.Scope
+		if repo {
+			ignored("plan_gate.scope")
+		} else {
+			cfg.PlanGate.Scope = c.PlanGate.Scope
+		}
 	}
-	if c.PlanGate.RunShow != nil {
-		cfg.PlanGate.RunShow = c.PlanGate.RunShow
+	tighten := func(field string, dst **bool, v *bool) {
+		switch {
+		case v == nil:
+		case !repo || *v:
+			*dst = v
+		default:
+			ignored(field + ": false")
+		}
 	}
+	tighten("plan_gate.run_show", &cfg.PlanGate.RunShow, c.PlanGate.RunShow)
 	if c.PlanGate.ShowTimeout != "" {
 		cfg.PlanGate.ShowTimeout = c.PlanGate.ShowTimeout
 	}
-	if c.Preflight.StaleState != nil {
-		cfg.Preflight.StaleState = c.Preflight.StaleState
-	}
-	if c.Preflight.Lockfile != nil {
-		cfg.Preflight.Lockfile = c.Preflight.Lockfile
-	}
-	if c.Preflight.Backend != nil {
-		cfg.Preflight.Backend = c.Preflight.Backend
-	}
+	tighten("preflight.stale_state", &cfg.Preflight.StaleState, c.Preflight.StaleState)
+	tighten("preflight.lockfile", &cfg.Preflight.Lockfile, c.Preflight.Lockfile)
+	tighten("preflight.backend", &cfg.Preflight.Backend, c.Preflight.Backend)
 	if c.Preflight.LiveIdentity && !repo {
 		cfg.Preflight.LiveIdentity = true // network access is a user decision
 	}
@@ -482,9 +580,35 @@ func merge(cfg *Config, path string, repo bool) error {
 	}
 	cfg.ProtectedPaths = append(cfg.ProtectedPaths, c.ProtectedPaths...)
 	cfg.ProtectedResources = append(cfg.ProtectedResources, c.ProtectedResources...)
-	cfg.Wrappers = append(cfg.Wrappers, c.Wrappers...)
+	for _, w := range c.Wrappers {
+		// A wrapper skips its first arguments to find the command it runs;
+		// declared over a shell, an engine or an interpreter it would hide
+		// what that program runs.
+		if repo && wellKnown[w.Name] {
+			ignored("wrappers: " + w.Name)
+			continue
+		}
+		cfg.Wrappers = append(cfg.Wrappers, w)
+	}
 	return nil
 }
+
+// onErrorRank orders on_error values from loosest to strictest.
+func onErrorRank(v string) int {
+	switch v {
+	case "allow":
+		return 0
+	case "block":
+		return 2
+	}
+	return 1 // auto, or unset
+}
+
+// wellKnown are programs a repository config may not redeclare as wrappers.
+var wellKnown = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true, "env": true, "sudo": true,
+	"terraform": true, "tofu": true, "terragrunt": true, "aws": true, "az": true, "gcloud": true, "kubectl": true, "helm": true,
+	"python": true, "python3": true, "node": true, "perl": true, "ruby": true, "make": true, "rm": true, "mv": true, "cp": true,
+	"applygate": true, "git": true, "xargs": true, "eval": true}
 
 // ShellWrappers returns the configured wrappers keyed by program name.
 func (c *Config) ShellWrappers() map[string]shell.WrapperSpec {
@@ -568,14 +692,95 @@ func tiersOf(es []Environment) []Tier {
 	return out
 }
 
-// GuardPaths returns all protected path patterns, including the log.
+// GuardPaths returns all protected path patterns: the defaults, the
+// config's own, and applygate's files wherever the environment puts them
+// (XDG_CONFIG_HOME, XDG_STATE_HOME, CLAUDE_CONFIG_DIR, CODEX_HOME), plus
+// the running binary.
 func (c *Config) GuardPaths() []string {
 	out := append([]string(nil), DefaultProtectedPaths...)
 	out = append(out, c.ProtectedPaths...)
 	if c.LogPath != "" {
 		out = append(out, c.LogPath)
 	}
-	return append(out, ApprovalsPath(), JudgeCachePath())
+	for _, d := range appDirs() {
+		out = append(out, d, filepath.Join(d, "**"))
+	}
+	out = append(out, ApprovalsPath(), JudgeCachePath())
+	out = append(out, hostDirFiles()...)
+	return append(out, guard.Executable()...)
+}
+
+// appDirs are applygate's user config and state directories, and the
+// pre-rename ones, as the environment resolves them.
+func appDirs() []string {
+	return []string{filepath.Dir(userPathFor("applygate")), filepath.Dir(userPathFor("seatbelt")),
+		filepath.Dir(logPathFor("applygate")), filepath.Dir(logPathFor("seatbelt"))}
+}
+
+// hostDirFiles are the hook settings under a relocated host directory.
+func hostDirFiles() []string {
+	var out []string
+	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
+		out = append(out, filepath.Join(d, "settings.json"), filepath.Join(d, "settings.local.json"),
+			filepath.Join(d, "plugins", "cache", "applygate", "**"), filepath.Join(d, "plugins", "marketplaces", "applygate", "**"),
+			filepath.Join(d, "plugins", "data", "applygate-*", "**"))
+	}
+	if d := os.Getenv("CODEX_HOME"); d != "" {
+		out = append(out, filepath.Join(d, "hooks.json"), filepath.Join(d, "config.toml"))
+	}
+	return out
+}
+
+// GuardTargets returns the concrete places guard files live, for the
+// ancestor check: removing, moving or extracting into a directory that holds
+// one changes it. home is the user's home directory; the repository root is
+// the config's. A default pattern "**/x/y" stands for home/x/y and root/x/y.
+func (c *Config) GuardTargets(home string) []string {
+	var out []string
+	for _, p := range append(append([]string(nil), DefaultProtectedPaths...), c.ProtectedPaths...) {
+		lit := literalPrefix(p)
+		if lit == "" {
+			continue
+		}
+		if filepath.IsAbs(lit) {
+			out = append(out, lit)
+			continue
+		}
+		for _, base := range []string{home, c.Root} {
+			if base != "" {
+				out = append(out, filepath.Join(base, lit))
+			}
+		}
+	}
+	out = append(out, appDirs()...)
+	out = append(out, ApprovalsPath(), JudgeCachePath())
+	if c.LogPath != "" {
+		out = append(out, c.LogPath)
+	}
+	for _, f := range hostDirFiles() {
+		if lit := literalPrefix(f); lit != "" {
+			out = append(out, lit)
+		}
+	}
+	return append(out, guard.Executable()...)
+}
+
+// literalPrefix is the part of a guard pattern before its first segment with
+// a wildcard, without a leading "**/".
+func literalPrefix(p string) string {
+	p = filepath.ToSlash(strings.TrimPrefix(filepath.ToSlash(p), "**/"))
+	var segs []string
+	for _, s := range strings.Split(p, "/") {
+		if strings.ContainsAny(s, "*?[") {
+			break
+		}
+		segs = append(segs, s)
+	}
+	out := strings.Join(segs, "/")
+	if strings.HasPrefix(p, "/") && !strings.HasPrefix(out, "/") {
+		out = "/" + out
+	}
+	return filepath.FromSlash(out)
 }
 
 // Signals are what preflight knows about where a command runs.

@@ -42,7 +42,7 @@ func cmdApprove(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				continue
 			}
 			n++
-			fmt.Fprintf(stdout, "%s  %s ago  %s  %s  %s\n", r.ID, now.Sub(r.Created).Round(time.Second), r.Agent, r.Tier, r.Command)
+			fmt.Fprintf(stdout, "%s  %s ago  %s  %s  %s\n", r.ID, now.Sub(r.Created).Round(time.Second), printable(r.Agent), r.Tier, printable(r.Command))
 		}
 		if n == 0 {
 			fmt.Fprintln(stdout, "no pending requests")
@@ -59,10 +59,10 @@ func cmdApprove(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "applygate: %s: %v\n", id, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "Request %s from %s, %s ago\n", r.ID, r.Agent, now.Sub(r.Created).Round(time.Second))
-	fmt.Fprintf(stdout, "  directory: %s\n  call:      %s\n", r.Cwd, r.Command)
+	fmt.Fprintf(stdout, "Request %s from %s, %s ago\n", r.ID, printable(r.Agent), now.Sub(r.Created).Round(time.Second))
+	fmt.Fprintf(stdout, "  directory: %s\n  call:      %s\n", printable(r.Cwd), printable(r.Command))
 	for _, why := range r.Reasons {
-		fmt.Fprintf(stdout, "  - %s\n", why)
+		fmt.Fprintf(stdout, "  - %s\n", printable(why))
 	}
 	if !isTerminal(stdin) {
 		fmt.Fprintln(stderr, "applygate: approving needs a person at a terminal; run this in your own shell, not through an agent")
@@ -80,4 +80,23 @@ func cmdApprove(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "Approved. The agent may make this call once in the next %s; tell it to retry the same call unchanged.\n", approval.ApprovedTTL)
 	return 0
+}
+
+// printable shows control characters in s as escapes, so text the agent
+// wrote cannot move the cursor or rewrite what the person reads.
+func printable(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029 || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069):
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

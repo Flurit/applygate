@@ -37,6 +37,10 @@ func judgeSetup(t *testing.T, mode, userCfg string) (string, Options) {
 	user := filepath.Join(t.TempDir(), "config.yaml")
 	if userCfg == "" {
 		userCfg = "version: 1\njudge:\n  enabled: true\n  skip_mcp: [\"mcp__browser__*\"]\n"
+		if mode == "observe" {
+			// Observe mode comes from the user config only.
+			userCfg += "mode: observe\n"
+		}
 	}
 	os.WriteFile(user, []byte(userCfg), 0o644)
 	return root, Options{UserConfig: user, NoGit: true, Env: map[string]string{}, JudgeCache: "-"}
@@ -182,7 +186,7 @@ func TestJudgeCache(t *testing.T) {
 func TestJudgeBlockIsApprovable(t *testing.T) {
 	// A block from the judge is a model's opinion, so a person can allow the
 	// exact call once, unlike a rule's block.
-	root, opt := judgeSetup(t, "enforce", "")
+	root, opt := judgeSetup(t, "enforce", "version: 1\napprovals: true\njudge:\n  enabled: true\n")
 	store := filepath.Join(t.TempDir(), "approvals.json")
 	now := time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
 	opt.Approvals, opt.Now = store, func() time.Time { return now }

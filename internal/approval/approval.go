@@ -53,6 +53,9 @@ type Record struct {
 	Token      string    `json:"token"` // what the person types to approve
 }
 
+// ErrLocked is returned when another process holds the store's lock.
+var ErrLocked = errors.New("the approvals store is locked by another process")
+
 // ErrNotFound is returned by Approve for an unknown or expired ID.
 var ErrNotFound = errors.New("no pending request with that ID (it may have expired; retry the command to get a new one)")
 
@@ -62,12 +65,18 @@ func Key(ev policy.Event, d policy.Decision) string {
 		Class, Engine, Command, Dir, Tier, Env, Workspace, Backend, Profile, PlanSHA256 string
 		KubeContext, GCPProject, AzureSubscription                                      string
 	}
+	// Content and Args are hashed in full: Command is capped for MCP calls,
+	// and two edits of one file differ only in what they write.
+	content := sha256.Sum256([]byte(ev.Content))
+	argsSum := sha256.Sum256(ev.Args)
 	b := struct {
 		Agent, Session, Tool, Kind, Cwd, Command string
 		DirKnown                                 bool
 		Paths                                    []string
+		Content, Args                            string
 		Actions                                  []act
-	}{ev.Agent, ev.Session, ev.Tool, string(ev.Kind), ev.Cwd, ev.Command, ev.DirKnown, ev.Paths, nil}
+	}{ev.Agent, ev.Session, ev.Tool, string(ev.Kind), ev.Cwd, ev.Command, ev.DirKnown, ev.Paths,
+		hex.EncodeToString(content[:]), hex.EncodeToString(argsSum[:]), nil}
 	for _, a := range d.Actions {
 		b.Actions = append(b.Actions, act{string(a.Class), a.Engine, a.Command, a.Dir, string(a.Tier), a.Env, a.Workspace, a.Backend, a.Profile, a.PlanSHA256,
 			a.KubeContext, a.GCPProject, a.AzureSubscription})
@@ -246,8 +255,19 @@ func update(path string, now time.Time, f func([]Record) []Record) error {
 		return err
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		return err
+	// Never wait long: a lock another process holds (an agent can hold it on
+	// purpose) must not keep the hook past the host's timeout. The caller
+	// keeps its decision when the store cannot be updated.
+	locked := false
+	for i := 0; i < 20; i++ {
+		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+			locked = true
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !locked {
+		return ErrLocked
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 	recs, err := read(path)

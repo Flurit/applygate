@@ -41,11 +41,23 @@ func TestPanicRecoveryFailsClosed(t *testing.T) {
 	}
 }
 
+// userConfig writes yaml as a user config and returns its path. Settings
+// that loosen protection (observe mode, on_error: allow, strict: false) apply
+// only from the user config.
+func userConfig(t *testing.T, yaml string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(p, []byte("version: 1\n"+yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func TestPanicRecoveryObserveAllows(t *testing.T) {
 	// Observe mode never blocks, even on a panic.
 	root := setup(t, "observe", "auto")
 	in := event("Bash", filepath.Join(root, "prod"), map[string]any{"command": "ls"})
-	o := Run(panicOnRender{}, strings.NewReader(in), Options{NoLog: true, NoGit: true, Env: map[string]string{}})
+	o := Run(panicOnRender{}, strings.NewReader(in), Options{NoLog: true, NoGit: true, Env: map[string]string{}, UserConfig: userConfig(t, "mode: observe\n")})
 	if o.Exit != 0 {
 		t.Fatalf("observe mode must not block on panic, got exit %d stderr %q", o.Exit, o.Stderr)
 	}
@@ -127,7 +139,9 @@ func TestFailureBehavior(t *testing.T) {
 				in = event("Bash", filepath.Join(root, c.dir), map[string]any{"command": "terraform apply tfplan"})
 			}
 			log := filepath.Join(t.TempDir(), "log.jsonl")
-			o := Run(Claude{}, strings.NewReader(in), Options{LogPath: log, NoGit: true, Env: map[string]string{}, PlanJSON: c.plan, Timeout: 200 * time.Millisecond})
+			opt := Options{LogPath: log, NoGit: true, Env: map[string]string{}, PlanJSON: c.plan, Timeout: 200 * time.Millisecond,
+				UserConfig: userConfig(t, "mode: "+c.mode+"\non_error: "+c.onErr+"\n")}
+			o := Run(Claude{}, strings.NewReader(in), opt)
 			if got := decision(t, o); got != c.want {
 				t.Fatalf("got %s, want %s (stderr %q)", got, c.want, o.Stderr)
 			}
@@ -203,7 +217,7 @@ func TestObserveModeLogsWouldBlock(t *testing.T) {
 	root := setup(t, "observe", "auto")
 	log := filepath.Join(t.TempDir(), "log.jsonl")
 	in := event("Bash", filepath.Join(root, "prod"), map[string]any{"command": "AWS_SECRET_ACCESS_KEY=abcd1234secret terraform destroy -auto-approve"})
-	o := Run(Claude{}, strings.NewReader(in), Options{LogPath: log, NoGit: true, Env: map[string]string{}})
+	o := Run(Claude{}, strings.NewReader(in), Options{LogPath: log, NoGit: true, Env: map[string]string{}, UserConfig: userConfig(t, "mode: observe\n")})
 	if decision(t, o) != "allow" {
 		t.Fatalf("observe mode must allow, got %s", decision(t, o))
 	}
@@ -614,11 +628,9 @@ func TestCodexUnknownDirFailsClosed(t *testing.T) {
 	root := setupRootStandard(t)
 	run := func(userCfg string, cwd string) (string, decisionlog.Entry) {
 		log := filepath.Join(t.TempDir(), "log.jsonl")
-		opt := Options{LogPath: log, NoGit: true, Env: map[string]string{}}
-		if userCfg != "" {
-			opt.UserConfig = filepath.Join(t.TempDir(), "config.yaml")
-			os.WriteFile(opt.UserConfig, []byte(userCfg), 0o644)
-		}
+		// The root's standard tier comes from strict: false and
+		// default_tier, which only the user config may set.
+		opt := Options{LogPath: log, NoGit: true, Env: map[string]string{}, UserConfig: userConfig(t, "strict: false\ndefault_tier: standard\n"+userCfg)}
 		o := Run(Codex{}, strings.NewReader(event("Bash", cwd, map[string]any{"command": "terraform destroy -auto-approve"})), opt)
 		return decision(t, o), readLog(t, log)
 	}
@@ -679,7 +691,7 @@ func TestApprovalFlow(t *testing.T) {
 	root := setup(t, "enforce", "auto")
 	store := filepath.Join(t.TempDir(), "approvals.json")
 	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
-	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}, Approvals: store, Now: func() time.Time { return now }}
+	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}, Approvals: store, Now: func() time.Time { return now }, UserConfig: approvalsOn(t)}
 	in := event("Bash", filepath.Join(root, "dev"), map[string]any{"command": "terraform state rm aws_s3_bucket.logs"})
 	call := func(a Adapter) Output { return Run(a, strings.NewReader(in), opt) }
 
@@ -703,9 +715,35 @@ func TestApprovalFlow(t *testing.T) {
 	}
 }
 
-func TestApprovalNotOffered(t *testing.T) {
+// approvalsOn writes a user config that turns approvals on (they are off by
+// default) and returns its path.
+func approvalsOn(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(p, []byte("version: 1\napprovals: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestApprovalsOffByDefault(t *testing.T) {
+	// Without approvals turned on in the user config, an ask on a host that
+	// cannot prompt is a block that names no approval and records nothing.
+	root := setup(t, "enforce", "auto")
 	store := filepath.Join(t.TempDir(), "approvals.json")
 	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}, Approvals: store}
+	o := Run(Codex{}, strings.NewReader(event("Bash", filepath.Join(root, "dev"), map[string]any{"command": "terraform state rm aws_s3_bucket.logs"})), opt)
+	if msg := string(o.Stdout) + o.Stderr; decision(t, o) == "allow" || strings.Contains(msg, "applygate approve") {
+		t.Fatalf("want a block naming no approval, got %s: %s", decision(t, o), msg)
+	}
+	if recs, _ := approval.List(store, time.Now()); len(recs) != 0 {
+		t.Fatalf("requests recorded: %+v", recs)
+	}
+}
+
+func TestApprovalNotOffered(t *testing.T) {
+	store := filepath.Join(t.TempDir(), "approvals.json")
+	opt := Options{NoLog: true, NoGit: true, Env: map[string]string{}, Approvals: store, UserConfig: approvalsOn(t)}
 	root := setup(t, "enforce", "auto")
 	cases := map[string]struct {
 		a   Adapter

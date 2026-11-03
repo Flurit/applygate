@@ -7,13 +7,30 @@ import (
 	"testing"
 )
 
+// load writes yaml as a repository config and loads it. Settings that
+// loosen protection apply only from the user config, so its top-level
+// strict, default_tier, name_hints and mode lines are written to a user
+// config as well, as a team using them would.
 func load(t *testing.T, yaml string) *Config {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Load("", dir)
+	var user []string
+	for _, line := range strings.Split(yaml, "\n") {
+		for _, k := range []string{"strict:", "default_tier:", "name_hints:", "mode:"} {
+			if strings.HasPrefix(line, k) {
+				user = append(user, line)
+			}
+		}
+	}
+	up := ""
+	if len(user) > 0 {
+		up = filepath.Join(t.TempDir(), "config.yaml")
+		os.WriteFile(up, []byte(strings.Join(user, "\n")+"\n"), 0o644)
+	}
+	c, err := Load(up, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,15 +276,15 @@ func TestUnknownDirMerge(t *testing.T) {
 // when both exist.
 func TestLegacyConfigFileName(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, LegacyFileName), []byte("mode: observe\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, LegacyFileName), []byte("protected_resources: [\"aws_instance.legacy\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	cfg, err := Load("", filepath.Join(dir))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Mode != "observe" || len(cfg.Sources) != 1 || filepath.Base(cfg.Sources[0]) != LegacyFileName {
-		t.Fatalf("legacy file not loaded: mode %s sources %v", cfg.Mode, cfg.Sources)
+	if len(cfg.ProtectedResources) != 1 || len(cfg.Sources) != 1 || filepath.Base(cfg.Sources[0]) != LegacyFileName {
+		t.Fatalf("legacy file not loaded: resources %v sources %v", cfg.ProtectedResources, cfg.Sources)
 	}
 	if len(cfg.Deprecations) != 1 || !strings.Contains(cfg.Deprecations[0], FileName) {
 		t.Fatalf("want one deprecation naming %s, got %v", FileName, cfg.Deprecations)
@@ -300,7 +317,7 @@ func TestRepoConfigCanOnlyDisableApprovals(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, FileName)
 	os.WriteFile(p, []byte("version: 1\napprovals: true\n"), 0o644)
-	if err := merge(c, p, true); err != nil {
+	if err := merge(c, p, layerRepo); err != nil {
 		t.Fatal(err)
 	}
 	if c.ApprovalsOn() {

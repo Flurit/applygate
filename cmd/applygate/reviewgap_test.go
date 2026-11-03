@@ -69,3 +69,15 @@ func TestReviewI2PlanCheckOutputsNotInjectable(t *testing.T) {
 	}
 	reviewgap.Check(t, "I2", verdicts == 1, "GITHUB_OUTPUT carries %d verdict lines:\n%s", verdicts, b)
 }
+
+func TestReviewA1ApplyHasNoTestFlags(t *testing.T) {
+	// The release build has no --plan-json (it replaced the plan the gate
+	// judged) and no --yes (it approved an ask without a person).
+	var out, errb bytes.Buffer
+	rc1 := cmdApply([]string{"--plan-json", "tfplan=/dev/null", "tfplan"}, strings.NewReader(""), &out, &errb)
+	planJSON := rc1 == 2 && strings.Contains(errb.String(), "flag provided but not defined")
+	errb.Reset()
+	rc2 := cmdApply([]string{"--yes", "tfplan"}, strings.NewReader(""), &out, &errb)
+	yes := rc2 == 2 && strings.Contains(errb.String(), "flag provided but not defined")
+	reviewgap.Check(t, "A1", planJSON && yes, "apply still accepts --plan-json (%v, exit %d) or --yes (%v, exit %d): %s", !planJSON, rc1, !yes, rc2, errb.String())
+}

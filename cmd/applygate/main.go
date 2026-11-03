@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -214,7 +215,8 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 	ev := policy.Event{Agent: *agent, Tool: "Bash", Kind: policy.KindShell, Command: fs.Arg(0), Cwd: dir, CanAsk: true, DirKnown: !*dirUnknown}
 	deps := hook.Deps(context.Background(), cfg, opt)
 	if explain {
-		res := shell.Analyze(ev.Command, shell.Options{Dir: dir, Env: opt.Env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ProtectedPaths: cfg.GuardPaths(), ProtectedPath: func(p string) bool { return classify.IsProtectedPath(p, cfg.GuardPaths()) }})
+		copt := policy.GuardOptions(cfg, opt.Env)
+		res := shell.Analyze(ev.Command, policy.ShellOptions(cfg, copt, dir, opt.Env, nil))
 		fmt.Fprintf(stdout, "config: %s\n", orNone(strings.Join(cfg.Sources, ", ")))
 		for _, d := range cfg.Deprecations {
 			fmt.Fprintf(stdout, "note: %s\n", d)
@@ -241,7 +243,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 		for _, n := range res.Notes {
 			fmt.Fprintf(stdout, "   - NOTE: %s\n", n)
 		}
-		acts := classify.Invocations(res, classify.Options{ProtectedPaths: cfg.GuardPaths(), Home: opt.Env["HOME"]})
+		acts := classify.Invocations(res, copt)
 		fmt.Fprintf(stdout, "\n2. classify: %d policy-relevant action(s)\n", len(acts))
 		for _, a := range acts {
 			fmt.Fprintf(stdout, "   - %s: %s (%s)\n", a.Class, a.Command, a.Why)
@@ -419,14 +421,10 @@ func cmdSelftest(args []string, stdout, stderr io.Writer) int {
 }
 
 const starterConfig = `# applygate config. https://github.com/Flurit/applygate/blob/main/docs/config.md
+# A repository config can only add protection. Observe mode, on_error: allow,
+# strict: false and other settings that loosen it belong in each person's
+# user config (applygate doctor prints its path).
 version: 1
-# Start in observe mode: decisions are logged but nothing is blocked.
-# Run "applygate report" after a few days, then switch to enforce.
-mode: observe
-# Unknown environments are treated as protected.
-strict: true
-# What happens when applygate itself fails: auto blocks in protected tiers.
-on_error: auto
 environments:
   - name: prod
     tier: protected
@@ -450,6 +448,18 @@ plan_gate:
 # their type (globs on the Terraform address).
 # protected_resources: ["aws_instance.bastion", "module.data.*"]
 `
+
+const starterUserConfig = `# applygate user config. https://github.com/Flurit/applygate/blob/main/docs/config.md
+version: 1
+# Observe mode: decisions are logged but nothing is blocked. Run
+# "applygate report" after a few days, then remove this line to enforce.
+mode: observe
+`
+
+func fileMissing(p string) bool {
+	_, err := os.Stat(p)
+	return errors.Is(err, os.ErrNotExist)
+}
 
 // cmdInit writes the starter config, detects installed agents and installs
 // their hooks at user scope (the spec's "init" command), so the hook fires
@@ -475,7 +485,16 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "wrote %s (observe mode). Edit the environments to match this repository.\n", config.FileName)
+	fmt.Fprintf(stdout, "wrote %s. Edit the environments to match this repository.\n", config.FileName)
+	// The trial runs in observe mode, which only the user config can set:
+	// start one if there is none, otherwise say how.
+	if up := config.UserPath(); fileMissing(up) {
+		if err := os.MkdirAll(filepath.Dir(up), 0o700); err == nil && os.WriteFile(up, []byte(starterUserConfig), 0o600) == nil {
+			fmt.Fprintf(stdout, "wrote %s (observe mode: decisions are logged, nothing is blocked). Run \"applygate report\" after a few days, then remove the mode line to enforce.\n", up)
+		}
+	} else {
+		fmt.Fprintf(stdout, "for an observe-mode trial, add \"mode: observe\" to %s (a repository config cannot set it).\n", up)
+	}
 	if *noHooks {
 		fmt.Fprintln(stdout, "hooks not installed (--no-hooks). Later: applygate hook install --agent AGENT")
 		return 0
@@ -720,9 +739,10 @@ func hasUserHook(agent string) bool {
 
 // hookScan summarizes one settings file's PreToolUse hooks.
 // claudeMatcher is the PreToolUse matcher hook install writes for Claude
-// Code: the tools applygate judges, and MCP tools (mcp__<server>__<tool>),
-// which it logs without judging. Codex gets "*", which includes MCP calls.
-const claudeMatcher = "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|mcp__.*"
+// Code: every tool, so a tool that runs commands under a new name (Monitor,
+// PowerShell) is judged too. Tools that only read or talk are allowed at
+// once. Codex gets "*" as well.
+const claudeMatcher = "*"
 
 type hookScan struct {
 	applygateBins []string // command binaries of applygate entries
@@ -896,8 +916,8 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 			}
 			if agent == "claude" {
 				for _, m := range scan.matchers {
-					if m != "*" && !strings.Contains(m, "mcp__") {
-						say(false, "claude hook in %s does not see MCP tool calls (matcher %q, installed before MCP logging); run: applygate hook install --agent claude --scope %s", p, m, scope)
+					if m != "*" {
+						say(false, "claude hook in %s does not see every tool (matcher %q): tools such as Monitor run commands it would not judge; run: applygate hook install --agent claude --scope %s", p, m, scope)
 					}
 				}
 			}

@@ -106,7 +106,7 @@ func TestBuildTerragruntLiveExample(t *testing.T) {
 		t.Fatalf("flags %+v", p.Flags)
 	}
 	y := p.YAML()
-	for _, want := range []string{"39 of them in /work/terragrunt-infrastructure-live-example", "mode: observe", "paths: [\"prod/**\"]", "2 in non-prod/us-east-1/stage/webserver-cluster", "ran 2 times at the repository root", "1x ask   dynamic"} {
+	for _, want := range []string{"39 of them in /work/terragrunt-infrastructure-live-example", "Mode (observe or enforce) is set in each person's user config", "paths: [\"prod/**\"]", "2 in non-prod/us-east-1/stage/webserver-cluster", "ran 2 times at the repository root", "1x ask   dynamic"} {
 		if !strings.Contains(y, want) {
 			t.Errorf("YAML lacks %q:\n%s", want, y)
 		}
@@ -170,7 +170,7 @@ func TestBuildKeepsTheExistingConfig(t *testing.T) {
 		t.Fatalf("unclassified %v, root runs %d", p.Unclassified, p.RootRuns)
 	}
 	y := p.YAML()
-	for _, want := range []string{"mode: enforce", "# from the existing config", "max_destroy: {protected: 0, standard: 3}", "protected_resources: [\"module.data.*\"]", "- {name: runit, skip: 1, profile_arg: 0}"} {
+	for _, want := range []string{"# from the existing config", "max_destroy: {protected: 0, standard: 3}", "protected_resources: [\"module.data.*\"]", "- {name: runit, skip: 1, profile_arg: 0}"} {
 		if !strings.Contains(y, want) {
 			t.Errorf("YAML lacks %q:\n%s", want, y)
 		}

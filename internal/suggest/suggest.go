@@ -484,20 +484,11 @@ func (p *Proposal) YAML() string {
 	w("# %d of them in %s (agents: %s%s).\n", p.InScope, p.Root, orNone(strings.Join(p.Agents, ", ")), span)
 	w("# Tiers are guessed from names. Check every one before switching to enforce.\n")
 	w("version: 1\n")
-	mode, strict, onError := "observe", "true", "auto"
-	if x := p.Existing; x != nil {
-		mode = x.Mode
-		if !x.IsStrict() {
-			strict = "false"
-		}
-		onError = x.OnError
-	}
-	w("mode: %s%s\n", mode, pad(mode, 8)+fmt.Sprintf("# %d of %d decisions would have asked or blocked; see the list at the end", p.WouldFlag, p.InScope))
-	w("strict: %s%s\n", strict, pad(strict, 6)+"# an unmatched directory is protected")
-	w("on_error: %s\n", onError)
-	if x := p.Existing; x != nil && x.DefaultTier != "" {
-		w("default_tier: %s\n", x.DefaultTier)
-	}
+	// mode, strict: false, on_error: allow and default_tier loosen
+	// protection, which only the user config may do, so the proposal sets
+	// none of them.
+	w("# %d of %d decisions would have asked or blocked; see the list at the end.\n", p.WouldFlag, p.InScope)
+	w("# Mode (observe or enforce) is set in each person's user config, not here.\n")
 
 	if len(p.Envs) > 0 {
 		w("environments:\n")

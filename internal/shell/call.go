@@ -110,6 +110,20 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			}
 		}
 		return
+	case "tmux", "screen":
+		// Keys typed into another terminal run there: tmux send-keys -t PANE
+		// 'cmd' Enter, screen -X stuff 'cmd\n'. The pane's directory is not
+		// known.
+		if text, ok, resolved := typedText(bn, rest); ok {
+			if !resolved {
+				a.problem(st, via, joinWords(args), bn+" types text into another terminal that cannot be resolved statically")
+				return
+			}
+			child := st.childState()
+			child.dir = ""
+			a.source(text, child, append(via, bn+" send-keys"), depth+1)
+			return
+		}
 	case "eval":
 		if !allResolved(rest) {
 			a.problem(st, via, joinWords(args), "eval of text that cannot be resolved statically")
@@ -430,7 +444,9 @@ func (a *analyzer) script(name string, rest []Word, cmdSt, st *state, via []stri
 	src := string(b)
 	first, _, _ := strings.Cut(src, "\n")
 	if strings.HasPrefix(first, "#!") && !shebangShell.MatchString(first) {
-		if m := Mentions(src); len(m) > 0 {
+		if g := a.guardIn(src); g != "" {
+			a.guardProblem(st, via, name, "script in another language mentions the guard file "+g+"; cannot be analyzed", g)
+		} else if m := Mentions(src); len(m) > 0 {
 			a.problem(st, via, name, "script in another language mentions infrastructure tools or an AWS SDK; cannot be analyzed")
 		}
 		return false
@@ -471,6 +487,12 @@ func (a *analyzer) foreign(bn, flag string, args []Word, cmdSt, st *state, via [
 	// tool name split across string-literal concatenation (e.g. 'ter'+'raform',
 	// "terra"."form") hides from a plain scan, so also test a form with those
 	// joins collapsed.
+	// Code that names a guard file is tampering, whether or not it also
+	// mentions an infrastructure tool.
+	if g := a.guardIn(code); g != "" {
+		a.guardProblem(st, via, bn+" "+code, bn+" code mentions the guard file "+g+"; it cannot be analyzed", g)
+		return
+	}
 	mentions := Mentions(code)
 	for _, m := range Mentions(dejoinLiterals(code)) {
 		if !slices.Contains(mentions, m) {
@@ -767,4 +789,80 @@ func credentialWrapper(bn string, rest []Word) (cmd []Word, script *Word, profil
 		return rest[firstPos:], nil, profile, true
 	}
 	return nil, nil, profile, false
+}
+
+// guardIn returns the guard needle that text names, comparing without case
+// and with string-literal joins collapsed ('appro' + 'vals.json').
+func (a *analyzer) guardIn(text string) string {
+	if len(a.opt.GuardNeedles) == 0 || text == "" {
+		return ""
+	}
+	low, joined := strings.ToLower(text), strings.ToLower(dejoinLiterals(text))
+	for _, n := range a.opt.GuardNeedles {
+		n = strings.ToLower(n)
+		if strings.Contains(low, n) || strings.Contains(joined, n) {
+			return n
+		}
+	}
+	return ""
+}
+
+func (a *analyzer) guardProblem(st *state, via []string, text, reason, guard string) {
+	a.problem(st, via, text, reason)
+	a.res.Problems[len(a.res.Problems)-1].Guard = guard
+}
+
+// typedText returns the text tmux send-keys or screen -X stuff types into
+// another terminal, with Enter and C-m as newlines. ok is false for other
+// subcommands; resolved is false when a key cannot be resolved.
+func typedText(bn string, rest []Word) (text string, ok, resolved bool) {
+	resolved = true
+	var keys []Word
+	switch bn {
+	case "tmux":
+		i := 0
+		for i < len(rest) && rest[i].Text != "send-keys" && rest[i].Text != "send" {
+			i++
+		}
+		if i == len(rest) {
+			return "", false, true
+		}
+		for j := i + 1; j < len(rest); j++ {
+			t := rest[j].Text
+			switch {
+			case t == "-t" || t == "-N" || t == "-c":
+				j++
+			case strings.HasPrefix(t, "-") && len(t) > 1:
+			default:
+				keys = append(keys, rest[j])
+			}
+		}
+	case "screen":
+		for j := 0; j+1 < len(rest); j++ {
+			if rest[j].Text == "-X" && (rest[j+1].Text == "stuff" || rest[j+1].Text == "exec") {
+				keys = rest[j+2:]
+				break
+			}
+		}
+		if keys == nil {
+			return "", false, true
+		}
+	}
+	var b strings.Builder
+	for _, k := range keys {
+		if !k.Resolved {
+			resolved = false
+		}
+		switch k.Text {
+		case "Enter", "C-m", "KPEnter", "C-j":
+			b.WriteString("\n")
+			continue
+		}
+		t := strings.ReplaceAll(strings.ReplaceAll(k.Text, `\n`, "\n"), `\r`, "\n")
+		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
+			b.WriteString(" ")
+		}
+		b.WriteString(t)
+	}
+	return b.String(), true, resolved
 }
