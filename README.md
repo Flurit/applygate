@@ -73,8 +73,8 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 | Gemini CLI | Preview | the call runs |
 | Windsurf (Cascade) | Preview | the call runs |
 | Devin | Preview, shell commands only | the call runs |
-| OpenCode | Preview | blocks |
-| Cline | Preview | blocks; a block cancels the whole task |
+| OpenCode | Preview | blocks; the call runs if the plugin fails to load |
+| Cline | Preview | blocks, but the call runs on a timeout or a missing hook script; a block cancels the whole task |
 
 `applygate init` installs the hooks for Claude Code and Codex. **Preview** hooks follow each agent's documentation but have not yet been tested inside the agent. Install one with `applygate hook install --agent NAME`, then check it: ask the agent to run `terraform destroy -auto-approve` in an empty directory, and applygate should block it. Only Claude Code and Copilot CLI can show you an "ask" prompt; on the other agents an ask is a block. Claude Code is trusted to prompt only in the permission modes where that was seen live (default and `bypassPermissions`); in `acceptEdits`, `plan`, `auto` and `dontAsk` an ask is a block. One-time approvals (`applygate approve ID`) are off by default, because an agent on the same machine can reach any terminal you can; turning them on in your user config trusts that no agent runs the approval in a way applygate does not recognise ([docs/policy.md](docs/policy.md) step 9). For every agent's details, see [docs/hosts.md](docs/hosts.md) (also `applygate hosts`).
 

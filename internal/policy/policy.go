@@ -12,10 +12,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Flurit/applygate/internal/classify"
 	"github.com/Flurit/applygate/internal/config"
@@ -197,14 +197,73 @@ type Decision struct {
 // known-tool table names in its arguments, or "". Any string argument that
 // resolves to a guard file, or to a directory that holds one, counts, unless
 // the tool's name says it only reads (read_file, list_directory).
+// readOnlyToolName reports whether an MCP tool's name says it only reads:
+// every word of it (split at _, -, . and case changes) is a read verb or a
+// noun, and at least one is a read verb. Any other word (replace, sync,
+// apply, and words applygate does not know) may write, which is the
+// default for a call that names a guard file.
+func readOnlyToolName(tool string) bool {
+	if i := strings.LastIndex(tool, "__"); i >= 0 {
+		tool = tool[i+2:]
+	}
+	verb := false
+	for _, w := range toolWords(tool) {
+		switch {
+		case readVerbs[w]:
+			verb = true
+		case !readNouns[w]:
+			return false
+		}
+	}
+	return verb
+}
+
+var (
+	readVerbs = toSet("read", "get", "list", "search", "view", "stat", "info", "find", "show", "describe", "tree", "cat", "head", "tail", "grep", "glob", "inspect", "query", "fetch", "lookup", "ls", "exists", "count", "diff", "check", "validate", "preview")
+	readNouns = toSet("file", "files", "dir", "dirs", "directory", "directories", "text", "content", "contents", "multiple", "many", "path", "paths", "metadata", "details", "status", "by", "name", "in", "of", "all", "recent", "project", "workspace", "symbols", "symbol", "definition", "references", "lines", "range", "tree", "entries", "info")
+)
+
+func toSet(xs ...string) map[string]bool {
+	m := make(map[string]bool, len(xs))
+	for _, x := range xs {
+		m[x] = true
+	}
+	return m
+}
+
+// toolWords splits a tool name into lower-case words at _, -, . and case
+// changes: searchAndReplace and search_and_replace are the same words.
+func toolWords(s string) []string {
+	var out []string
+	var cur []rune
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, strings.ToLower(string(cur)))
+			cur = cur[:0]
+		}
+	}
+	rs := []rune(s)
+	for i, r := range rs {
+		switch {
+		case r == '_' || r == '-' || r == '.' || r == ' ':
+			flush()
+		case unicode.IsUpper(r) && i > 0 && (unicode.IsLower(rs[i-1]) || i+1 < len(rs) && unicode.IsLower(rs[i+1])):
+			flush()
+			cur = append(cur, r)
+		default:
+			cur = append(cur, r)
+		}
+	}
+	flush()
+	return out
+}
+
 func MCPGuardPath(cfg *config.Config, env map[string]string, tool, cwd string, args json.RawMessage) string {
 	name := strings.ToLower(tool)
 	if i := strings.LastIndex(name, "__"); i >= 0 {
 		name = name[i+2:]
 	}
-	reads := regexp.MustCompile(`(^|_)(read|get|list|search|view|stat|info|find|show|describe|tree)(_|$)`).MatchString(name)
-	writes := regexp.MustCompile(`write|edit|move|rename|delete|remove|create|copy|set|update|put|patch|append|exec|run|mkdir|chmod|upload|save`).MatchString(name)
-	if reads && !writes {
+	if readOnlyToolName(tool) {
 		return ""
 	}
 	var v any

@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 //go:embed rules.json
@@ -283,7 +284,7 @@ var genericCommandArgs = []string{"command", "cmd", "script", "commandLine", "co
 // Its directory argument is not trusted, since nothing says the server
 // honours it.
 func genericShell(tool string, args map[string]any, parseErr error) (Result, bool) {
-	if !genericShellTools[strings.ToLower(tool)] {
+	if !genericShellTools[snakeName(tool)] {
 		return Result{}, false
 	}
 	r := Result{Server: "a server applygate does not know", Note: "a shell tool name; judged as a shell command"}
@@ -307,6 +308,27 @@ func genericShell(tool string, args map[string]any, parseErr error) (Result, boo
 	}
 	r.Command = unresolved(tool, "no command argument applygate knows")
 	return r, true
+}
+
+// snakeName is a tool name in lower snake case: executeCommand, Execute-Command
+// and execute_command are one name.
+func snakeName(s string) string {
+	var b strings.Builder
+	rs := []rune(s)
+	for i, r := range rs {
+		switch {
+		case r == '-' || r == '.' || r == ' ':
+			b.WriteByte('_')
+		case unicode.IsUpper(r):
+			if i > 0 && rs[i-1] != '_' && rs[i-1] != '-' && (unicode.IsLower(rs[i-1]) || i+1 < len(rs) && unicode.IsLower(rs[i+1])) {
+				b.WriteByte('_')
+			}
+			b.WriteRune(unicode.ToLower(r))
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // withStdin adds the text of the stdin arguments as the command's input.

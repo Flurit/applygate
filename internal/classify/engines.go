@@ -718,7 +718,12 @@ func agentFlags(base Action, name string, args []shell.Word) (Action, bool) {
 		switch {
 		case k == "CLAUDE_CODE_SIMPLE" && name == "claude", k == "CLAUDE_CONFIG_DIR" && name == "claude",
 			k == "CODEX_HOME" && name == "codex", k == "HOME", k == "XDG_CONFIG_HOME", k == "COPILOT_HOME" && name == "copilot",
-			k == "GEMINI_CLI_HOME" && name == "gemini":
+			k == "GEMINI_CLI_HOME" && name == "gemini",
+			// What the hook and the Claude Code plugin's launcher read:
+			// where applygate's state and pinned binary live, and which
+			// binary runs as the hook.
+			k == "XDG_STATE_HOME", k == "XDG_CACHE_HOME", k == "CLAUDE_PLUGIN_DATA", k == "CLAUDE_PLUGIN_ROOT",
+			strings.HasPrefix(k, "APPLYGATE_"):
 			a.Class, a.Why = Tampering, name+" started with "+k+" set, so it may run without the hook"
 			return a, true
 		}

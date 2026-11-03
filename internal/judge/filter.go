@@ -427,6 +427,15 @@ func safeInvocation(inv shell.Invocation, root string) bool {
 			return true
 		}
 	case "git":
+		if len(rest) > 0 && rest[0] == "apply" {
+			// --directory and --unsafe-paths write the patch's files
+			// wherever it says, outside the working tree included.
+			for _, a := range rest[1:] {
+				if a == "--unsafe-paths" || strings.HasPrefix(a, "--directory") {
+					return false
+				}
+			}
+		}
 		if len(rest) > 0 && rest[0] == "push" {
 			// A push that rewrites or deletes remote history goes to the
 			// judge, which looks at the branch.

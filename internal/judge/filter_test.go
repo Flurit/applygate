@@ -122,3 +122,17 @@ func TestRelevantRound2(t *testing.T) {
 		t.Error("a redacted header counted as hiding programs")
 	}
 }
+
+// git apply that writes outside the working tree goes to the judge
+// (finding 3M3).
+func TestRelevantGitApply(t *testing.T) {
+	for cmd, want := range map[string]bool{
+		"git apply fix.patch": false,
+		"git apply --unsafe-paths --directory=/Users/me/Documents evil.patch": true,
+		"git apply --directory /etc x.patch":                                  true,
+	} {
+		if got := Relevant(Input{Tool: "Bash", Command: cmd, Cwd: "/repo"}); got != want {
+			t.Errorf("%s: relevant %v, want %v", cmd, got, want)
+		}
+	}
+}

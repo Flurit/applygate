@@ -58,6 +58,9 @@ var messageFlags = toSet("-m", "--message", "--title", "-t", "--body", "-b", "--
 // (nix-shell --run 'terraform destroy', foo --command "terraform apply").
 var shellStringFlags = toSet("--run", "--command", "-c", "--cmd", "--exec", "-x", "--shell-command")
 
+// infraCLIs are the programs a wrapper's skipped words must not hide.
+var infraCLIs = toSet("terraform", "tofu", "opentofu", "terragrunt", "aws", "kubectl", "helm", "gcloud", "gsutil", "az", "pulumi")
+
 func toSet(ss ...string) map[string]bool {
 	m := make(map[string]bool, len(ss))
 	for _, s := range ss {
@@ -77,6 +80,11 @@ func configWrapper(spec WrapperSpec, rest []Word) (cmd []Word, profile Word, ok 
 			continue
 		}
 		if n < spec.Skip {
+			// A skipped word that is an infrastructure CLI is taken as the
+			// start of the command: a runner given no profile may run it.
+			if w.Resolved && infraCLIs[ProgName(w.Text)] {
+				return rest[i:], profile, true
+			}
 			n++
 			if n == spec.ProfileArg {
 				profile = w

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -155,6 +156,10 @@ type state struct {
 	// assigned a variable whose name is built at run time: any variable may
 	// then have changed, so no variable value is known.
 	nameref bool
+	// cdableVars is set by shopt -s cdable_vars: cd NAME may go to $NAME.
+	cdableVars bool
+	// hashed are the programs hash -p bound to names.
+	hashed map[string]Word
 }
 
 func newState(opt Options) *state {
@@ -171,6 +176,10 @@ func newState(opt Options) *state {
 	}
 	return st
 }
+
+// zshQualifierRuns matches zsh glob qualifiers that run code: e with any
+// delimiter (e:...:, e'...') and + with a function name.
+var zshQualifierRuns = regexp.MustCompile(`(^|[^A-Za-z0-9])(e[^A-Za-z0-9\s]|\+[A-Za-z_])`)
 
 func (s *state) clone() *state {
 	c := *s
@@ -191,6 +200,12 @@ func (s *state) clone() *state {
 		c.aliases[k] = v
 	}
 	c.dirStack = slices.Clone(s.dirStack)
+	if s.hashed != nil {
+		c.hashed = make(map[string]Word, len(s.hashed))
+		for k, v := range s.hashed {
+			c.hashed[k] = v
+		}
+	}
 	if s.locals != nil {
 		c.locals = make(map[string]*value, len(s.locals))
 		for k, v := range s.locals {
@@ -443,6 +458,13 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			return
 		}
 		st.funcs[c.Name.Value] = c.Body
+		if n := c.Name.Value; n == "command_not_found_handle" || n == "command_not_found_handler" {
+			// bash and zsh run it for any command they cannot find, so it
+			// may run at any later point, after any cd.
+			t := st.clone()
+			t.dir = ""
+			a.stmt(c.Body, t, append(via, n), depth+1, stdin{})
+		}
 	case *syntax.DeclClause:
 		a.declClause(c, st, via, depth)
 	case *syntax.TimeClause:
@@ -811,6 +833,11 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 	case *syntax.ExtGlob:
 		mark()
 		b.WriteString(x.Op.String() + x.Pattern.Value + ")")
+		// In zsh, *(e:code:) and *(+func) are glob qualifiers that run code
+		// for each match.
+		if x.Op == syntax.GlobZeroOrMore && zshQualifierRuns.MatchString(x.Pattern.Value) {
+			a.problem(st, via, x.Op.String()+x.Pattern.Value+")", "a zsh glob qualifier runs code; it cannot be analyzed")
+		}
 	default:
 		// Arithmetic and anything else: not resolved statically, but any
 		// command substitution inside still runs.

@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Flurit/applygate/internal/classify"
+	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/judge"
 	"github.com/Flurit/applygate/internal/policy"
 )
@@ -375,7 +376,9 @@ func mcpArguments(raw json.RawMessage) string {
 		buf.Reset()
 		buf.Write(raw)
 	}
-	s := buf.String()
+	// Redact before cutting: a cut through a private key would leave its
+	// body without the END line the redaction looks for.
+	s := decisionlog.Redact(buf.String())
 	if len(s) > maxMCPArgs {
 		cut := maxMCPArgs
 		for cut > 0 && !utf8.RuneStart(s[cut]) {

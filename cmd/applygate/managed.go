@@ -69,7 +69,7 @@ func managedInstall(exclusive bool, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(err)
 	}
-	if err := os.MkdirAll(config.ManagedBinDir, 0o755); err != nil {
+	if err := rootDir(config.ManagedBinDir); err != nil {
 		return fail(err)
 	}
 	if err := writeRootFile(bin, b, 0o755); err != nil {
@@ -81,10 +81,7 @@ func managedInstall(exclusive bool, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "binary:        %s (copied from %s)\n", bin, src)
 
 	// 2. The system config, kept if one is there.
-	if err := os.MkdirAll(config.SystemDir, 0o755); err != nil {
-		return fail(err)
-	}
-	if err := os.Chmod(config.SystemDir, 0o755); err != nil {
+	if err := rootDir(config.SystemDir); err != nil {
 		return fail(err)
 	}
 	sp := config.SystemPath()
@@ -104,7 +101,10 @@ func managedInstall(exclusive bool, stdout, stderr io.Writer) int {
 	// organisation's own managed-settings.json is left alone.
 	if config.ClaudeManagedDir != "" {
 		dir := filepath.Join(config.ClaudeManagedDir, "managed-settings.d")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := rootDir(config.ClaudeManagedDir); err != nil {
+			return fail(err)
+		}
+		if err := rootDir(dir); err != nil {
 			return fail(err)
 		}
 		p := filepath.Join(dir, "applygate.json")
@@ -183,10 +183,35 @@ func codexManaged(bin string) string {
 	return b.String()
 }
 
+// rootDir creates dir, or takes over one that is already there: owned by
+// root (when the install runs as root) and writable by root only. A
+// directory others can write would let them replace the files in it.
+func rootDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if fi, err := os.Lstat(dir); err != nil {
+		return err
+	} else if !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	if os.Geteuid() == 0 {
+		if err := os.Chown(dir, 0, 0); err != nil {
+			return err
+		}
+	}
+	return os.Chmod(dir, 0o755)
+}
+
 // writeRootFile writes a file atomically with exactly this mode.
 func writeRootFile(path string, b []byte, mode os.FileMode) error {
 	if err := writeAtomic(path, b, mode); err != nil {
 		return err
+	}
+	if os.Geteuid() == 0 {
+		if err := os.Chown(path, 0, 0); err != nil {
+			return err
+		}
 	}
 	return os.Chmod(path, mode)
 }

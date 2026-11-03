@@ -365,8 +365,10 @@ func RepoConfigs(dir string) []string {
 	var out []string
 	for d := dir; d != "" && d != "."; d = filepath.Dir(d) {
 		for _, name := range []string{FileName, LegacyFileName} {
+			// Lstat: a symlink or other non-regular entry is listed too, so
+			// that Load can refuse it rather than skip it.
 			p := filepath.Join(d, name)
-			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			if _, err := os.Lstat(p); err == nil {
 				out = append([]string{p}, out...)
 				break
 			}
@@ -389,16 +391,15 @@ func RepoConfigs(dir string) []string {
 // ignored and noted in Deprecations.
 func Load(userPath, dir string) (*Config, error) {
 	cfg := Default()
-	if userPath != "" {
-		if err := merge(cfg, userPath, layerUser); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-	}
-	// The managed install's system config comes after the user config, so
-	// what it sets wins. One that root does not own decides nothing, and
-	// every directory is protected until it is fixed.
+	// Under a managed install the root-owned system config is read first,
+	// and the user config, which the agent's user owns, may then only
+	// tighten, like a repository config. One the system config root does
+	// not own decides nothing, and every directory is protected until it is
+	// fixed.
+	userLayer := layerUser
 	if sp := SystemPath(); sp != "" {
 		if _, err := os.Lstat(sp); err == nil {
+			userLayer = layerUserManaged
 			if err := CheckSystemFile(sp); err != nil {
 				cfg.Untrusted = append(cfg.Untrusted, sp)
 				cfg.Deprecations = append(cfg.Deprecations, "system config not used: "+err.Error())
@@ -407,12 +408,30 @@ func Load(userPath, dir string) (*Config, error) {
 			}
 		}
 	}
+	if userPath != "" {
+		if err := merge(cfg, userPath, userLayer); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+	}
 	if dir != "" {
 		n := 0
 		for _, p := range RepoConfigs(dir) {
+			// Trust is for the file read, so only a regular file counts: a
+			// symlink would be checked against its target's approval and
+			// read at its own place. A config that cannot be read is
+			// untrusted too; it must not reach the error path, where the
+			// user config's on_error decides.
+			fi, err := os.Lstat(p)
+			if err != nil || !fi.Mode().IsRegular() {
+				cfg.Untrusted = append(cfg.Untrusted, p)
+				cfg.Deprecations = append(cfg.Deprecations, p+" is not a regular file (a symlink?), so it is not read; replace it with the file itself and trust that")
+				continue
+			}
 			b, err := safefile.ReadFile(p)
 			if err != nil {
-				return nil, err
+				cfg.Untrusted = append(cfg.Untrusted, p)
+				cfg.Deprecations = append(cfg.Deprecations, p+" cannot be read, so it is not read: "+err.Error())
+				continue
 			}
 			if !Trusted(p, b) {
 				// Not read: a config nobody approved, or one changed since,
@@ -436,10 +455,11 @@ func Load(userPath, dir string) (*Config, error) {
 type layer int
 
 const (
-	layerUser   layer = iota
-	layerSystem       // the managed install's system config, read after the user's
-	layerRepo         // the outermost repository config
-	layerNested       // a repository config inside another
+	layerUser        layer = iota
+	layerSystem            // the managed install's system config, read first
+	layerUserManaged       // the user config under a managed install: tighten only
+	layerRepo              // the outermost repository config
+	layerNested            // a repository config inside another
 )
 
 // LoadFile reads one config file on top of the defaults, as a repository
@@ -453,6 +473,8 @@ func LoadFile(path string) (*Config, error) {
 }
 
 func merge(cfg *Config, path string, l layer) error {
+	// repo: the layer may only tighten. The user config under a managed
+	// install is held to the same rule as a repository config.
 	repo := l != layerUser && l != layerSystem
 	b, err := safefile.ReadFile(path)
 	if err != nil {
@@ -473,13 +495,17 @@ func merge(cfg *Config, path string, l layer) error {
 	}
 	// ignored notes a setting a repository config may not make: it would
 	// loosen protection, which only the user config may do.
+	where, owner := "a repository config", "the user config ("+UserPath()+")"
+	if l == layerUserManaged {
+		where, owner = "the user config under a managed install", "the system config ("+SystemPath()+")"
+	}
 	ignored := func(field string) {
-		cfg.Deprecations = append(cfg.Deprecations, path+": "+field+" would loosen protection and is ignored in a repository config; only the user config ("+UserPath()+") may set it")
+		cfg.Deprecations = append(cfg.Deprecations, path+": "+field+" would loosen protection and is ignored in "+where+"; only "+owner+" may set it")
 	}
 	// userOnly notes a setting that is the user's for another reason: it
 	// sends data off the machine or moves applygate's own files.
 	userOnly := func(field string) {
-		cfg.Deprecations = append(cfg.Deprecations, path+": "+field+" is ignored in a repository config; only the user config ("+UserPath()+") may set it")
+		cfg.Deprecations = append(cfg.Deprecations, path+": "+field+" is ignored in "+where+"; only "+owner+" may set it")
 	}
 	if c.Mode != "" {
 		switch {
@@ -579,12 +605,16 @@ func merge(cfg *Config, path string, l layer) error {
 			ignored("environment " + e.Name + " (tier " + string(e.Tier) + ", in a config nested inside the repository's)")
 			continue
 		}
+		if l == layerUserManaged && e.Tier != Protected {
+			ignored("environment " + e.Name + " (tier " + string(e.Tier) + ")")
+			continue
+		}
 		// A repository's patterns, "**" ones included, are rooted at its
 		// config's directory, so another repository's "**" cannot claim
 		// this one's directories. The user config's "**" patterns match
 		// anywhere.
 		for i, p := range e.Match.Paths {
-			if !filepath.IsAbs(p) && (repo || !strings.HasPrefix(p, "**")) {
+			if !filepath.IsAbs(p) && (l == layerRepo || l == layerNested || !strings.HasPrefix(p, "**")) {
 				e.Match.Paths[i] = filepath.ToSlash(filepath.Join(base, p))
 			}
 		}
@@ -644,7 +674,9 @@ func merge(cfg *Config, path string, l layer) error {
 		// A wrapper skips its first arguments to find the command it runs;
 		// declared over a shell, an engine or an interpreter it would hide
 		// what that program runs.
-		if repo && wellKnown[w.Name] {
+		// Under a managed install a wrapper comes from the system config:
+		// one skips its first arguments, which can hide what it runs.
+		if repo && wellKnown[w.Name] || l == layerUserManaged {
 			ignored("wrappers: " + w.Name)
 			continue
 		}
@@ -774,8 +806,17 @@ func (c *Config) GuardPaths() []string {
 // appDirs are applygate's user config and state directories, and the
 // pre-rename ones, as the environment resolves them.
 func appDirs() []string {
-	return []string{filepath.Dir(userPathFor("applygate")), filepath.Dir(userPathFor("seatbelt")),
+	out := []string{filepath.Dir(userPathFor("applygate")), filepath.Dir(userPathFor("seatbelt")),
 		filepath.Dir(logPathFor("applygate")), filepath.Dir(logPathFor("seatbelt"))}
+	// The Claude Code plugin keeps its binary and pin under
+	// CLAUDE_PLUGIN_DATA, else ${XDG_CACHE_HOME:-~/.cache}/applygate.
+	if d := os.Getenv("XDG_CACHE_HOME"); d != "" {
+		out = append(out, filepath.Join(d, "applygate"))
+	}
+	if d := os.Getenv("CLAUDE_PLUGIN_DATA"); d != "" {
+		out = append(out, d)
+	}
+	return out
 }
 
 // hostDirFiles are the hook settings under a relocated host directory.

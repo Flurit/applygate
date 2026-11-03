@@ -46,7 +46,7 @@ applygate telemetry off
 applygate telemetry send [--dry-run]
 ```
 
-Settings and send state live in one file, `~/.config/applygate/telemetry.json` (or under `$XDG_CONFIG_HOME`). It is a guard path: an agent may not edit it, and an agent that runs `applygate telemetry on` or `off` is blocked as guard tampering in every tier. Only a person at a terminal flips the switch.
+Settings and send state live in one file, `~/.config/applygate/telemetry.json` (or under `$XDG_CONFIG_HOME`). It is a guard path: an agent may not edit it, and an agent that runs `applygate telemetry on` or `off` is blocked as guard tampering in every tier. Turning it on is a person's decision: an agent that runs the command is blocked, but the command itself does not check for a terminal. `APPLYGATE_TELEMETRY_ENDPOINT` in the hook's environment redirects reports, and an agent that starts a nested session with it set is blocked as tampering.
 
 The environment can force it off regardless of the file, which is the setting for CI runners and shared machines:
 

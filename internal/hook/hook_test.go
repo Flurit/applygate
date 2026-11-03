@@ -832,3 +832,23 @@ func TestRepoConfigErrorFollowsUserConfig(t *testing.T) {
 		}
 	}
 }
+
+// A repository config that cannot be read is untrusted, so every directory
+// is protected; it no longer takes the error path, where the user config's
+// on_error decides (finding 3S5).
+func TestUnreadableRepoConfigIsProtected(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 file")
+	}
+	root := t.TempDir()
+	p := filepath.Join(root, ".applygate.yaml")
+	os.WriteFile(p, []byte("version: 1\n"), 0o644)
+	os.Chmod(p, 0)
+	t.Cleanup(func() { os.Chmod(p, 0o644) })
+	user := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(user, []byte("version: 1\nstrict: false\ndefault_tier: disposable\n"), 0o644)
+	o := Run(Claude{}, strings.NewReader(event("Bash", root, map[string]any{"command": "terraform destroy -auto-approve"})), Options{UserConfig: user, NoLog: true, NoGit: true, Env: map[string]string{}})
+	if got := decision(t, o); got != "deny" {
+		t.Fatalf("unreadable config: %s (exit %d %s)", got, o.Exit, o.Stderr)
+	}
+}

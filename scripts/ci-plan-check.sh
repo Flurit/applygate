@@ -8,6 +8,7 @@
 #   FAIL_ON        block|ask|never (default: block)
 #   WORKDIR        directory the plan belongs to (default: .)
 #   TF_BIN         terraform or tofu, for show -json on a planfile (default: terraform)
+#   TRUST_CONFIG   true to read the repository config without a trust record (default: false)
 # Exit codes: 0 when the verdict passes FAIL_ON, 1 when it does not, 2 on an error.
 set -euo pipefail
 bin=${APPLYGATE_BIN:-applygate}
@@ -31,11 +32,14 @@ if [ "$(head -c1 "$plan")" != "{" ]; then
 fi
 
 set +e
-if [ -n "$tier" ]; then
-    out=$("$bin" plan-check --cwd . --tier "$tier" "$json" 2>&1)
-else
-    out=$("$bin" plan-check --cwd . "$json" 2>&1)
-fi
+args=(plan-check --cwd .)
+[ -n "$tier" ] && args+=(--tier "$tier")
+case "${TRUST_CONFIG:-false}" in
+    true) args+=(--trust-config) ;;
+    false | "") ;;
+    *) echo "TRUST_CONFIG must be true or false, not '$TRUST_CONFIG'" >&2; exit 2 ;;
+esac
+out=$("$bin" "${args[@]}" "$json" 2>&1)
 code=$?
 set -e
 [ "$json" != "$plan" ] && rm -f "$json"
