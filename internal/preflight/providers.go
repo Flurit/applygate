@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -101,8 +100,7 @@ func providerDirs(root string) ([]string, error) {
 func headLockFile(ctx context.Context, dir string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "show", "HEAD:./.terraform.lock.hcl")
-	cmd.Dir = dir
+	cmd := gitCommand(ctx, dir, "show", "HEAD:./.terraform.lock.hcl")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

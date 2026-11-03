@@ -1,8 +1,12 @@
 package shell
 
 import (
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/Flurit/applygate/internal/reviewgap"
 )
 
 // Constructs from the v0.6.0 review's C findings, checked on the analyzer
@@ -146,4 +150,18 @@ func TestReviewCBuiltinsKeepCase(t *testing.T) {
 	if len(r.Problems) != 0 {
 		t.Errorf("Source is not the source builtin: %+v", r.Problems)
 	}
+}
+
+// Deep nesting must give an unresolved result, not kill the process with a
+// stack overflow (finding 2C8). The analysis runs in a child process, since
+// a stack overflow cannot be recovered.
+func TestReview2C8DeepNestingDoesNotCrash(t *testing.T) {
+	if os.Getenv("APPLYGATE_DEEP_CHILD") == "1" {
+		Analyze("terraform destroy\n"+strings.Repeat("(", 200000)+"true"+strings.Repeat(")", 200000), Options{Dir: "/r", ReadFile: fakeFS(nil)})
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestReview2C8DeepNestingDoesNotCrash$")
+	cmd.Env = append(os.Environ(), "APPLYGATE_DEEP_CHILD=1")
+	err := cmd.Run()
+	reviewgap.Check(t, "2C8", err == nil, "the analysis of deeply nested input crashed: %v", err)
 }
