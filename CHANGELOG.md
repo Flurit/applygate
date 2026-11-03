@@ -12,6 +12,14 @@
   - **Limits:** nesting deeper than 2,000 levels is unresolved instead of crashing the process, and gzip output over the 256 KB cap is unknown instead of cut.
   - **`COPILOT_HOME`'s hook file** is a guard path.
 
+- **Red-team round 2 fixes, part 2:**
+  - **Repository configs must be trusted.** A `.applygate.yaml` is read only when a person approved its exact content with `applygate trust`; a new or changed one is not read and every directory is protected. This closes every route that rewrites or plants a config (checkout, extraction, clone, a nested `wrappers:` list) in one place. `init` trusts the config it writes, and `doctor` lists untrusted ones.
+  - **Managed install:** `sudo applygate install --managed` puts a root-owned binary in `/usr/local/libexec/applygate`, a system config in `/etc/applygate` that wins over the user config, a system trust store, and the hook in Claude Code's managed settings with bypass mode off (`--exclusive` adds `allowManagedHooksOnly`). It prints a Codex `requirements.toml` snippet. The Claude Code and Codex keys are from their docs and not tested live. macOS and Linux only. `uninstall --managed [--purge]` removes it.
+  - **Nested agents:** `claude --bare`, `CLAUDE_CODE_SIMPLE`, `CLAUDE_CONFIG_DIR`, `codex --disable hooks`, `codex -p`, `CODEX_HOME`, `gemini --yolo`, `copilot --allow-all-tools`, `HOME=` and the same agents through `npx`, `bunx` and `pnpx` are tampering.
+  - **The binary:** package managers that install, remove or replace `applygate` or `seatbelt`, an executable of that name written into a `PATH` directory, shell start-up files, and `launchctl setenv` are tampering. A copy of the running binary is recognized by its content. The Claude Code plugin pins the binary it finds by path and sha256.
+  - **tmux and screen:** the command strings of `new-session`, `new-window`, `split-window`, `respawn-pane`, `run-shell`, `display-popup` and `screen` are analyzed.
+  - **More guard paths:** the Claude Code plugin registry, `.mcp.json`, `~/.claude.json`, Gemini's `trustedFolders.json`, and `GEMINI_CLI_HOME`.
+
 - **Security fixes from the v0.6.0 pre-release review** (`review/v0.6.0/`).
   - **The review:** six independent reviewers found 80 issues, 20 of them critical, most present in earlier releases.
   - **This release fixes the self-protection findings,** where an agent could switch applygate off or approve its own call.

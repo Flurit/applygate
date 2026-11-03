@@ -626,6 +626,30 @@ func positionals(args []shell.Word, valued map[string]bool) (pos []string, dynam
 func agentFlags(base Action, name string, args []shell.Word) (Action, bool) {
 	a := base
 	a.Engine = "agent"
+	// A nested session that skips hooks, or reads its settings from
+	// somewhere else, runs without the hook.
+	for k := range base.Env {
+		switch {
+		case k == "CLAUDE_CODE_SIMPLE" && name == "claude", k == "CLAUDE_CONFIG_DIR" && name == "claude",
+			k == "CODEX_HOME" && name == "codex", k == "HOME", k == "XDG_CONFIG_HOME", k == "COPILOT_HOME" && name == "copilot",
+			k == "GEMINI_CLI_HOME" && name == "gemini":
+			a.Class, a.Why = Tampering, name+" started with "+k+" set, so it may run without the hook"
+			return a, true
+		}
+	}
+	for i, w := range args {
+		t := w.Text
+		off := name == "claude" && t == "--bare" ||
+			name == "codex" && (t == "--disable" && i+1 < len(args) && strings.Contains(args[i+1].Text, "hook") || strings.HasPrefix(t, "--disable=") && strings.Contains(t, "hook")) ||
+			name == "gemini" && (t == "-y" || t == "--yolo" || t == "--approval-mode=yolo" || t == "--approval-mode" && i+1 < len(args) && args[i+1].Text == "yolo") ||
+			name == "copilot" && (t == "--allow-all-tools" || t == "--allow-all" || t == "--allow-all-paths") ||
+			// A Codex profile can set features.hooks = false.
+			name == "codex" && (t == "-p" || t == "--profile" || strings.HasPrefix(t, "--profile="))
+		if off {
+			a.Class, a.Why = Tampering, name+" "+t+" starts a session without the hook or its checks"
+			return a, true
+		}
+	}
 	for i, w := range args {
 		t := w.Text
 		bypass := t == "--dangerously-skip-permissions" || t == "--dangerously-bypass-approvals-and-sandbox" ||
@@ -756,4 +780,44 @@ func kubeconfigFlag(a *Action, args []shell.Word) {
 	if v := flagValue(args, "--kubeconfig"); v != "" {
 		a.TargetEnv = map[string]string{"KUBECONFIG": absPath(a.Dir, v, "")}
 	}
+}
+
+// agentPackages are the npm packages of the agent CLIs, run through npx,
+// bunx and similar.
+var agentPackages = map[string]string{"@anthropic-ai/claude-code": "claude", "@openai/codex": "codex",
+	"@google/gemini-cli": "gemini", "@github/copilot": "copilot", "opencode-ai": "opencode"}
+
+// packageAgent returns the agent CLI a package runner starts and its
+// arguments: npx @anthropic-ai/claude-code --bare, bunx @openai/codex.
+func packageAgent(name string, args []shell.Word) (string, []shell.Word, bool) {
+	r := args
+	switch name {
+	case "npx", "bunx", "pnpx":
+	case "pnpm", "yarn", "bun":
+		if len(r) == 0 || r[0].Text != "dlx" && r[0].Text != "x" {
+			return "", nil, false
+		}
+		r = r[1:]
+	case "npm":
+		if len(r) == 0 || r[0].Text != "exec" && r[0].Text != "x" {
+			return "", nil, false
+		}
+		r = r[1:]
+	default:
+		return "", nil, false
+	}
+	for i, w := range r {
+		if strings.HasPrefix(w.Text, "-") {
+			continue
+		}
+		pkg := w.Text
+		if j := strings.LastIndex(pkg, "@"); j > 0 {
+			pkg = pkg[:j]
+		}
+		if agent, ok := agentPackages[pkg]; ok {
+			return agent, r[i+1:], true
+		}
+		return "", nil, false
+	}
+	return "", nil, false
 }

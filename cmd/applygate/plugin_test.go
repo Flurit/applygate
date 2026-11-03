@@ -304,3 +304,37 @@ func TestPluginHooksUseLauncher(t *testing.T) {
 		t.Fatalf("SessionStart: %+v", start)
 	}
 }
+
+// The first installed binary is pinned by path and sha256: a binary planted
+// on PATH later does not run, and one replaced in place blocks.
+func TestPluginLauncherPinsBinary(t *testing.T) {
+	skipUnlessReleasePlatform(t)
+	tools := launcherTools(t)
+	name, _, sum := fakeRelease(t, "downloaded")
+	script := pluginCopy(t, name, sum)
+	data := t.TempDir()
+	first, planted := t.TempDir(), t.TempDir()
+	os.WriteFile(filepath.Join(first, "applygate"), []byte("#!/bin/sh\necho \"first $*\"\n"), 0o755)
+	env := func(path string) []string { return launcherEnv(t, path+":"+tools, "CLAUDE_PLUGIN_DATA="+data) }
+
+	if r := runLauncher(t, script, env(first), "", "hook", "claude"); r.exit != 0 || r.stdout != "first hook claude\n" {
+		t.Fatalf("first run: %+v", r)
+	}
+	pin, err := os.ReadFile(filepath.Join(data, "pinned-binary"))
+	if err != nil || !strings.Contains(string(pin), filepath.Join(first, "applygate")) {
+		t.Fatalf("no pin: %v %q", err, pin)
+	}
+	os.WriteFile(filepath.Join(planted, "applygate"), []byte("#!/bin/sh\necho \"planted $*\"\n"), 0o755)
+	if r := runLauncher(t, script, env(planted+":"+first), "", "hook", "claude"); r.exit != 0 || r.stdout != "first hook claude\n" {
+		t.Fatalf("a binary planted on PATH ran: %+v", r)
+	}
+	os.WriteFile(filepath.Join(first, "applygate"), []byte("#!/bin/sh\necho \"swapped $*\"\n"), 0o755)
+	if r := runLauncher(t, script, env(first), "", "hook", "claude"); r.exit != 2 || r.stdout != "" || !strings.Contains(r.stderr, "changed since the plugin pinned it") {
+		t.Fatalf("a replaced binary must block: %+v", r)
+	}
+	// A person removes the pin after an upgrade.
+	os.Remove(filepath.Join(data, "pinned-binary"))
+	if r := runLauncher(t, script, env(first), "", "hook", "claude"); r.exit != 0 || r.stdout != "swapped hook claude\n" {
+		t.Fatalf("re-pin: %+v", r)
+	}
+}

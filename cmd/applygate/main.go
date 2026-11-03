@@ -46,6 +46,8 @@ Usage:
   applygate apply [--cwd DIR] [--engine terraform|tofu] <planfile> [args]
                                       judge a saved plan as the hooks would, confirm an ask by typing the
                                       environment name, then run the engine's apply (the human door)
+  applygate trust [--cwd DIR]          review and trust this repository's .applygate.yaml; a config nobody
+                                      trusted, or one changed since, is not read and every directory is protected
   applygate approve [ID]               allow one call an agent was stopped on because it could not ask you;
                                       without ID, list the pending requests (a person at a terminal only)
   applygate report [--log FILE]        summarize the decision log
@@ -55,6 +57,10 @@ Usage:
   applygate selftest [-v]              run the scenario pack against this binary
   applygate init [--no-hooks] [--scope user|project]
                                       write a starter .applygate.yaml, detect agents, install their hooks (user scope)
+  sudo applygate install --managed [--exclusive]
+                                      root-owned install the agent's user cannot change: binary, system
+                                      config, trust store, Claude Code managed settings (docs/managed.md)
+  sudo applygate uninstall --managed [--purge]
   applygate hook install|remove --agent AGENT [--scope project|user]
                                       install defaults to project scope; remove cleans both scopes
   applygate doctor                     check config, hooks, launch directory and versions (exit 1 on a problem)
@@ -89,6 +95,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdApply(args[1:], os.Stdin, os.Stdout, os.Stderr)
 	case "approve":
 		return cmdApprove(args[1:], stdin, stdout, stderr)
+	case "trust":
+		return cmdTrust(args[1:], stdin, stdout, stderr)
+	case "install", "uninstall":
+		return cmdManaged(args[0], args[1:], stdout, stderr)
 	case "report":
 		return cmdReport(args[1:], stdout, stderr)
 	case "suggest":
@@ -386,6 +396,8 @@ func cmdReport(args []string, stdout, stderr io.Writer) int {
 
 func cmdSelftest(args []string, stdout, stderr io.Writer) int {
 	verbose := len(args) > 0 && args[0] == "-v"
+	// The pack's fixture configs are copies made for this run.
+	config.TrustAll = true
 	p, err := harness.Load()
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -488,7 +500,14 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "wrote %s. Edit the environments to match this repository.\n", config.FileName)
+	// The person running init wrote this config; trust it. After an edit,
+	// applygate trust approves the new content.
+	if abs, err := filepath.Abs(config.FileName); err == nil {
+		if err := config.Trust([]string{abs}); err != nil {
+			fmt.Fprintln(stderr, "applygate: could not trust the new config:", err)
+		}
+	}
+	fmt.Fprintf(stdout, "wrote %s. Edit the environments to match this repository, then run applygate trust: an edited config is not read until you trust it.\n", config.FileName)
 	// The trial runs in observe mode, which only the user config can set:
 	// start one if there is none, otherwise say how.
 	if up := config.UserPath(); fileMissing(up) {
@@ -864,6 +883,7 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "FAIL %s\n", fmt.Sprintf(format, a...))
 	}
 	fmt.Fprintf(stdout, "applygate %s at %s\n", hook.Version, selfPath())
+	doctorManaged(say)
 	wd, _ := os.Getwd()
 	cfg, err := config.Load(config.UserPath(), wd)
 	say(err == nil, "config loads (%s)", orNone(func() string {
@@ -876,6 +896,12 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "     ", err)
 	} else {
 		say(cfg.Root != "", "repository config found (%s)", orNone(cfg.Root))
+		for _, u := range cfg.Untrusted {
+			if u == config.SystemPath() {
+				continue // its reason is among the notes below
+			}
+			say(false, "%s is not trusted, so it is not read and every directory is protected; review it and run: %s", u, config.TrustCommand())
+		}
 		for _, d := range cfg.Deprecations {
 			say(false, "%s", d)
 		}

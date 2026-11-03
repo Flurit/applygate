@@ -44,7 +44,7 @@ The classifier stops asking "which programs write files?" and asks "does this co
   - An unapproved or changed config is not read. Every directory is then judged as protected, and the message tells the person to run `applygate trust`.
   - This closes every route that rewrites or plants it (git checkout, plumbing, an extraction, a clone, an unknown writer, a nested `wrappers:` list) in one place, instead of recognizing each route.
   - `applygate trust` is guard tampering when an agent runs it, like `approve`.
-- **Integrity at hook start.** Without managed mode, `init` and `hook install` record a hash of the hook entries and the user config. At every hook start, applygate checks them and blocks with "applygate's configuration changed outside applygate; run `applygate doctor`". This is defence in depth: an agent that can write the record can rewrite it too, which the docs say.
+- **Integrity at hook start** (not built in R2-2; see [limits](../../docs/limits.md)). Without managed mode, `init` and `hook install` record a hash of the hook entries and the user config. At every hook start, applygate checks them and blocks with "applygate's configuration changed outside applygate; run `applygate doctor`". This is defence in depth: an agent that can write the record can rewrite it too, which the docs say.
 - **Nested agents (S12).** Starting an agent CLI from an agent is tampering when the command:
   - turns hooks off: `--bare`, `--disable hooks`, `features.hooks=false`, profiles, `CLAUDE_CODE_SIMPLE`;
   - points the agent at another config: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HOME=`;

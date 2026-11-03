@@ -107,6 +107,8 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 | `applygate init` | Write a starter config and install hooks for the agents it finds |
 | `applygate check "<cmd>"` | Dry-run a command (exit 0 allow, 4 ask, 3 block); `explain` shows the reasoning |
 | `applygate apply <planfile>` | Judge a saved plan, confirm, then apply |
+| `applygate trust` | Review and trust this repository's `.applygate.yaml`; until then it is not read and every directory is protected |
+| `sudo applygate install --managed` | Root-owned install the agent's user cannot change ([docs/managed.md](docs/managed.md)) |
 | `applygate approve [ID]` | Allow once a call an agent was stopped on because it could not ask you; without ID, list pending requests |
 | `applygate plan-check plan.json` | Judge `terraform show -json` output |
 | `applygate report` / `suggest` | Summarize the decision log / propose a config from it |
@@ -130,6 +132,9 @@ Known gaps: [docs/limits.md](docs/limits.md).
 v0.6.0 fixes the findings of a pre-release security review ([review/v0.6.0](review/v0.6.0)). Several fixes change behaviour:
 
 - **Reinstall the hooks:** run `applygate hook install --agent claude` (and `--agent codex`) with the `--scope` you used. The Claude Code matcher is now `*`, so every tool reaches the hook, and the `seatbelt` compatibility binary is gone: a hook entry that still calls it fails. `applygate doctor` flags both.
+- **Trust your repository configs:** run `applygate trust` in each repository and after every change to its `.applygate.yaml`. Until then the config is not read and every directory is protected; `applygate doctor` lists the configs that need it.
+- **The Claude Code plugin pins its binary** the first time it finds one. After upgrading applygate, remove `pinned-binary` from the plugin's data directory, or every call is blocked with a message that says so.
+- **For a guard the agent cannot change,** use `sudo applygate install --managed` ([docs/managed.md](docs/managed.md)).
 - **Move loosening settings to your user config.** A repository `.applygate.yaml` can now only add protection: `mode: observe`, `strict: false`, a looser `default_tier`, `name_hints` or `on_error`, and `aliases` there are ignored, and `doctor` says so.
 - **One-time approvals are off by default.** Turn them on in the user config (`approvals: true`) if you accept that an agent on the same machine can reach your terminal.
 - **`applygate apply` has no `--yes` and no `--plan-json`.** In CI, gate with `applygate plan-check` or the Action and run the engine yourself.

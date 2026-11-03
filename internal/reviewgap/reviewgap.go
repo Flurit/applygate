@@ -17,12 +17,6 @@ import (
 
 // Open lists the findings not fixed yet, by review ID.
 var Open = map[string]string{
-	"2S8":  "package managers remove or replace the hook binary",
-	"2S9":  "a fake applygate planted on PATH",
-	"2S10": "a renamed copy runs init or hook remove",
-	"2S11": "self-approval through tmux command strings",
-	"2S12": "nested agent sessions without hooks",
-	"2S14": "a nested repository config declares wrappers over runners",
 	"2C1":  "trap bodies are judged where they are set",
 	"2C2":  "aws s3 cp with a valued flag is read as a download",
 	"2C3":  "git options that run programs are missed",

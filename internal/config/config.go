@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -103,6 +104,9 @@ type Config struct {
 	// Deprecations notes legacy names still in use (a .seatbelt.yaml config
 	// file); doctor and check print them.
 	Deprecations []string `yaml:"-"`
+	// Untrusted lists the repository configs that were not read because
+	// their content was not approved with applygate trust.
+	Untrusted []string `yaml:"-"`
 }
 
 // Wrapper declares a program that runs another command: the command
@@ -264,9 +268,13 @@ var DefaultProtectedPaths = []string{
 	// and the fallback cache where the launcher keeps the downloaded binary.
 	"**/.claude/plugins/cache/applygate/**", "**/.claude/plugins/marketplaces/applygate/**",
 	"**/.claude/plugins/data/applygate-*/**", "**/.cache/applygate/**",
+	// The plugin registry, which can turn the plugin off, and the MCP
+	// server lists, which can add a server whose tools the hook cannot read.
+	"**/.claude/plugins/installed_plugins.json", "**/.claude/plugins/known_marketplaces.json",
+	"**/.mcp.json", "**/.claude.json",
 	// Hook files of the hosts whose adapters were written from their
 	// documentation (docs/hosts.md).
-	"**/.gemini/settings.json", "**/.github/hooks/**", "**/.github/copilot/settings*.json",
+	"**/.gemini/settings.json", "**/.gemini/trustedFolders.json", "**/.github/hooks/**", "**/.github/copilot/settings*.json",
 	"**/.copilot/hooks/**", "**/.copilot/settings.json", "**/.windsurf/hooks.json", "**/.codeium/windsurf/hooks.json",
 	"**/.codeium/hooks.json", "**/.devin/config.json", "**/.devin/hooks.v1.json", "**/.config/devin/config.json",
 	"**/.opencode/plugins/**", "**/.config/opencode/plugins/**", "**/.clinerules/hooks/**", "**/.cline/hooks/**",
@@ -386,12 +394,37 @@ func Load(userPath, dir string) (*Config, error) {
 			return nil, err
 		}
 	}
+	// The managed install's system config comes after the user config, so
+	// what it sets wins. One that root does not own decides nothing, and
+	// every directory is protected until it is fixed.
+	if sp := SystemPath(); sp != "" {
+		if _, err := os.Lstat(sp); err == nil {
+			if err := CheckSystemFile(sp); err != nil {
+				cfg.Untrusted = append(cfg.Untrusted, sp)
+				cfg.Deprecations = append(cfg.Deprecations, "system config not used: "+err.Error())
+			} else if err := merge(cfg, sp, layerSystem); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if dir != "" {
-		for i, p := range RepoConfigs(dir) {
+		n := 0
+		for _, p := range RepoConfigs(dir) {
+			b, err := safefile.ReadFile(p)
+			if err != nil {
+				return nil, err
+			}
+			if !Trusted(p, b) {
+				// Not read: a config nobody approved, or one changed since,
+				// decides nothing. Every directory is then protected.
+				cfg.Untrusted = append(cfg.Untrusted, p)
+				continue
+			}
 			l := layerRepo
-			if i > 0 {
+			if n > 0 {
 				l = layerNested
 			}
+			n++
 			if err := merge(cfg, p, l); err != nil {
 				return nil, err
 			}
@@ -404,6 +437,7 @@ type layer int
 
 const (
 	layerUser   layer = iota
+	layerSystem       // the managed install's system config, read after the user's
 	layerRepo         // the outermost repository config
 	layerNested       // a repository config inside another
 )
@@ -419,7 +453,7 @@ func LoadFile(path string) (*Config, error) {
 }
 
 func merge(cfg *Config, path string, l layer) error {
-	repo := l != layerUser
+	repo := l != layerUser && l != layerSystem
 	b, err := safefile.ReadFile(path)
 	if err != nil {
 		return err
@@ -496,7 +530,7 @@ func merge(cfg *Config, path string, l layer) error {
 		if c.Judge.Enabled != nil && !*c.Judge.Enabled {
 			cfg.Judge.Enabled = c.Judge.Enabled
 		}
-	} else {
+	} else if l == layerUser || !reflect.DeepEqual(c.Judge, Judge{}) {
 		cfg.Judge = c.Judge
 	}
 	switch c.UnknownDir {
@@ -709,6 +743,7 @@ func (c *Config) GuardPaths() []string {
 	}
 	out = append(out, ApprovalsPath(), JudgeCachePath())
 	out = append(out, hostDirFiles()...)
+	out = append(out, managedGuards()...)
 	return append(out, guard.Executable()...)
 }
 
@@ -725,7 +760,9 @@ func hostDirFiles() []string {
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
 		out = append(out, filepath.Join(d, "settings.json"), filepath.Join(d, "settings.local.json"),
 			filepath.Join(d, "plugins", "cache", "applygate", "**"), filepath.Join(d, "plugins", "marketplaces", "applygate", "**"),
-			filepath.Join(d, "plugins", "data", "applygate-*", "**"))
+			filepath.Join(d, "plugins", "data", "applygate-*", "**"),
+			filepath.Join(d, "plugins", "installed_plugins.json"), filepath.Join(d, "plugins", "known_marketplaces.json"),
+			filepath.Join(d, ".claude.json"))
 	}
 	if d := os.Getenv("CODEX_HOME"); d != "" {
 		out = append(out, filepath.Join(d, "hooks.json"), filepath.Join(d, "config.toml"))
@@ -733,6 +770,9 @@ func hostDirFiles() []string {
 	// hook install writes Copilot CLI's hook under COPILOT_HOME when set.
 	if d := os.Getenv("COPILOT_HOME"); d != "" {
 		out = append(out, filepath.Join(d, "hooks"), filepath.Join(d, "hooks", "**"), filepath.Join(d, "settings.json"))
+	}
+	if d := os.Getenv("GEMINI_CLI_HOME"); d != "" {
+		out = append(out, filepath.Join(d, ".gemini", "settings.json"), filepath.Join(d, ".gemini", "trustedFolders.json"))
 	}
 	return out
 }
@@ -768,7 +808,41 @@ func (c *Config) GuardTargets(home string) []string {
 			out = append(out, lit)
 		}
 	}
+	for _, f := range managedGuards() {
+		if lit := literalPrefix(f); lit != "" {
+			out = append(out, lit)
+		}
+	}
+	out = append(out, launchTargets(home)...)
 	return append(out, guard.Executable()...)
+}
+
+// launchTargets are the places that decide which applygate binary runs and
+// with which environment: an applygate or seatbelt in any PATH directory or
+// the usual user bin directories (a plant there runs instead of the real
+// hook), and the shell start-up files (an export there, such as
+// APPLYGATE_BIN or XDG_CONFIG_HOME, reaches the next session's hook).
+func launchTargets(home string) []string {
+	dirs := filepath.SplitList(os.Getenv("PATH"))
+	if home != "" {
+		dirs = append(dirs, filepath.Join(home, ".local", "bin"), filepath.Join(home, "bin"), filepath.Join(home, "go", "bin"),
+			filepath.Join(home, ".cargo", "bin"))
+	}
+	dirs = append(dirs, "/usr/local/bin", "/opt/homebrew/bin")
+	var out []string
+	for _, d := range dirs {
+		if d == "" || !filepath.IsAbs(d) {
+			continue
+		}
+		out = append(out, filepath.Join(d, "applygate"), filepath.Join(d, "seatbelt"))
+	}
+	if home != "" {
+		for _, rc := range []string{".zshrc", ".zshenv", ".zprofile", ".zlogin", ".bashrc", ".bash_profile", ".bash_login", ".profile",
+			".config/fish/config.fish", ".config/fish/conf.d", ".config/environment.d", ".pam_environment", "Library/LaunchAgents"} {
+			out = append(out, filepath.Join(home, rc))
+		}
+	}
+	return out
 }
 
 // literalPrefix is the part of a guard pattern before its first segment with
@@ -865,6 +939,14 @@ func LooksProd(v string) bool {
 // Resolve maps signals to a tier. When several environments match, the most
 // protected one wins.
 func (c *Config) Resolve(s Signals) Resolution {
+	if len(c.Untrusted) > 0 {
+		u := c.Untrusted[len(c.Untrusted)-1]
+		why := "the repository config " + u + " is not trusted (new, or changed since it was trusted), so it is not read and every directory is protected; a person reviews it and runs " + TrustCommand()
+		if u == SystemPath() {
+			why = "the system config " + u + " is not owned and writable by root only, so it is not read and every directory is protected; run applygate doctor"
+		}
+		return Resolution{Tier: Protected, Env: "untrusted config", Unknown: true, Matched: []string{why}}
+	}
 	best := Resolution{Tier: Disposable, Env: "", Unknown: true}
 	consider := func(env string, t Tier, why string) {
 		if best.Unknown || t.Rank() > best.Tier.Rank() {

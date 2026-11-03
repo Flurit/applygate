@@ -6,6 +6,7 @@
 #   sh applygate-hook --fetch       SessionStart: make sure a binary is there
 #
 # The binary, first match wins:
+#   0. the binary pinned on first use (see below)
 #   1. $APPLYGATE_BIN
 #   2. applygate on PATH (install.sh, Homebrew, go install)
 #   3. the release pinned in pinned-release.txt, cached under
@@ -13,6 +14,13 @@
 #      ${XDG_CACHE_HOME:-~/.cache}/applygate/plugin)
 #   4. that release downloaded from GitHub, its sha256 checked against
 #      pinned-release.txt, then cached as in 3
+#
+# A binary from 1 or 2 is pinned the first time, by path and sha256, in
+# $DATA/pinned-binary ($DATA is the cache directory of 3, a guard path). From
+# then on only that file runs, and only while its sha256 is unchanged, so an
+# applygate planted earlier on PATH, or a binary replaced in place, does not
+# run as the hook. After upgrading applygate, a person removes
+# $DATA/pinned-binary to pin the new one.
 #
 # The sha256 values come from the plugin itself, which is the reviewed source
 # for this version, so a download is checked against a value that did not
@@ -38,6 +46,28 @@ fail() {
     exit 1
 }
 need() { command -v "$1" >/dev/null 2>&1; }
+sha256() {
+    if need sha256sum; then
+        sha256sum "$1" | awk '{print $1}'
+    elif need shasum; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
+data=${CLAUDE_PLUGIN_DATA:-${XDG_CACHE_HOME:-$HOME/.cache}/applygate/plugin}
+pinned="$data/pinned-binary"
+
+# 0: the binary pinned on first use.
+if [ -f "$pinned" ]; then
+    IFS=' ' read -r want bin <"$pinned" || fail "cannot read $pinned"
+    [ -x "$bin" ] || fail "the pinned binary $bin is gone; if you moved or reinstalled applygate, remove $pinned"
+    got=$(sha256 "$bin") || fail "sha256sum or shasum is required to check $bin"
+    [ "$got" = "$want" ] || fail "$bin changed since the plugin pinned it (sha256 $want, now $got); if you upgraded applygate, remove $pinned to pin the new binary"
+    if [ "$mode" = fetch ]; then exit 0; fi
+    exec "$bin" "$@"
+fi
 
 # 1 and 2: a binary the user installed.
 bin=""
@@ -48,6 +78,16 @@ else
     bin=$(command -v applygate 2>/dev/null) || bin=""
 fi
 if [ -n "$bin" ]; then
+    case "$bin" in
+        /*) ;;
+        */*) bin=$(CDPATH='' cd -- "${bin%/*}" && pwd)/${bin##*/} || fail "cannot resolve $bin" ;;
+    esac
+    got=$(sha256 "$bin") || fail "sha256sum or shasum is required to pin $bin"
+    # Pinning is best effort: a data directory that cannot be written does
+    # not stop the hook.
+    if mkdir -p "$data" 2>/dev/null && printf '%s %s\n' "$got" "$bin" >"$pinned.$$" 2>/dev/null; then
+        mv -f "$pinned.$$" "$pinned" 2>/dev/null || rm -f "$pinned.$$"
+    fi
     if [ "$mode" = fetch ]; then exit 0; fi
     exec "$bin" "$@"
 fi
@@ -82,7 +122,6 @@ case "$version" in
     *[!0-9A-Za-z.-]* | "") fail "pinned-release.txt names no valid release for ${os}/${arch}" ;;
 esac
 
-data=${CLAUDE_PLUGIN_DATA:-${XDG_CACHE_HOME:-$HOME/.cache}/applygate/plugin}
 dest="$data/v$version/${os}_${arch}/applygate"
 if [ -x "$dest" ]; then
     if [ "$mode" = fetch ]; then exit 0; fi
@@ -112,13 +151,7 @@ else
     fail "no applygate on PATH, and neither curl nor wget is installed to download v$version"
 fi
 
-if need sha256sum; then
-    actual=$(sha256sum "$tmp/$archive" | awk '{print $1}')
-elif need shasum; then
-    actual=$(shasum -a 256 "$tmp/$archive" | awk '{print $1}')
-else
-    fail "sha256sum or shasum is required to check the download"
-fi
+actual=$(sha256 "$tmp/$archive") || fail "sha256sum or shasum is required to check the download"
 [ "$actual" = "$sha" ] || fail "sha256 mismatch for $archive (expected $sha, got $actual); not installing it"
 
 tar -xzf "$tmp/$archive" -C "$tmp" applygate 2>/dev/null || fail "could not extract applygate from $archive"

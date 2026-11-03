@@ -244,6 +244,20 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		}
 		return
 	case "tmux", "screen":
+		// A command a new session, window or pane runs: tmux new-session -d
+		// 'cmd', split-window, respawn-pane, run-shell; screen -dmS NAME cmd.
+		// It runs in the pane's directory (-c), else one not known.
+		if cmd, dir, ok := multiplexerCommand(bn, rest); ok {
+			child := st.childState()
+			child.dir = ""
+			if dir != nil {
+				if dir.Resolved {
+					child.dir = a.abs(st, dir.Text)
+				}
+			}
+			a.reparseIn(cmd, child, via, bn, depth)
+			return
+		}
 		// Keys typed into another terminal run there: tmux send-keys -t PANE
 		// 'cmd' Enter, screen -X stuff 'cmd\n'. The pane's directory is not
 		// known.
@@ -1707,4 +1721,62 @@ func (a *analyzer) alias(name, rep string, rest []Word, redirs []Redir, cmdSt, s
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// multiplexerCommand returns the shell command a tmux or screen invocation
+// starts, and the directory given with -c, if any.
+func multiplexerCommand(bn string, rest []Word) (cmd []Word, dir *Word, ok bool) {
+	switch bn {
+	case "tmux":
+		i := 0
+		for i < len(rest) && strings.HasPrefix(rest[i].Text, "-") { // global options
+			if t := rest[i].Text; t == "-L" || t == "-S" || t == "-f" || t == "-T" {
+				i++
+			}
+			i++
+		}
+		if i >= len(rest) {
+			return nil, nil, false
+		}
+		switch rest[i].Text {
+		case "new-session", "new", "new-window", "neww", "split-window", "splitw", "respawn-pane", "respawnp",
+			"respawn-window", "respawnw", "run-shell", "run", "display-popup", "popup":
+		default:
+			return nil, nil, false
+		}
+		valued := toSet("-c", "-e", "-F", "-l", "-n", "-s", "-t", "-x", "-y", "-b", "-d", "-h", "-w", "-T")
+		boolean := toSet("-d", "-P", "-k", "-a", "-b", "-h", "-v", "-f", "-Z", "-E", "-B", "-C", "-A", "-D", "-X")
+		for j := i + 1; j < len(rest); j++ {
+			t := rest[j].Text
+			switch {
+			case t == "--":
+				return rest[j+1:], dir, j+1 < len(rest)
+			case t == "-c" && j+1 < len(rest):
+				dir = &rest[j+1]
+				j++
+			case boolean[t]:
+			case valued[t]:
+				j++
+			case strings.HasPrefix(t, "-") && len(t) > 1:
+			default:
+				return rest[j:], dir, true
+			}
+		}
+		return nil, nil, false
+	case "screen":
+		valued := toSet("-S", "-t", "-c", "-e", "-h", "-p", "-s", "-T", "-X", "-Logfile")
+		for j := 0; j < len(rest); j++ {
+			t := rest[j].Text
+			switch {
+			case t == "-X":
+				return nil, nil, false // a command to a running session (stuff)
+			case valued[t]:
+				j++
+			case strings.HasPrefix(t, "-"):
+			default:
+				return rest[j:], nil, true
+			}
+		}
+	}
+	return nil, nil, false
 }
