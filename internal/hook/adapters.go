@@ -270,6 +270,30 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 		}
 		ev.Kind, ev.Command = policy.KindShell, cmd
 		ev.Cwd, ev.DirKnown = workDir(ti, in.Cwd)
+	case "write_stdin":
+		// Text typed into a running exec session: judged as a command typed
+		// at a shell, like tmux send-keys. The session's directory is not
+		// in the event.
+		var chars string
+		_ = json.Unmarshal(ti["chars"], &chars)
+		if strings.TrimSpace(chars) == "" {
+			ev.Kind = policy.KindOther
+			break
+		}
+		ev.Kind, ev.Command, ev.DirKnown = policy.KindShell, chars, false
+	case "js_repl":
+		// The JavaScript REPL: judged as node code.
+		code := ""
+		for _, k := range []string{"code", "input", "source", "command"} {
+			if code = commandField(ti[k]); code != "" {
+				break
+			}
+		}
+		if code == "" {
+			return policy.Event{}, false, fmt.Errorf("malformed hook event: js_repl call without code applygate can read")
+		}
+		ev.Kind, ev.Command = policy.KindShell, "node -e '"+strings.ReplaceAll(code, "'", `'\''`)+"'"
+		ev.Cwd, ev.DirKnown = workDir(ti, in.Cwd)
 	case "apply_patch", "Edit", "Write":
 		patch := cmd
 		if patch == "" {

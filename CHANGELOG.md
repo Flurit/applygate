@@ -12,6 +12,32 @@
   - **Limits:** nesting deeper than 2,000 levels is unresolved instead of crashing the process, and gzip output over the 256 KB cap is unknown instead of cut.
   - **`COPILOT_HOME`'s hook file** is a guard path.
 
+- **Red-team round 2 fixes, part 4** (MCP and the model judge):
+  - **MCP:**
+    - a call that fits several servers' tools is judged by every reading, and the strictest wins;
+    - dotted arguments match nested and top-level;
+    - a `workdir` that only some servers with that tool name honour is not trusted;
+    - `stdin` and `stdin_text` arguments are the command's input;
+    - `start_process`'s `shell` is followed;
+    - wcgw `send_ascii` codes are decoded;
+    - AKS `call_kubectl`, `call_helm`, `call_cilium` and `call_hubble` add their program as the servers do;
+    - a `#` word in a command a server splits itself is asked about;
+    - Terragrunt MCP `terragrunt_config` and `include_dirs` are read;
+    - tfmcp `apply_terraform` without a `plan_id` is an apply;
+    - shell tools of servers the table does not know (`run_in_terminal`, `execute_command`, `bash`, …) are judged as shell.
+  - **The analyzer:** input given to a compound command (`{ sh; } <<EOF`, `while …; done < f`) reaches the commands inside it.
+  - **Codex:** `write_stdin` is judged as text typed at a shell, and `js_repl` as node code.
+  - **Model judge:**
+    - the filter reads the unredacted call, and a redaction that hides programs makes the call unjudgeable;
+    - the filter sends calls whose programs start others through the environment or options (`CC`, `RUSTC_WRAPPER`, `PYTHONPATH`, `NODE_OPTIONS`, `go env -w`, `cargo --config`, `npm --script-shell`, GNU `sed` `e`), cleans `/tmp/../` paths and reads paths attached to options;
+    - the judge's tier follows `cd`;
+    - write content over 4,000 characters is unjudgeable instead of cut;
+    - a known MCP tool's arguments are sent with its command;
+    - verdicts are read without case, a nested verdict object does not win, and a 5xx or an answer over 1 MiB is unjudgeable;
+    - the `examples/judge` scripts print a verdict-less answer on a refusal;
+    - `applygate check` asks the judge only at a terminal.
+  - **Azure:** `az deployment … --mode Complete` is destructive.
+
 - **Red-team round 2 fixes, part 3** (the analyzer and tiers):
   - **Analyzer:**
     - a `trap` handler is judged at the most protected tier under the root, since it fires after any `cd`;

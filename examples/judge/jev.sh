@@ -12,7 +12,9 @@
 # "schema", "call"}); this prints {"verdict": ..., "reason": ...}. The judge's
 # instructions become one choice question about the call. Jev returns a
 # probability per verdict and no explanation, so the reason lists them. An
-# API error is reported with the provider's message.
+# API error is reported with the provider's message. No answer (a refusal)
+# prints a reason without a verdict, which applygate asks about outside a
+# disposable environment.
 set -eu
 : "${TYPESAFE_API_KEY:?TYPESAFE_API_KEY is not set}"
 model=${APPLYGATE_JUDGE_MODEL:-jev-latest}
@@ -35,5 +37,6 @@ jq -c --arg model "$model" '{
 Authorization: Bearer $TYPESAFE_API_KEY
 EOF
 	jq -ce --arg model "$model" 'if .error or .detail then error("\(.error.message // .detail | tostring)") else . end |
-		.answers.verdict as $a | ($a.choice // error("no answer")) as $v |
-		{verdict: $v, reason: ("\($model) chose \($v) (allow \($a.probabilities.allow), ask \($a.probabilities.ask), block \($a.probabilities.block)); a decision model gives no explanation.")}'
+		.answers.verdict as $a |
+		if $a.choice == null then {reason: "\($model) gave no answer"} else
+		{verdict: $a.choice, reason: ("\($model) chose \($a.choice) (allow \($a.probabilities.allow), ask \($a.probabilities.ask), block \($a.probabilities.block)); a decision model gives no explanation.")} end'

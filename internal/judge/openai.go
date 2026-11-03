@@ -61,7 +61,7 @@ func (o OpenAI) Judge(ctx context.Context, in Input) Result {
 		return r
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, maxAnswer+1))
 	r.APIms = float64(time.Since(start).Milliseconds())
 	r.WallMS = r.APIms
 	var out struct {
@@ -78,6 +78,10 @@ func (o OpenAI) Judge(ctx context.Context, in Input) Result {
 	}
 	_ = json.Unmarshal(b, &out)
 	switch {
+	case len(b) > maxAnswer:
+		// Cut, the answer cannot be read; a call that makes the server
+		// write this much is not judged.
+		r.Err, r.Unjudgeable = fmt.Sprintf("openai: the answer is over %d bytes", maxAnswer), true
 	case resp.StatusCode/100 != 2:
 		msg := firstLine(string(b))
 		if out.Error != nil && out.Error.Message != "" {
@@ -86,8 +90,11 @@ func (o OpenAI) Judge(ctx context.Context, in Input) Result {
 		r.Err = fmt.Sprintf("openai: %s: %s", resp.Status, msg)
 		// A request the endpoint rejects as malformed or too large failed
 		// because of the call; auth, quota and server errors did not.
-		switch resp.StatusCode {
-		case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		// A server error may be caused by the call itself (one that
+		// crashes the endpoint), so it is not a way past the judge.
+		switch {
+		case resp.StatusCode == http.StatusBadRequest, resp.StatusCode == http.StatusRequestEntityTooLarge,
+			resp.StatusCode == http.StatusUnprocessableEntity, resp.StatusCode/100 == 5:
 			r.Unjudgeable = true
 		}
 	case len(out.Choices) == 0:
@@ -102,21 +109,36 @@ func (o OpenAI) Judge(ctx context.Context, in Input) Result {
 	return r
 }
 
+// maxAnswer caps the answer body read from an endpoint.
+const maxAnswer = 1 << 20
+
 // jsonObject returns the last JSON object in s that has a verdict, for
 // servers that wrap the answer in prose or a code fence, or write braces
-// before it.
+// before it. An object nested inside another one with a verdict does not
+// count: the outer object is the answer.
 func jsonObject(s string) string {
-	for i := strings.LastIndexByte(s, '{'); i >= 0; i = strings.LastIndexByte(s[:i], '{') {
+	best, bestEnd := "", -1
+	for i := strings.IndexByte(s, '{'); i >= 0; {
 		var m map[string]any
-		if json.NewDecoder(strings.NewReader(s[i:])).Decode(&m) == nil {
+		dec := json.NewDecoder(strings.NewReader(s[i:]))
+		if dec.Decode(&m) == nil {
 			if _, ok := m["verdict"]; ok {
-				b, _ := json.Marshal(m)
-				return string(b)
+				end := i + int(dec.InputOffset())
+				// Later objects win; one inside the best so far does not.
+				if i >= bestEnd {
+					b, _ := json.Marshal(m)
+					best, bestEnd = string(b), end
+				}
 			}
 		}
-		if i == 0 {
+		next := strings.IndexByte(s[i+1:], '{')
+		if next < 0 {
 			break
 		}
+		i += 1 + next
 	}
-	return s
+	if best == "" {
+		return s
+	}
+	return best
 }

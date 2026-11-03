@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Flurit/applygate/internal/approval"
+	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/judge"
 	"github.com/Flurit/applygate/internal/policy"
 )
@@ -238,5 +239,30 @@ func TestHangingJudgeStaysInsideTheBudget(t *testing.T) {
 	}
 	if !o.Deadline.Equal(start.Add(opt.Budget)) && o.Deadline.Sub(start.Add(opt.Budget)).Abs() > 50*time.Millisecond {
 		t.Errorf("deadline %s not the budget's end", o.Deadline)
+	}
+}
+
+// Round-2 judge findings: the judge's tier follows a cd (2M12), write
+// content past the cap is unjudgeable rather than cut (2M15), and a known
+// MCP tool's arguments reach the judge with its command (2M16).
+func TestJudgeRound2(t *testing.T) {
+	root, opt := judgeSetup(t, "enforce", "")
+	f := &fakeJudge{verdict: policy.Allow}
+	runJudged(t, Claude{}, opt, f, "Bash", filepath.Join(root, "dev"), map[string]any{"command": "cd ../prod && ./cleanup.sh --all"})
+	if len(f.asked) != 1 || f.asked[0].Tier != config.Protected {
+		t.Fatalf("judge tier after cd: %+v", f.asked)
+	}
+
+	f = &fakeJudge{verdict: policy.Allow}
+	big := strings.Repeat("x", judge.MaxContent+10)
+	o, _ := runJudged(t, Claude{}, opt, f, "Write", filepath.Join(root, "prod"), map[string]any{"file_path": filepath.Join(root, "prod", "notes.txt"), "content": big})
+	if len(f.asked) != 0 || decision(t, o) != "ask" {
+		t.Fatalf("oversized write: asked %d, decision %s", len(f.asked), decision(t, o))
+	}
+
+	f = &fakeJudge{verdict: policy.Allow}
+	runJudged(t, Claude{}, opt, f, "mcp__cmds__run_command", filepath.Join(root, "dev"), map[string]any{"command": "./tool.sh", "note": "x"})
+	if len(f.asked) != 1 || !strings.Contains(string(f.asked[0].Args), `"note"`) {
+		t.Fatalf("MCP arguments not sent with the command: %+v", f.asked)
 	}
 }

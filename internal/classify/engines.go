@@ -590,6 +590,10 @@ func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
 		a.Class, a.Why = CloudDestructive, cmd+" -d deletes objects missing from the source"
 		return a, true
 	}
+	if name == "az" && slices.Contains(pos, "deployment") && strings.EqualFold(flagValue(args, "--mode"), "complete") {
+		a.Class, a.Why = CloudDestructive, cmd+" --mode Complete deletes the resources the template leaves out"
+		return a, true
+	}
 	read := verb != "" && !cloudWrite[verb]
 	if read || verb == "" && (pos[0] == "config" || pos[0] == "account" || pos[0] == "auth" || pos[0] == "version" || pos[0] == "help") {
 		a.Class, a.Why = ReadOnly, cmd+" does not change resources"

@@ -12,7 +12,9 @@
 #
 # claude runs from an empty temporary directory with only the user's
 # settings, so the agent's repository (its CLAUDE.md, settings and hooks)
-# does not reach the judge.
+# does not reach the judge. A refusal prints a reason without a verdict, which
+# applygate asks about outside a disposable environment, rather than failing,
+# which would leave the rule decision.
 set -eu
 req=$(cat)
 system=$(printf '%s' "$req" | jq -r .system)
@@ -24,4 +26,4 @@ printf '%s' "$req" | jq -r .prompt |
 	claude -p --model "${APPLYGATE_JUDGE_MODEL:-claude-haiku-5-5}" --effort low \
 		--system-prompt "$system" --tools "" --json-schema "$schema" \
 		--setting-sources user --output-format json --no-session-persistence |
-	jq -ce '.structured_output // error("no structured answer")'
+	jq -c '.structured_output // {reason: ("no verdict: " + (.result // "no structured answer" | tostring))}'

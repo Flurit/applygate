@@ -38,7 +38,9 @@ func TestTranslate(t *testing.T) {
 		{"mcp__dc__run_command", `{"command": "aws s3 rb s3://x --force", "cwd": "envs/prod"}`, "/r", true, "aws s3 rb s3://x --force", ""},
 		{"mcp__dc__run_command", `{"command": ["aws s3 ls", "aws s3 rb s3://x"], "cwd": "/r/envs/prod"}`, "/r", true, "aws s3 ls\naws s3 rb s3://x", "/r/envs/prod"},
 		{"mcp__my__server__run_command", `{"command": "ls"}`, "/r", true, "ls", ""},
-		{"mcp__other__run_command", `{"cmd": "ls"}`, "/r", false, "", ""},
+		// A shell tool name from a server the table does not describe is
+		// judged as shell (finding 2M7); its directory is not trusted.
+		{"mcp__other__run_command", `{"cmd": "ls", "cwd": "/r/dev"}`, "/r", true, "ls", ""},
 		{"mcp__tf__ExecuteTerraformCommand", `{"command": "destroy", "working_directory": "/r/prod", "extra": ["-var", "a=b c"]}`, "/r", true, "terraform destroy -auto-approve -var 'a=b c'", "/r/prod"},
 		{"mcp__tf__ExecuteTerraformCommand", `{"command": "PLAN"}`, "/r", true, "terraform PLAN", ""},
 		{"mcp__tf__ExecuteTerraformCommand", `{"command": "state-rm"}`, "/r", true, "MCP tool ExecuteTerraformCommand: its arguments match no known form", ""},
@@ -91,6 +93,24 @@ func TestTranslateEdgeCases(t *testing.T) {
 		r, ok := Rules().Translate(c.tool, json.RawMessage(c.args), "/repo")
 		if !ok || !strings.Contains(r.Command, c.want) {
 			t.Errorf("%s %s: got %q, want it to contain %q", c.tool, c.args, r.Command, c.want)
+		}
+	}
+}
+
+// Round-2 MCP findings without an attack-pack replay: Terragrunt's config
+// and include_dirs (2M13), a # in call_aws (2M18), tfmcp apply without a
+// plan_id (2M19).
+func TestTranslateRound2(t *testing.T) {
+	tb := Rules()
+	for _, c := range []struct{ tool, args, want string }{
+		{"mcp__tf__ExecuteTerragruntCommand", `{"command": "destroy", "working_directory": "/r/dev", "terragrunt_config": "/r/prod/terragrunt.hcl"}`, "--config=/r/prod/terragrunt.hcl"},
+		{"mcp__tf__ExecuteTerragruntCommand", `{"command": "plan", "working_directory": "/r/dev", "include_dirs": ["/r/prod"]}`, "APPLYGATE_MCP_UNREADABLE"},
+		{"mcp__aws__call_aws", `{"cli_command": "aws s3 ls # s3 rb s3://prod --force"}`, "APPLYGATE_MCP_UNREADABLE"},
+		{"mcp__tfmcp__apply_terraform", `{}`, "terraform apply -auto-approve"},
+	} {
+		r, ok := tb.Translate(c.tool, json.RawMessage(c.args), "/r")
+		if !ok || !strings.Contains(r.Command, c.want) {
+			t.Errorf("%s %s: got %v %q", c.tool, c.args, ok, r.Command)
 		}
 	}
 }

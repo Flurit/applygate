@@ -33,11 +33,13 @@ What the model receives:
 
 - **The call itself:** the agent name and the tool name.
 - **For shell commands:** the command.
-- **For writes:** the file path and up to 4,000 characters of the content (for an edit, the text replaced and its replacement).
+- **For writes:** the file path and the content (for an edit, the text replaced and its replacement). Content over 4,000 characters is not sent; the call counts as unjudgeable, which is an ask outside a disposable environment.
+- **For a known MCP tool:** the command it is judged as, and the tool's own arguments.
+- **The tier:** the most protected of the directories the command's programs run in, so a `cd ../prod` inside the command counts.
 - **For MCP calls:** the arguments.
 - **Where it runs:** the working directory, and the environment name and tier applygate resolved for it.
 
-Secrets are redacted first, the same way as in the decision log: AWS keys, `password=`/`token=`/`secret=` values, `Authorization:` headers, GitHub and Slack tokens, private-key blocks. Redaction is pattern-based and can miss a secret in an unusual form.
+The filter reads the call as the agent sent it. Secrets are then redacted from the copy the judge gets, the same way as in the decision log. When the redacted text starts fewer programs than the call does (a "secret" that holds a command, ``API_TOKEN=`{pulumi,destroy,--yes}` true``), the call is unjudgeable. Redaction covers AWS keys, `password=`/`token=`/`secret=` values, `Authorization:` headers, GitHub and Slack tokens, private-key blocks. Redaction is pattern-based and can miss a secret in an unusual form.
 
 ## Choosing a judge
 
@@ -185,6 +187,7 @@ judge:
   - Anthropic's and Gemini's endpoints were called live;
   - Jev and the Decisions API were called live through their scripts;
   - for other providers the settings follow each provider's published API shape, and only the request format is tested, against a local test server.
+- **Answers:** a verdict is read without case (`BLOCK`). When the answer holds several JSON objects, the last one with a verdict wins, and an object nested inside another one's fields does not count. A server error (5xx), a rejected request (400, 413, 422) or an answer over 1 MiB makes the call unjudgeable; an authentication or quota error leaves the rule decision.
 - **An unfinished choice:** `enabled: true` without `base_url` and `model` (or a `command`) means the judge is not asked. The rules decide as they do without it, the decision log says why, and `applygate doctor` warns.
 
 ### A program instead of an endpoint
@@ -192,7 +195,7 @@ judge:
 The command backend runs any program you name. That is how the `claude` CLI, the decision models, another gateway or your own logic plug in.
 - **Input:** one request as JSON on stdin, `{"system", "prompt", "schema", "call"}`.
 - **Output:** `{"verdict": "allow"|"ask"|"block", "reason": "..."}` on stdout.
-- **Anything else** counts as an error. A non-zero exit or running past the timeout leaves the rule decision. Output without a verdict is asked about outside a disposable environment. When the output holds several JSON objects, the last one with a `verdict` is the answer.
+- **Anything else** counts as an error. A non-zero exit or running past the timeout leaves the rule decision. Output without a verdict is asked about outside a disposable environment, which is what the scripts in `examples/judge` print when the model refuses, so a call cannot get past the judge by making it refuse. When the output holds several JSON objects, the last one with a `verdict` is the answer.
 
 The scripts in [`examples/judge`](../examples/judge) take `APPLYGATE_JUDGE_MODEL` to choose another model.
 
@@ -224,7 +227,7 @@ applygate: ASK.
 - **Approvals:** a person can approve a judge's block once with `applygate approve`, like an ask. It is a model's opinion, not a rule. A rule's block still can never be approved.
 - **The log:** every judge call is recorded in the decision log under `judge` (model, verdict, reason, time, whether it came from the cache, error).
 - **The cache:** asks and blocks are cached for 24 hours in `judge-cache.json` next to the log, which is a guard path, so a repeated call does not pay the model again. An allow is never cached, so a pre-filled cache cannot let a call skip the judge, and an entry dated in the future is ignored. Entries are keyed on the endpoint and model, or the whole command line of a command backend. `applygate check` keeps its own cache, `judge-cache-check.json`.
-- **`applygate check`** runs the judge when it is on (`--no-judge` skips it), so you can try a command before an agent does.
+- **`applygate check`** runs the judge when it is on and its input is a terminal (`--no-judge` skips it), so you can try a command before an agent does. Run from a script or by an agent, it does not ask the judge, so an agent cannot probe your judge with your key for a wording it allows.
 - **`applygate doctor`** reports the judge's model, endpoint and timeout, or why it cannot be asked (for example a missing key), without calling the model.
 
 ## How well it works
@@ -280,7 +283,7 @@ With Anthropic's endpoint the hook took 1.2 to 3.0 s per judged call, against 3.
 ## Limits
 
 - **A model can be wrong.** On the fifth held-out set the measured judges missed between 1 and 7 of the 72 calls that should be stopped (Gemini 3.8 Flash 1, Haiku 5.5 2, Jev 3, `gpt-6-luna` 7), mostly writes whose effect depends on context it cannot see, and it can be fooled in ways the sets did not try. The rules stay the guarantee; the judge is extra coverage.
-- **Some calls skip the judge.** The filter keeps local work away from the model: reads inside the working tree, builds, tests, local git. So a destructive call that looks like local work is not judged, for example `git log -p` printing a key from history.
+- **Some calls skip the judge.** The filter keeps local work away from the model: reads inside the working tree, builds, tests, local git. So a destructive call that looks like local work is not judged, for example `git log -p` printing a key from history. The filter also sends calls whose programs start others through the environment or options: `CC`, `RUSTC_WRAPPER`, `PYTHONPATH`, `NODE_OPTIONS`, `LD_PRELOAD` and similar, `go env -w`, `cargo --config`, `npm --script-shell`, and GNU `sed`'s `e` command and `w` writes. Paths are cleaned first (`/tmp/../`), and a path attached to an option (`--target-directory=/etc`) counts.
   - **Not local:**
     - a program started through its own options (`git -c`, `git config` that sets a value, `tar --to-command`, `sort --compress-program`, `rg --pre`, `go test -exec`, `go build -toolexec`, `go env -w`);
     - `mvn`, `gradle`, `dotnet` and `npm init`;

@@ -19,9 +19,10 @@
          ]},
         {"names": ["ExecuteTerragruntCommand"], "requires": ["command", "working_directory"], "dir": "working_directory",
          "cases": [
-           {"when": {"command": ["run-all"]}, "command": "terragrunt run-all apply -auto-approve"},
-           {"when": {"command": ["apply", "destroy"]}, "command": "terragrunt {command} -auto-approve"},
-           {"when": {"command": ["init", "plan", "validate", "output"]}, "command": "terragrunt {command}"}
+           {"when": {"include_dirs": ["*"]}, "command": "?runs the units in include_dirs as well, which applygate does not follow"},
+           {"when": {"command": ["run-all"]}, "command": "terragrunt run-all apply -auto-approve --config={terragrunt_config}"},
+           {"when": {"command": ["apply", "destroy"]}, "command": "terragrunt {command} -auto-approve --config={terragrunt_config}"},
+           {"when": {"command": ["init", "plan", "validate", "output"]}, "command": "terragrunt {command} --config={terragrunt_config}"}
          ]}
       ]
     },
@@ -129,6 +130,8 @@
       "tools": [
         {"names": ["apply_terraform"], "requires": ["plan_id"],
          "cases": [{"command": "?applies saved plan {plan_id} from the server's own plan store, which applygate cannot read"}]},
+        {"names": ["apply_terraform"],
+         "cases": [{"command": "terraform apply -auto-approve"}], "note": "without a plan_id the server plans and applies at once"},
         {"names": ["destroy_terraform"], "requires": ["plan_id"],
          "cases": [{"command": "terraform destroy"}]},
         {"names": ["terraform_refresh"],
@@ -224,8 +227,14 @@
       "name": "Azure aks-mcp (with Azure/mcp-kubernetes and Azure/azure-api-mcp)",
       "source": "github.com/Azure/aks-mcp@af02b0b internal/server/server.go:160-437, internal/components/azaks/registry.go:14-150, fleet/registry.go:34-50, compute/azcommands.go:19-100; Azure/mcp-kubernetes@v0.0.14 pkg/kubectl/registry.go:54-582 (call_kubectl, call_helm: a full command string, split and run without a shell); Azure/azure-api-mcp@v0.0.10 pkg/azcli/registry.go:7-20 (call_az)",
       "tools": [
-        {"names": ["call_kubectl", "call_helm", "call_cilium", "call_hubble"], "requires": ["command"], "shell": "command",
-         "note": "the server runs the command itself, without a shell"},
+        {"names": ["call_kubectl"], "requires": ["command"], "shell": "command", "program": "kubectl", "prepend": true,
+         "note": "the server runs kubectl with the command's words, without a shell, adding kubectl when the command does not start with it"},
+        {"names": ["call_helm"], "requires": ["command"], "shell": "command", "program": "helm", "prepend": true,
+         "note": "the server runs helm with the command's words, without a shell, adding helm when the command does not start with it"},
+        {"names": ["call_cilium"], "requires": ["command"], "shell": "command", "program": "cilium", "prepend": true,
+         "note": "the server runs cilium with the command's words, without a shell, adding cilium when the command does not start with it"},
+        {"names": ["call_hubble"], "requires": ["command"], "shell": "command", "program": "hubble", "prepend": true,
+         "note": "the server runs hubble with the command's words, without a shell, adding hubble when the command does not start with it"},
         {"names": ["call_az"], "requires": ["cli_command"], "shell": "cli_command",
          "note": "the server runs the az command itself, without a shell"},
         {"names": ["kubectl_resources", "kubectl_workloads", "kubectl_metadata", "kubectl_diagnostics", "kubectl_cluster", "kubectl_config"], "requires": ["operation", "resource"],
@@ -278,13 +287,14 @@
       "name": "shell command servers",
       "source": "wonderwhy-er/DesktopCommanderMCP@9a171d1 src/tools/schemas.ts:27-181 (start_process runs <shell> -c command; interact_with_process writes input to a running shell); g0t4/mcp-server-commands@bc62283 src/tools.ts:25-57 (run_process command_line through a shell, or argv) and @fb52a13 src/index.ts:97-120 (run_command); tumf/mcp-shell-server@c1c8059 server.py:151-190 (command argv, a bare | starts a pipeline); MladenSU/cli-mcp-server@5d30d70 server.py:343-360 (run_command); rusiaaman/wcgw@339201a src/wcgw/types_.py:145-241 (BashCommand into a persistent bash); oraios/serena@ede329a src/serena/tools/cmd_tools.py:27-54; ferrislucas/iterm-mcp@936182b src/index.ts:29-82 (types into the active terminal)",
       "tools": [
-        {"names": ["start_process"], "requires": ["command", "timeout_ms"], "shell": "command"},
+        {"names": ["start_process"], "requires": ["command", "timeout_ms"], "shell": "command", "shell_arg": "shell"},
         {"names": ["interact_with_process"], "requires": ["pid", "input"], "shell": "input",
          "note": "input typed into a running process, judged as a shell command"},
-        {"names": ["run_process"], "requires": ["command_line"], "shell": "command_line", "dir": "cwd"},
-        {"names": ["run_process"], "requires": ["argv"], "dir": "cwd",
+        {"names": ["run_process"], "requires": ["command_line"], "shell": "command_line", "dir": "cwd", "stdin": ["stdin", "stdin_text"]},
+        {"names": ["run_process"], "requires": ["argv"], "dir": "cwd", "stdin": ["stdin", "stdin_text"],
          "cases": [{"command": "{argv...}"}]},
-        {"names": ["run_command"], "requires": ["command"], "shell": "command", "dir": "workdir"},
+        {"names": ["run_command"], "requires": ["command"], "shell": "command", "dir": "workdir", "shared_dir": true, "stdin": ["stdin", "stdin_text"],
+         "note": "cli-mcp-server's run_command has no workdir argument, so a workdir is not proof of the directory"},
         {"names": ["shell_execute"], "requires": ["command"], "dir": "directory",
          "cases": [{"command": "{command...}"}]},
         {"names": ["BashCommand"],
@@ -294,8 +304,10 @@
            {"when": {"type": ["send_text"]}, "command": "{send_text|raw}"},
            {"when": {"action_json.type": ["command"]}, "command": "{action_json.command|raw}"},
            {"when": {"action_json.type": ["send_text"]}, "command": "{action_json.send_text|raw}"},
-           {"when": {"type": ["status_check", "send_specials", "send_ascii"]}, "command": "true"},
-           {"when": {"action_json.type": ["status_check", "send_specials", "send_ascii"]}, "command": "true"}
+           {"when": {"type": ["send_ascii"]}, "command": "{send_ascii|ascii}"},
+           {"when": {"action_json.type": ["send_ascii"]}, "command": "{action_json.send_ascii|ascii}"},
+           {"when": {"type": ["status_check", "send_specials"]}, "command": "true"},
+           {"when": {"action_json.type": ["status_check", "send_specials"]}, "command": "true"}
          ]},
         {"names": ["execute_shell_command"], "requires": ["command"], "shell": "command", "dir": "cwd"},
         {"names": ["write_to_terminal"], "requires": ["command"], "shell": "command",
