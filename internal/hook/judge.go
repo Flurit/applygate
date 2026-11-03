@@ -25,10 +25,13 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 	if ev.Kind == policy.KindMCP && cfg.JudgeSkips(ev.Tool) {
 		return d, nil
 	}
-	in := judgeInput(ev, cfg)
-	if !judge.Relevant(in) {
+	// The filter sees the call as it is; the judge gets a copy with
+	// secrets redacted.
+	raw := judgeInput(ev, cfg, false)
+	if !judge.Relevant(raw) {
 		return d, nil
 	}
+	in := judgeInput(ev, cfg, true)
 	j := opt.Judge
 	if j == nil {
 		var err error
@@ -49,8 +52,15 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 	}
 	key := judge.Key(judge.Identity(j), in)
 	r, hit := cache.Get(key, now())
-	if n := max(len(in.Command), len(in.Args)); n > judge.MaxCall {
-		r, hit = judge.Result{Model: j.Name(), Err: fmt.Sprintf("the call is %d bytes, more than the %d the judge is sent", n, judge.MaxCall), Unjudgeable: true}, true
+	switch {
+	case max(len(in.Command), len(in.Args)) > judge.MaxCall:
+		r, hit = judge.Result{Model: j.Name(), Err: fmt.Sprintf("the call is %d bytes, more than the %d the judge is sent", max(len(in.Command), len(in.Args)), judge.MaxCall), Unjudgeable: true}, true
+	case len(in.Content) > judge.MaxContent:
+		r, hit = judge.Result{Model: j.Name(), Err: fmt.Sprintf("the content written is %d bytes, more than the %d the judge is sent", len(in.Content), judge.MaxContent), Unjudgeable: true}, true
+	case judge.HiddenByRedaction(raw.Command, in.Command, raw.Cwd):
+		// What redaction hid starts programs, so the judge would not see
+		// what the call runs.
+		r, hit = judge.Result{Model: j.Name(), Err: "text redacted as a secret holds commands", Unjudgeable: true}, true
 	}
 	if !hit {
 		ctx, cancel := context.WithTimeout(ctx, cfg.JudgeTimeout())
@@ -87,15 +97,24 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 	return d, rec
 }
 
-// judgeInput is the call as the judge sees it, secrets redacted.
-func judgeInput(ev policy.Event, cfg *config.Config) judge.Input {
+// judgeInput is the call as the judge sees it, with secrets redacted when
+// redact is set.
+func judgeInput(ev policy.Event, cfg *config.Config, redact bool) judge.Input {
+	r := func(s string) string {
+		if redact {
+			return decisionlog.Redact(s)
+		}
+		return s
+	}
 	in := judge.Input{Agent: ev.Agent, Tool: ev.Tool, Paths: ev.Paths, Cwd: ev.Cwd,
-		Content: decisionlog.Redact(ev.Content), Write: ev.Kind == policy.KindWrite}
-	switch ev.Kind {
-	case policy.KindShell:
-		in.Command = decisionlog.Redact(ev.Command)
-	case policy.KindMCP:
-		args := decisionlog.Redact(string(ev.Args))
+		Content: r(ev.Content), Write: ev.Kind == policy.KindWrite}
+	if ev.Kind == policy.KindShell {
+		in.Command = r(ev.Command)
+	}
+	// A known MCP tool is judged as its command, and the judge sees the
+	// arguments the server gets too.
+	if len(ev.Args) > 0 && (ev.Kind == policy.KindMCP || ev.Kind == policy.KindShell) {
+		args := r(string(ev.Args))
 		if !json.Valid([]byte(args)) {
 			b, _ := json.Marshal(args)
 			args = string(b)
@@ -105,6 +124,19 @@ func judgeInput(ev policy.Event, cfg *config.Config) judge.Input {
 	res := cfg.Resolve(config.Signals{Dir: ev.Cwd})
 	if !ev.DirKnown && cfg.UnknownDirMostProtected() {
 		res = cfg.ResolveUnknownDir(ev.Agent, ev.Cwd, config.Signals{})
+	}
+	// A cd inside the command moves it: the judge's tier is the most
+	// protected of the directories its programs run in.
+	if ev.Kind == policy.KindShell {
+		for _, d := range judge.Dirs(ev.Command, ev.Cwd) {
+			alt := cfg.Resolve(config.Signals{Dir: d})
+			if d == "" {
+				alt = cfg.ResolveUnknownDir(ev.Agent, ev.Cwd, config.Signals{})
+			}
+			if alt.Tier.Rank() > res.Tier.Rank() {
+				res = alt
+			}
+		}
 	}
 	in.Env, in.Tier = res.Env, res.Tier
 	if in.Env == "" {

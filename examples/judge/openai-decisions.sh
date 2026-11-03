@@ -11,9 +11,10 @@
 # applygate writes one request as JSON on stdin ({"system", "prompt",
 # "schema", "call"}); this prints {"verdict": ..., "reason": ...}. The judge's
 # instructions become one choice question about the call. The API returns a
-# probability per verdict and no explanation, so the reason lists them. A
-# refusal or an API error is an error, reported with its message, which leaves
-# the rule decision.
+# probability per verdict and no explanation, so the reason lists them. An API
+# error is an error, reported with its message, which leaves the rule
+# decision. A refusal prints a reason without a verdict, which applygate asks
+# about outside a disposable environment.
 set -eu
 : "${OPENAI_API_KEY:?OPENAI_API_KEY is not set}"
 model=${APPLYGATE_JUDGE_MODEL:-gpt-6-luna}
@@ -38,6 +39,6 @@ Authorization: Bearer $OPENAI_API_KEY
 EOF
 	jq -ce --arg model "$model" 'if .error or .detail then error("\(.error.message // .detail | tostring)") else . end |
 		.answers[0] as $a |
-		if $a.type != "choice" then error("no answer: \($a.type)") else . end |
+		if $a.type != "choice" then {reason: "\($model) gave no answer (\($a.type))"} else
 		($a.probabilities | map({key: .value, value: .probability}) | from_entries) as $p |
-		{verdict: $a.choice, reason: ("\($model) chose \($a.choice) (allow \($p.allow), ask \($p.ask), block \($p.block)); a decision model gives no explanation.")}'
+		{verdict: $a.choice, reason: ("\($model) chose \($a.choice) (allow \($p.allow), ask \($p.ask), block \($p.block)); a decision model gives no explanation.")} end'

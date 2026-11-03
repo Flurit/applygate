@@ -263,6 +263,13 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 		fmt.Fprintln(stdout, "\n3. decide:")
 	}
 	d := policy.Decide(ev, cfg, deps)
+	// The judge answers check only for a person at a terminal: an agent
+	// that ran check could probe the user's judge, with the user's key,
+	// for a wording it allows (finding 2M23).
+	if !*noJudge && cfg.JudgeOn() && !isTerminal(os.Stdin) {
+		*noJudge = true
+		fmt.Fprintln(stderr, "applygate: the model judge is not asked: check asks it only at a terminal")
+	}
 	if !*noJudge {
 		var jr *decisionlog.Judge
 		jctx, cancel := context.WithTimeout(context.Background(), cfg.JudgeTimeout()+time.Second)

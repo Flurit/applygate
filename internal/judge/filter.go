@@ -43,6 +43,57 @@ func Relevant(in Input) bool {
 	return false
 }
 
+// HiddenByRedaction reports whether redacting a command removed programs it
+// starts (API_TOKEN=`{pulumi,destroy,--yes}` true): the judge would not see
+// what the call runs. A redaction that breaks the parse hides nothing the
+// judge cannot see is broken.
+func HiddenByRedaction(raw, redacted, cwd string) bool {
+	if raw == redacted {
+		return false
+	}
+	red := shell.Analyze(redacted, shell.Options{Dir: cwd, ReadFile: noFiles})
+	if len(red.Problems) > 0 {
+		return false
+	}
+	have := map[string]int{}
+	for _, inv := range red.Invocations {
+		if len(inv.Args) > 0 {
+			have[inv.Args[0].Text]++
+		}
+	}
+	for _, inv := range shell.Analyze(raw, shell.Options{Dir: cwd, ReadFile: noFiles}).Invocations {
+		if len(inv.Args) == 0 {
+			continue
+		}
+		if have[inv.Args[0].Text] == 0 {
+			return true
+		}
+		have[inv.Args[0].Text]--
+	}
+	return false
+}
+
+// Dirs lists the directories a command's programs run in ("" when one is
+// unknown).
+func Dirs(cmd, cwd string) []string {
+	seen := map[string]bool{}
+	var out []string
+	res := shell.Analyze(cmd, shell.Options{Dir: cwd, ReadFile: noFiles})
+	for _, inv := range res.Invocations {
+		if !seen[inv.Dir] {
+			seen[inv.Dir] = true
+			out = append(out, inv.Dir)
+		}
+	}
+	for _, p := range res.Problems {
+		if p.AnyDir && !seen[""] {
+			seen[""] = true
+			out = append(out, "")
+		}
+	}
+	return out
+}
+
 // noFiles keeps the filter from reading scripts and Makefiles: a program it
 // cannot see into is not known safe, so it goes to the judge anyway.
 func noFiles(string) ([]byte, error) { return nil, errNoFiles }
@@ -128,6 +179,9 @@ func set(xs ...string) map[string]bool {
 // directory its program runs in (after any cd), may lie outside the working
 // tree the agent was started in. Scratch locations are not counted.
 func outside(p, dir, root string) bool {
+	if strings.HasPrefix(p, "/") {
+		p = path.Clean(p) // /tmp/../Users/x is not in /tmp
+	}
 	switch {
 	case p == "/dev/null" || strings.HasPrefix(p, "/tmp/") || strings.HasPrefix(p, "/dev/std"):
 		return false
@@ -154,6 +208,88 @@ var execFlags = map[string][]string{
 	"rg":   {"--pre"},
 	"go":   {"-exec", "-toolexec", "--toolexec", "-vettool", "--exec"},
 	"git":  {"--upload-pack", "--receive-pack", "--exec", "--ext-diff", "--template", "-c", "--config", "-x", "--extcmd", "--tool"},
+	// cargo --config can set a runner or rustc wrapper; -Z unstable flags
+	// and the package managers' script shells run other programs.
+	"cargo": {"--config", "-Z"},
+	"npm":   {"--script-shell", "--node-options"},
+	"pnpm":  {"--script-shell", "--node-options"},
+	"yarn":  {"--script-shell"},
+}
+
+// execEnv are environment variables that make an otherwise local program
+// start another one or load code: compilers, wrappers, preloads and
+// interpreter options.
+var execEnv = map[string]bool{"CC": true, "CXX": true, "LD": true, "AR": true, "CPP": true, "RUSTC": true, "RUSTC_WRAPPER": true,
+	"RUSTC_WORKSPACE_WRAPPER": true, "RUSTDOCFLAGS": true, "RUSTFLAGS": true, "PYTHONPATH": true, "PYTHONSTARTUP": true,
+	"PYTHONHOME": true, "NODE_OPTIONS": true, "NODE_PATH": true, "LD_PRELOAD": true, "LD_LIBRARY_PATH": true,
+	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true, "BASH_ENV": true, "ENV": true, "PERL5OPT": true,
+	"PERL5LIB": true, "RUBYOPT": true, "RUBYLIB": true, "GOFLAGS": true, "GOTOOLCHAIN": true, "CGO_CFLAGS": true,
+	"CGO_LDFLAGS": true, "EDITOR": true, "VISUAL": true, "PAGER": true, "SHELL": true, "PATH": true}
+
+// sedRuns reports whether a sed script runs a command (GNU sed's e
+// command and the s///e flag) or writes a file (w, W, s///w).
+func sedRuns(rest []string) bool {
+	var scripts []string
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case a == "-e" || a == "--expression":
+			if i+1 < len(rest) {
+				scripts = append(scripts, rest[i+1])
+				i++
+			}
+		case strings.HasPrefix(a, "--expression="):
+			scripts = append(scripts, strings.TrimPrefix(a, "--expression="))
+		case a == "-f" || a == "--file" || strings.HasPrefix(a, "--file="):
+			return true // a script file it does not read
+		case strings.HasPrefix(a, "-"):
+		case len(scripts) == 0:
+			scripts = append(scripts, a)
+		}
+	}
+	for _, sc := range scripts {
+		if sedExec.MatchString(sc) || sedSubstRuns(sc) {
+			return true
+		}
+	}
+	return false
+}
+
+var sedExec = regexp.MustCompile(`(^|[;{}\n])\s*(\d+|\$|/[^/]*/)?(,\s*(\d+|\$|/[^/]*/))?\s*!?\s*[ewWrR](\s|$|;)`)
+
+// sedSubstRuns reports whether a substitution in a sed script has the e
+// (run) or w (write) flag: s/x/y/e.
+func sedSubstRuns(sc string) bool {
+	for i := 0; i+1 < len(sc); i++ {
+		if sc[i] != 's' || (i > 0 && !strings.ContainsRune(" \t;{}\n0123456789$/!,", rune(sc[i-1]))) {
+			continue
+		}
+		delim := sc[i+1]
+		if delim == '\\' || delim == '\n' || delim == ' ' {
+			continue
+		}
+		j, fields := i+2, 0
+		for j < len(sc) && fields < 2 {
+			switch sc[j] {
+			case '\\':
+				j++
+			case delim:
+				fields++
+			}
+			j++
+		}
+		if fields < 2 {
+			continue
+		}
+		for j < len(sc) && strings.ContainsRune("gpiImMew0123456789", rune(sc[j])) {
+			if sc[j] == 'e' || sc[j] == 'w' {
+				return true
+			}
+			j++
+		}
+		i = j - 1
+	}
+	return false
 }
 
 // runsProgram reports whether an argument of a local program makes it run
@@ -175,7 +311,7 @@ func runsProgram(name string, rest []string) bool {
 			return true // -u <upload-pack>
 		}
 	}
-	if name == "go" && len(rest) >= 2 && rest[0] == "env" && rest[1] == "-w" {
+	if name == "go" && len(rest) >= 2 && rest[0] == "env" && (rest[1] == "-w" || rest[1] == "--w" || rest[1] == "-u" || rest[1] == "--u") {
 		return true // go env -w GOFLAGS=-toolexec=... changes later builds
 	}
 	return false
@@ -222,6 +358,14 @@ func safeInvocation(inv shell.Invocation, root string) bool {
 	if inv.Env["GOFLAGS"] != "" && name == "go" {
 		return false
 	}
+	for k := range inv.Env {
+		if execEnv[k] || strings.HasPrefix(k, "CARGO_TARGET_") || strings.HasPrefix(k, "npm_config_") || strings.HasPrefix(k, "NPM_CONFIG_") || strings.HasPrefix(k, "GIT_") {
+			return false // the variable makes the program start another
+		}
+	}
+	if (name == "sed" || name == "gsed") && sedRuns(rest) {
+		return false
+	}
 	switch name {
 	case "tee":
 		for _, a := range rest {
@@ -243,7 +387,15 @@ func safeInvocation(inv shell.Invocation, root string) bool {
 		// files, a sibling module) stays local.
 		for _, a := range rest {
 			if strings.HasPrefix(a, "-") {
-				continue
+				// A path attached to an option (--output=/etc/x, -o/etc/x)
+				// is a path all the same.
+				if _, v, ok := strings.Cut(a, "="); ok {
+					a = v
+				} else if len(a) > 2 && !strings.HasPrefix(a, "--") && strings.ContainsAny(a[2:], "/~") {
+					a = a[2:]
+				} else {
+					continue
+				}
 			}
 			if secretFile.MatchString(a) || credentialDir.MatchString(a) || (fileWriters[name] && outside(a, inv.Dir, root)) {
 				return false

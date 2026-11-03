@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -48,8 +49,20 @@ type Tool struct {
 	// Note is shown with the verdict (what the server does, in short).
 	Note string `json:"note,omitempty"`
 	// Program is the program the server runs (call_aws runs aws): a
-	// translation whose command starts with another program is unresolved.
+	// translation whose command starts with another program is unresolved,
+	// or, with Prepend, gets the program put in front, as the server does.
 	Program string `json:"program,omitempty"`
+	Prepend bool   `json:"prepend,omitempty"`
+	// Stdin are the arguments whose text the server writes to the
+	// command's standard input.
+	Stdin []string `json:"stdin,omitempty"`
+	// ShellArg is the argument naming the program that runs the command
+	// (start_process's shell: bash, python3, pwsh).
+	ShellArg string `json:"shell_arg,omitempty"`
+	// SharedDir is set when another server with this tool name has no
+	// directory argument, so the directory argument is not proof of where
+	// the command runs; the call is judged as if it named none.
+	SharedDir bool `json:"shared_dir,omitempty"`
 }
 
 // Case is one command template. In Command, {arg} is replaced by the
@@ -90,7 +103,7 @@ func init() {
 // Rules returns the built-in table.
 func Rules() *Table { return &table }
 
-var placeholder = regexp.MustCompile(`\{([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)(\|kebab|\|raw)?(\.\.\.)?\}`)
+var placeholder = regexp.MustCompile(`\{([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)(\|kebab|\|raw|\|ascii)?(\.\.\.)?\}`)
 
 func (t *Table) validate() error {
 	for _, s := range t.Servers {
@@ -132,79 +145,205 @@ func (t *Table) Translate(fullName string, raw json.RawMessage, cwd string) (Res
 	tool := ToolName(fullName)
 	var args map[string]any
 	parseErr := json.Unmarshal(raw, &args)
+	// Every server whose tool this call fits is judged: decoy arguments
+	// must not steer the call to the mildest of them.
+	var all []Result
 	for _, s := range t.Servers {
 		for _, tl := range s.Tools {
 			if !contains(tl.Names, tool) || !hasAll(args, tl.Requires) {
 				continue
 			}
-			r := Result{Server: s.Name, Note: tl.Note}
-			if parseErr != nil {
-				r.Command = unresolved(tool, "its arguments are not a JSON object")
+			all = append(all, translateOne(s, tl, tool, args, parseErr))
+		}
+	}
+	if len(all) == 0 {
+		if r, ok := genericShell(tool, args, parseErr); ok {
+			return r, true
+		}
+		return Result{}, false
+	}
+	if len(all) == 1 {
+		return all[0], true
+	}
+	// Several readings: each runs in a subshell of one command, and the
+	// directory is the one they agree on, else unknown.
+	var cmds, servers []string
+	dir := all[0].Dir
+	for _, r := range all {
+		cmds = append(cmds, "( "+r.Command+"\n)")
+		servers = append(servers, r.Server)
+		if r.Dir != dir {
+			dir = ""
+		}
+	}
+	return Result{Server: strings.Join(servers, " or "), Command: strings.Join(cmds, "\n"), Dir: dir,
+		Note: "the tool name and arguments fit several servers; each reading is judged"}, true
+}
+
+func translateOne(s Server, tl Tool, tool string, args map[string]any, parseErr error) Result {
+	r := Result{Server: s.Name, Note: tl.Note}
+	if parseErr != nil {
+		r.Command = unresolved(tool, "its arguments are not a JSON object")
+		return r
+	}
+	// A relative directory is resolved by the server against its
+	// own working directory, which the hook does not know.
+	if d := str(args[tl.Dir]); tl.Dir != "" && filepath.IsAbs(d) && !tl.SharedDir {
+		r.Dir = filepath.Clean(d)
+	}
+	if tl.Shell != "" {
+		// A list holds several commands, each run on its own; a
+		// string holding a JSON array of strings is that list.
+		v := args[tl.Shell]
+		if sv, ok := v.(string); ok && strings.HasPrefix(strings.TrimSpace(sv), "[") {
+			var arr []any
+			if json.Unmarshal([]byte(sv), &arr) == nil {
+				v = arr
+			}
+		}
+		cmds := list(v, false)
+		if tl.Program != "" {
+			for _, c := range cmds {
+				// The server splits the words itself: a # is an argument
+				// there, not the comment a shell reads.
+				if hashArg.MatchString(c) {
+					r.Command = unresolved(tool, "the server passes "+quote(c)+" to "+tl.Program+" word by word, and a # there is an argument, not a comment")
+					return r
+				}
+			}
+			for i, c := range cmds {
+				if f := strings.Fields(c); len(f) == 0 || f[0] != tl.Program {
+					if tl.Prepend {
+						cmds[i] = tl.Program + " " + c
+						continue
+					}
+					r.Command = unresolved(tool, "the server runs "+tl.Program+", and "+quote(c)+" does not start with it")
+					return r
+				}
+			}
+		}
+		r.Command = strings.Join(cmds, "\n")
+		if strings.TrimSpace(r.Command) == "" {
+			r.Command = unresolved(tool, "argument "+tl.Shell+" is missing")
+			return r
+		}
+		if tl.ShellArg != "" {
+			if sh := str(args[tl.ShellArg]); sh != "" {
+				r.Command = viaShell(tool, sh, r.Command)
+			}
+		}
+		r.Command = withStdin(tool, r.Command, args, tl.Stdin)
+		return r
+	}
+	// An argument the cases look into must be an object: params
+	// sent as a JSON string cannot be read the way the server does.
+	for _, c := range tl.Cases {
+		for k := range c.When {
+			if head, _, nested := strings.Cut(k, "."); nested {
+				if v, present := args[head]; present {
+					if _, isMap := v.(map[string]any); !isMap {
+						r.Command = unresolved(tool, "argument "+head+" is not an object")
+						return r
+					}
+				}
+			}
+		}
+	}
+	for _, c := range tl.Cases {
+		if matches(c.When, args) {
+			var cmd, op string
+			if why, ok := strings.CutPrefix(c.Command, "?"); ok {
+				w, _ := expand(strings.TrimSpace(why), args)
+				r.Command = unresolved(tool, w)
+			} else if cmd, op = expand(c.Command, args); op != "" {
+				r.Command = unresolved(tool, "an argument holds the shell operator "+quote(op))
+			} else {
+				r.Command = withStdin(tool, cmd, args, tl.Stdin)
+			}
+			return r
+		}
+	}
+	r.Command = unresolved(tool, "its arguments match no known form")
+	return r
+}
+
+// hashArg matches a # that starts a word, which a shell reads as a comment.
+var hashArg = regexp.MustCompile(`(^|\s)#`)
+
+// genericShellTools are the names shell tools go by across MCP servers the
+// table does not describe; their command argument is judged as shell.
+var genericShellTools = map[string]bool{"run_in_terminal": true, "execute_command": true, "bash": true, "shell": true,
+	"run_shell_command": true, "run_terminal_command": true, "execute_bash": true, "run_bash": true, "exec": true,
+	"execute": true, "terminal": true, "shell_exec": true, "run_shell": true, "execute_shell": true, "bash_command": true,
+	"run_command": true, "execute_shell_command": true, "run_process": true, "command": true, "sh": true}
+
+var genericCommandArgs = []string{"command", "cmd", "script", "commandLine", "command_line", "code", "input"}
+
+// genericShell judges a shell tool of a server the table does not know.
+// Its directory argument is not trusted, since nothing says the server
+// honours it.
+func genericShell(tool string, args map[string]any, parseErr error) (Result, bool) {
+	if !genericShellTools[strings.ToLower(tool)] {
+		return Result{}, false
+	}
+	r := Result{Server: "a server applygate does not know", Note: "a shell tool name; judged as a shell command"}
+	if parseErr != nil {
+		r.Command = unresolved(tool, "its arguments are not a JSON object")
+		return r, true
+	}
+	for _, k := range genericCommandArgs {
+		if v, ok := args[k]; ok {
+			cmds := list(v, false)
+			if len(cmds) == 0 {
+				r.Command = unresolved(tool, "argument "+k+" is not text")
 				return r, true
 			}
-			// A relative directory is resolved by the server against its
-			// own working directory, which the hook does not know.
-			if d := str(args[tl.Dir]); tl.Dir != "" && filepath.IsAbs(d) {
-				r.Dir = filepath.Clean(d)
+			r.Command = withStdin(tool, strings.Join(cmds, "\n"), args, []string{"stdin", "stdin_text", "input"})
+			if sh := str(args["shell"]); sh != "" {
+				r.Command = viaShell(tool, sh, r.Command)
 			}
-			if tl.Shell != "" {
-				// A list holds several commands, each run on its own; a
-				// string holding a JSON array of strings is that list.
-				v := args[tl.Shell]
-				if sv, ok := v.(string); ok && strings.HasPrefix(strings.TrimSpace(sv), "[") {
-					var arr []any
-					if json.Unmarshal([]byte(sv), &arr) == nil {
-						v = arr
-					}
-				}
-				cmds := list(v, false)
-				r.Command = strings.Join(cmds, "\n")
-				if strings.TrimSpace(r.Command) == "" {
-					r.Command = unresolved(tool, "argument "+tl.Shell+" is missing")
-				}
-				if tl.Program != "" {
-					for _, c := range cmds {
-						if f := strings.Fields(c); len(f) == 0 || f[0] != tl.Program {
-							r.Command = unresolved(tool, "the server runs "+tl.Program+", and "+quote(c)+" does not start with it")
-							break
-						}
-					}
-				}
-				return r, true
-			}
-			// An argument the cases look into must be an object: params
-			// sent as a JSON string cannot be read the way the server does.
-			for _, c := range tl.Cases {
-				for k := range c.When {
-					if head, _, nested := strings.Cut(k, "."); nested {
-						if v, present := args[head]; present {
-							if _, isMap := v.(map[string]any); !isMap {
-								r.Command = unresolved(tool, "argument "+head+" is not an object")
-								return r, true
-							}
-						}
-					}
-				}
-			}
-			for _, c := range tl.Cases {
-				if matches(c.When, args) {
-					var cmd, op string
-					if why, ok := strings.CutPrefix(c.Command, "?"); ok {
-						w, _ := expand(strings.TrimSpace(why), args)
-						r.Command = unresolved(tool, w)
-					} else if cmd, op = expand(c.Command, args); op != "" {
-						r.Command = unresolved(tool, "an argument holds the shell operator "+quote(op))
-					} else {
-						r.Command = cmd
-					}
-					return r, true
-				}
-			}
-			r.Command = unresolved(tool, "its arguments match no known form")
 			return r, true
 		}
 	}
-	return Result{}, false
+	r.Command = unresolved(tool, "no command argument applygate knows")
+	return r, true
+}
+
+// withStdin adds the text of the stdin arguments as the command's input.
+func withStdin(tool, cmd string, args map[string]any, keys []string) string {
+	for _, k := range keys {
+		in := str(args[k])
+		if in == "" {
+			continue
+		}
+		const delim = "APPLYGATE_MCP_STDIN"
+		if strings.Contains(in, delim) {
+			return unresolved(tool, "argument "+k+" cannot be read")
+		}
+		if !strings.Contains(cmd, "\n") {
+			return cmd + " <<'" + delim + "'\n" + in + "\n" + delim
+		}
+		return "{ " + cmd + "\n} <<'" + delim + "'\n" + in + "\n" + delim
+	}
+	return cmd
+}
+
+// viaShell runs a command through the program a tool names: a POSIX
+// shell, an interpreter's code option, or something applygate cannot read.
+func viaShell(tool, sh, cmd string) string {
+	base := strings.ToLower(filepath.Base(strings.Fields(sh + " x")[0]))
+	base = strings.TrimSuffix(base, ".exe")
+	switch {
+	case base == "sh" || base == "bash" || base == "zsh" || base == "dash" || base == "ksh":
+		return cmd
+	case strings.HasPrefix(base, "python") || base == "perl" || base == "ruby":
+		return base + " -c " + quote(cmd)
+	case base == "node" || base == "deno" || base == "bun":
+		return base + " -e " + quote(cmd)
+	case base == "pwsh" || base == "powershell":
+		return "pwsh -Command " + quote(cmd)
+	}
+	return unresolved(tool, "the command runs in "+quote(sh)+", which applygate cannot read")
 }
 
 // unresolved is a command the analyzer cannot resolve statically, so the
@@ -246,6 +385,17 @@ func expand(tmpl string, args map[string]any) (cmd, op string) {
 					v = quote(v)
 				}
 				words = append(words, placeholder.ReplaceAllLiteralString(w, v))
+			} else if m[2] == "|ascii" {
+				// Character codes typed into a session (wcgw send_ascii).
+				var b strings.Builder
+				for _, c := range list(lookup(args, m[1]), false) {
+					n, err := strconv.Atoi(c)
+					if err != nil || n < 0 || n > 0x10ffff {
+						return `eval "$APPLYGATE_MCP_UNREADABLE" # character codes that cannot be read`, ""
+					}
+					b.WriteRune(rune(n))
+				}
+				words = append(words, b.String())
 			}
 		}
 	}
@@ -254,14 +404,18 @@ func expand(tmpl string, args map[string]any) (cmd, op string) {
 
 func matches(when map[string][]string, args map[string]any) bool {
 	for k, vals := range when {
-		raw := lookup(args, k)
-		v := strings.ToLower(str(raw))
 		ok := false
-		for _, want := range vals {
-			// "true" matches any present value that is not a falsy one:
-			// servers read is_destroy: 1 or "yes" as true.
-			if want == "*" && v != "" || strings.ToLower(want) == v || want == "true" && truthy(raw) {
-				ok = true
+		// A dotted key may be read as a nested path or as a top-level key
+		// with a dot; the case holds when either reading holds, so a decoy
+		// top-level key cannot hide the nested one the server reads.
+		for _, raw := range lookupAll(args, k) {
+			v := strings.ToLower(str(raw))
+			for _, want := range vals {
+				// "true" matches any present value that is not a falsy one:
+				// servers read is_destroy: 1 or "yes" as true.
+				if want == "*" && (v != "" || truthy(raw)) || strings.ToLower(want) == v || want == "true" && truthy(raw) {
+					ok = true
+				}
 			}
 		}
 		if !ok {
@@ -271,20 +425,34 @@ func matches(when map[string][]string, args map[string]any) bool {
 	return true
 }
 
-// lookup returns the argument at a dotted path; a key that itself contains
-// a dot is tried whole first.
-func lookup(args map[string]any, key string) any {
+// lookupAll returns the values at key read whole and as a dotted path.
+func lookupAll(args map[string]any, key string) []any {
+	var out []any
 	if v, ok := args[key]; ok {
-		return v
+		out = append(out, v)
 	}
-	head, rest, ok := strings.Cut(key, ".")
-	if !ok {
-		return nil
+	if head, rest, ok := strings.Cut(key, "."); ok {
+		if m, isMap := args[head].(map[string]any); isMap {
+			out = append(out, lookupAll(m, rest)...)
+		}
 	}
-	if m, isMap := args[head].(map[string]any); isMap {
-		return lookup(m, rest)
+	if len(out) == 0 {
+		out = append(out, nil)
 	}
-	return nil
+	return out
+}
+
+// lookup returns the argument at a dotted path, the nested reading first
+// (what the servers read), else a top-level key that contains the dot.
+func lookup(args map[string]any, key string) any {
+	if head, rest, ok := strings.Cut(key, "."); ok {
+		if m, isMap := args[head].(map[string]any); isMap {
+			if v := lookup(m, rest); v != nil {
+				return v
+			}
+		}
+	}
+	return args[key]
 }
 
 func str(v any) string {

@@ -86,3 +86,39 @@ func TestResidual(t *testing.T) {
 		}
 	}
 }
+
+// Programs started through the environment or options, path traversal out
+// of /tmp, and paths attached to options go to the judge (findings 2M9,
+// 2M10); redaction that hides programs is caught (2M8).
+func TestRelevantRound2(t *testing.T) {
+	for _, c := range []struct {
+		cmd  string
+		want bool
+	}{
+		{"go env --w GOFLAGS=-toolexec=/tmp/x", true},
+		{"CC=/tmp/evil go build ./...", true},
+		{"RUSTC_WRAPPER=/tmp/w cargo build", true},
+		{"cargo --config 'target.x86_64-unknown-linux-gnu.runner=\"sh\"' test", true},
+		{"npm test --script-shell /tmp/x", true},
+		{"PYTHONPATH=/tmp/m python3 -m pytest", true},
+		{"NODE_OPTIONS=--require=/tmp/x.js npm test", true},
+		{"sed 's/x/rm -rf ~/e' f.txt", true},
+		{"sed -n '1e rm -rf ~' f.txt", true},
+		{"sed -n 1,5p f.txt", false},
+		{"sed 's/web/www/g' f.txt", false},
+		{"rm -rf /tmp/../Users/me/work", true},
+		{"rm -rf /tmp/build", false},
+		{"cp --target-directory=/etc/x a", true},
+		{"go test ./...", false},
+	} {
+		if got := Relevant(Input{Tool: "Bash", Command: c.cmd, Cwd: "/repo"}); got != c.want {
+			t.Errorf("%s: relevant %v, want %v", c.cmd, got, c.want)
+		}
+	}
+	if !HiddenByRedaction("API_TOKEN=`{pulumi,destroy,--yes}` true", "API_TOKEN=[REDACTED] true", "/repo") {
+		t.Error("redaction that hides pulumi destroy was not caught")
+	}
+	if HiddenByRedaction("curl -H 'Authorization: Bearer abc' x", "curl -H 'Authorization: Bearer [REDACTED] x", "/repo") {
+		t.Error("a redacted header counted as hiding programs")
+	}
+}

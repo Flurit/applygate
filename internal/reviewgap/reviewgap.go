@@ -16,14 +16,7 @@ import (
 )
 
 // Open lists the findings not fixed yet, by review ID.
-var Open = map[string]string{
-	"2M1": "wcgw send_ascii is translated to true",
-	"2M2": "decoy arguments reroute MCP calls to a milder rule",
-	"2M3": "a fake workdir picks the tier",
-	"2M4": "shell servers' stdin is ignored",
-	"2M6": "call_kubectl without the kubectl prefix",
-	"2M7": "shell MCP tools outside the table are not judged",
-}
+var Open = map[string]string{}
 
 // Check reports one test of finding id. ok is whether the behaviour the
 // review asks for holds.

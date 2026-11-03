@@ -314,8 +314,15 @@ func (a *analyzer) source(src string, st *state, via []string, depth int) {
 }
 
 func (a *analyzer) stmts(ss []*syntax.Stmt, st *state, via []string, depth int) {
+	a.stmtsIn(ss, st, via, depth, stdin{})
+}
+
+// stmtsIn walks statements that share one standard input: the input given
+// to a compound command ({ …; } <<EOF, while …; done < f) is there for any
+// command inside it to read.
+func (a *analyzer) stmtsIn(ss []*syntax.Stmt, st *state, via []string, depth int, in stdin) {
 	for _, s := range ss {
-		a.stmt(s, st, via, depth, stdin{})
+		a.stmt(s, st, via, depth, in)
 	}
 }
 
@@ -388,17 +395,17 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			a.stmt(c.Y, st, via, depth, stdin{})
 		}
 	case *syntax.Subshell:
-		a.stmts(c.Stmts, st.clone(), via, depth)
+		a.stmtsIn(c.Stmts, st.clone(), via, depth, in)
 	case *syntax.Block:
-		a.stmts(c.Stmts, st, via, depth)
+		a.stmtsIn(c.Stmts, st, via, depth, in)
 	case *syntax.IfClause:
 		for ic := c; ic != nil; ic = ic.Else {
-			a.stmts(ic.Cond, st, via, depth)
-			a.stmts(ic.Then, st, via, depth)
+			a.stmtsIn(ic.Cond, st, via, depth, in)
+			a.stmtsIn(ic.Then, st, via, depth, in)
 		}
 	case *syntax.WhileClause:
-		a.stmts(c.Cond, st, via, depth)
-		a.stmts(c.Do, st, via, depth)
+		a.stmtsIn(c.Cond, st, via, depth, in)
+		a.stmtsIn(c.Do, st, via, depth, in)
 	case *syntax.ForClause:
 		if wi, ok := c.Loop.(*syntax.WordIter); ok {
 			var items []Word
@@ -412,7 +419,7 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			if allOK && len(items) > 0 && len(items) <= 32 {
 				for _, it := range items {
 					st.vars[wi.Name.Value] = value{text: it.Text, ok: true}
-					a.stmts(c.Do, st, via, depth)
+					a.stmtsIn(c.Do, st, via, depth, in)
 				}
 				return
 			}
@@ -420,14 +427,14 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 		} else {
 			a.substitutionsIn(c.Loop, st, via, depth)
 		}
-		a.stmts(c.Do, st, via, depth)
+		a.stmtsIn(c.Do, st, via, depth, in)
 	case *syntax.CaseClause:
 		a.word(c.Word, st, via, depth)
 		for _, it := range c.Items {
 			for _, p := range it.Patterns {
 				a.substitutionsIn(p, st, via, depth)
 			}
-			a.stmts(it.Stmts, st, via, depth)
+			a.stmtsIn(it.Stmts, st, via, depth, in)
 		}
 	case *syntax.FuncDecl:
 		if c.Name == nil {
