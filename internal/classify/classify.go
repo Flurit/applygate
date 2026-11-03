@@ -65,6 +65,11 @@ type Action struct {
 	// .terraform (workspace, backend): the workspace and backend recorded
 	// there now are not the ones the command will use.
 	DataDirWritten bool
+	// AnyDir is set when the action may run in a directory the analysis
+	// could not follow (cd to a computed path, a symlink made earlier in
+	// the command, an analysis that stopped): it is judged at the most
+	// protected tier under the repository root.
+	AnyDir bool
 }
 
 // Options configure classification.
@@ -124,7 +129,7 @@ func Invocations(res *shell.Result, opt Options) []Action {
 		written = append(written, stepWrites(inv, opt)...)
 	}
 	for _, p := range res.Problems {
-		a := Action{Class: Dynamic, Command: p.Text, Why: p.Reason, Dir: p.Dir, Via: p.Via}
+		a := Action{Class: Dynamic, Command: p.Text, Why: p.Reason, Dir: p.Dir, Via: p.Via, AnyDir: p.AnyDir}
 		if p.Guard != "" {
 			a.Class, a.Engine, a.Why = Tampering, "file", p.Reason
 		}
@@ -162,7 +167,7 @@ func words(inv shell.Invocation) []string {
 
 func invocation(inv shell.Invocation, opt Options) []Action {
 	cmdText := strings.Join(words(inv), " ")
-	base := Action{Dir: inv.Dir, Env: inv.Env, Command: cmdText, Via: inv.Via}
+	base := Action{Dir: inv.Dir, Env: inv.Env, Command: cmdText, Via: inv.Via, AnyDir: inv.Dir == ""}
 	var out []Action
 
 	// Writes to guard files through redirection, whatever the program.
@@ -192,9 +197,9 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		a.Class, a.Why = Dynamic, "program name cannot be resolved statically"
 		return append(out, a)
 	}
-	name := filepath.Base(inv.Args[0].Text)
+	name := shell.ProgName(inv.Args[0].Text)
 	args := inv.Args[1:]
-	switch lower := strings.ToLower(name); {
+	switch lower := name; {
 	case lower == "applygate" || lower == "seatbelt" || isSelf(absPath(inv.Dir, inv.Args[0].Text, opt.Home)):
 		name = "applygate"
 	case strings.Contains(inv.Args[0].Text, "/") || !knownProgram(lower):
@@ -251,7 +256,7 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 			out = append(out, a)
 		}
 		return out
-	case "az", "gcloud":
+	case "az", "gcloud", "gsutil":
 		if a, ok := cloudCLIArgs(base, name, args); ok {
 			out = append(out, a)
 		}
@@ -310,7 +315,7 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 
 	if strings.Contains(inv.Args[0].Text, "/") {
 		// A script we could not read (the analyzer follows readable ones).
-		if t := destructiveTarget([]shell.Word{{Text: filepath.Base(inv.Args[0].Text), Resolved: true}}); t != "" {
+		if t := destructiveTarget([]shell.Word{{Text: shell.ProgName(inv.Args[0].Text), Resolved: true}}); t != "" {
 			a := base
 			a.Class, a.Why = UnknownWrapper, "script "+inv.Args[0].Text+" looks destructive and could not be read"
 			out = append(out, a)
@@ -448,7 +453,7 @@ func stepWrites(inv shell.Invocation, opt Options) []string {
 	if len(inv.Args) == 0 || !inv.Args[0].Resolved {
 		return out
 	}
-	name := filepath.Base(inv.Args[0].Text)
+	name := shell.ProgName(inv.Args[0].Text)
 	args := inv.Args[1:]
 	if _, ok := engines[name]; ok {
 		for i, w := range args {
@@ -645,7 +650,7 @@ func clusterHas(args []shell.Word, c byte) bool {
 // execRemoves reports whether find runs a remover through -exec or -execdir.
 func execRemoves(args []shell.Word) bool {
 	for i, w := range args {
-		if (w.Text == "-exec" || w.Text == "-execdir" || w.Text == "-ok") && i+1 < len(args) && removers[filepath.Base(args[i+1].Text)] {
+		if (w.Text == "-exec" || w.Text == "-execdir" || w.Text == "-ok") && i+1 < len(args) && removers[shell.ProgName(args[i+1].Text)] {
 			return true
 		}
 	}
@@ -827,7 +832,7 @@ func isSelf(p string) bool {
 func knownProgram(name string) bool {
 	switch name {
 	case "git", "npm", "pnpm", "yarn", "bun", "npx", "go", "cargo", "terraform", "tofu", "terragrunt", "kubectl", "helm", "oc",
-		"aws", "az", "gcloud", "pulumi", "cdk", "make", "gh", "glab", "docker", "podman", "brew", "pip", "pip3", "poetry", "uv",
+		"aws", "az", "gcloud", "gsutil", "pulumi", "cdk", "make", "gh", "glab", "docker", "podman", "brew", "pip", "pip3", "poetry", "uv",
 		"claude", "codex", "pre-commit", "husky", "lefthook", "rails", "rake", "mix", "dotnet", "flux", "argocd", "kustomize":
 		return true
 	}

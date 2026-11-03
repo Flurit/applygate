@@ -88,13 +88,28 @@ func flagVal(flags []tfFlag, name string) (string, bool) {
 
 // terraformArgs classifies terraform, tofu and terragrunt invocations.
 func terraformArgs(a *Action, args []shell.Word) {
-	// Global options before the subcommand.
-	for len(args) > 0 && args[0].Resolved && strings.HasPrefix(args[0].Text, "-") {
+	if a.Engine == "terragrunt" {
+		args = terragruntDir(a, args)
+	}
+	// Global options before the subcommand. A -chdir whose directory cannot
+	// be resolved leaves the directory unknown.
+	for len(args) > 0 && (args[0].Resolved && strings.HasPrefix(args[0].Text, "-") || !args[0].Resolved && strings.HasPrefix(args[0].Prefix, "-")) {
 		t := args[0].Text
+		if !args[0].Resolved {
+			if strings.HasPrefix(strings.TrimLeft(args[0].Prefix, "-"), "chdir") {
+				a.Dir, a.AnyDir = "", true
+			}
+			args = args[1:]
+			continue
+		}
 		if v, ok := strings.CutPrefix(strings.TrimLeft(t, "-"), "chdir="); ok {
 			a.Dir = absPath(a.Dir, v, "")
 		} else if strings.TrimLeft(t, "-") == "chdir" && len(args) > 1 {
-			a.Dir = absPath(a.Dir, args[1].Text, "")
+			if args[1].Resolved {
+				a.Dir = absPath(a.Dir, args[1].Text, "")
+			} else {
+				a.Dir, a.AnyDir = "", true
+			}
 			args = args[1:]
 		}
 		if t == "-version" || t == "--version" || t == "-help" || t == "--help" || t == "-h" {
@@ -136,6 +151,9 @@ func terraformArgs(a *Action, args []shell.Word) {
 		}
 	}
 	a.Sub = sub
+	if a.Engine != "terragrunt" {
+		rest = append(cliArgs(a.Env, sub), rest...)
+	}
 	flags, pos, unresolved := splitTF(rest)
 	set := func(c Class, why string) {
 		a.Class, a.Why = c, why
@@ -362,12 +380,25 @@ func awsArgs(base Action, args []shell.Word) (Action, bool) {
 func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 	a := base
 	a.Engine = "kubectl"
-	a.Target = flagValue(args, "--context")
+	// The cluster: --context, else --cluster, else the API server URL.
+	for _, f := range []string{"--context", "--cluster", "--server", "-s"} {
+		if a.Target = flagValue(args, f); a.Target != "" {
+			break
+		}
+	}
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		t := args[i].Text
 		if strings.HasPrefix(t, "-") {
-			if (t == "-n" || t == "--namespace" || t == "--context" || t == "-l" || t == "--selector" || t == "-f" || t == "-o" || t == "--kubeconfig") && i+1 < len(args) {
+			// Before the verb, a long flag takes the next word unless it is
+			// a known boolean: --cluster prod delete must not read "prod"
+			// as the verb.
+			valued := t == "-n" || t == "--namespace" || t == "--context" || t == "-l" || t == "--selector" || t == "-f" || t == "-o" ||
+				t == "--kubeconfig" || t == "-s" || t == "-v" || t == "-c" || t == "--container"
+			if len(pos) == 0 && strings.HasPrefix(t, "--") && !strings.Contains(t, "=") && !kubectlBool[t] {
+				valued = true
+			}
+			if valued && !strings.Contains(t, "=") && i+1 < len(args) {
 				i++
 			}
 			continue
@@ -396,14 +427,20 @@ func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 	return a, true
 }
 
+// kubectlBool are kubectl's global flags that take no value.
+var kubectlBool = toSet("--insecure-skip-tls-verify", "--all-namespaces", "--warnings-as-errors", "--match-server-version",
+	"--disable-compression", "--help", "--version")
+
 // helmArgs classifies a helm command by its subcommand: uninstall deletes a
 // release and everything it created, install, upgrade and rollback change the
 // cluster, and the rest only read or work locally.
 func helmArgs(base Action, args []shell.Word) (Action, bool) {
 	a := base
 	a.Engine = "helm"
-	a.Target = flagValue(args, "--kube-context")
-	pos, dynamic := positionals(args, map[string]bool{"-n": true, "--namespace": true, "--kube-context": true, "--kubeconfig": true,
+	if a.Target = flagValue(args, "--kube-context"); a.Target == "" {
+		a.Target = flagValue(args, "--kube-apiserver")
+	}
+	pos, dynamic := positionals(args, map[string]bool{"-n": true, "--namespace": true, "--kube-context": true, "--kubeconfig": true, "--kube-apiserver": true, "--kube-token": true, "--kube-as-user": true,
 		"-f": true, "--values": true, "--set": true, "--set-string": true, "--version": true, "-o": true, "--output": true, "--repo": true})
 	if dynamic {
 		a.Class, a.Why = Dynamic, "helm subcommand cannot be resolved"
@@ -425,20 +462,23 @@ func helmArgs(base Action, args []shell.Word) (Action, bool) {
 	return a, true
 }
 
-// cloudCLIArgs classifies az and gcloud commands by their verbs: any command
-// group ending in delete or purge removes resources; list, show, describe
-// and get only read; anything else changes something.
+// cloudCLIArgs classifies az, gcloud and gsutil commands by their verb: the
+// first word of the command path that is a known verb decides, except that
+// a destructive word anywhere in the path (delete, purge, rm, delete-batch)
+// always counts. A read word can never turn a write into a read. Flags take
+// the next word as their value unless they are known booleans.
 func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
 	a := base
 	a.Engine = name
-	if name == "gcloud" {
+	switch name {
+	case "gcloud":
 		a.Target = flagValue(args, "--project")
-	} else {
+	case "gsutil":
+		a.Engine, a.Target = "gcloud", flagValue(args, "-p")
+	default:
 		a.Target = flagValue(args, "--subscription")
 	}
-	pos, dynamic := positionals(args, map[string]bool{"-n": true, "--name": true, "-g": true, "--resource-group": true, "--subscription": true,
-		"--query": true, "-o": true, "--output": true, "--project": true, "--zone": true, "--region": true, "--format": true, "--filter": true,
-		"--account": true, "--configuration": true, "-l": true, "--location": true})
+	pos, dynamic := cloudPositionals(args)
 	if dynamic {
 		a.Class, a.Why = Dynamic, name+" command cannot be resolved"
 		return a, true
@@ -447,23 +487,101 @@ func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
 		return a, false
 	}
 	a.Sub = strings.Join(pos, " ")
-	read := false
+	cmd := name + " " + strings.Join(pos, " ")
+	verb := ""
 	for _, p := range pos {
-		switch {
-		case p == "delete" || p == "purge" || strings.HasSuffix(p, "-delete"):
-			a.Class, a.Why = CloudDestructive, name+" "+strings.Join(pos, " ")+" deletes resources"
+		if cloudDestructive(p) {
+			a.Class, a.Why = CloudDestructive, cmd+" deletes resources"
 			return a, true
-		case p == "list" || p == "show" || p == "describe" || p == "get" || p == "version" || p == "help" ||
-			strings.HasPrefix(p, "list-") || strings.HasPrefix(p, "get-") || p == "login" || p == "info":
-			read = true
+		}
+		if verb == "" && (cloudRead[p] || cloudWrite[p] || strings.HasPrefix(p, "list-") || strings.HasPrefix(p, "get-") ||
+			strings.HasPrefix(p, "describe-") || strings.HasPrefix(p, "show-")) {
+			verb = p
 		}
 	}
-	if read || pos[0] == "config" || pos[0] == "account" || pos[0] == "auth" {
-		a.Class, a.Why = ReadOnly, name+" "+strings.Join(pos, " ")+" does not change resources"
+	if name == "gsutil" && pos[0] == "rsync" && hasArg(args, "-d") {
+		a.Class, a.Why = CloudDestructive, cmd+" -d deletes objects missing from the source"
 		return a, true
 	}
-	a.Class, a.Why = CloudWrite, name+" "+strings.Join(pos, " ")+" changes resources"
+	read := verb != "" && !cloudWrite[verb]
+	if read || verb == "" && (pos[0] == "config" || pos[0] == "account" || pos[0] == "auth" || pos[0] == "version" || pos[0] == "help") {
+		a.Class, a.Why = ReadOnly, cmd+" does not change resources"
+		return a, true
+	}
+	a.Class, a.Why = CloudWrite, cmd+" changes resources"
 	return a, true
+}
+
+var cloudRead = toSet("list", "show", "describe", "get", "version", "help", "login", "info", "ls", "cat", "stat", "du", "hash",
+	"logs", "read", "tail", "wait", "check", "validate", "export", "search", "query", "browse", "print-access-token", "print-identity-token")
+
+var cloudWrite = toSet("create", "update", "set", "add", "cp", "mv", "rsync", "copy", "move", "deploy", "apply", "start", "stop",
+	"restart", "resize", "import", "attach", "detach", "enable", "disable", "patch", "replace", "upload", "run", "exec", "ssh", "scp",
+	"assign", "grant", "revoke", "rotate", "reset", "scale", "upgrade", "install", "push", "tag", "publish", "submit", "invoke",
+	"call", "execute", "write", "put", "modify", "register", "unregister", "mb", "acl", "setmeta", "lifecycle", "iam", "compose",
+	"rewrite", "retention", "suspend", "resume", "failover", "swap", "restore", "regenerate", "renew", "generate", "lock", "unlock")
+
+// cloudDestructive reports whether a command word removes resources.
+func cloudDestructive(p string) bool {
+	switch p {
+	case "delete", "purge", "rm", "rb", "remove", "destroy", "terminate", "uninstall", "wipe", "abandon":
+		return true
+	}
+	return strings.HasPrefix(p, "delete-") || strings.HasSuffix(p, "-delete") || strings.HasPrefix(p, "remove-") || strings.HasPrefix(p, "purge-")
+}
+
+// cloudBool are the flags of az, gcloud and gsutil that take no value.
+var cloudBool = toSet("--quiet", "--async", "--recursive", "--all", "--force", "--log-http", "--no-user-output-enabled",
+	"--user-output-enabled", "--help", "--dry-run", "--dryrun", "--continue-on-error", "--yes", "--no-wait", "--verbose",
+	"--debug", "--only-show-errors", "--no-progress", "--overwrite", "--no-clobber", "--preserve-posix", "--include-managed-folders",
+	"--skip-if-missing", "--no-async", "--no-prompt", "--disable-prompts", "--allow-missing", "--keep-deleted", "--uri", "--json")
+
+// cloudPositionals returns the words of a cloud CLI command that are not
+// flags or flag values. A long flag takes the next word as its value unless
+// it is a known boolean; short flags take none, except the az ones that
+// name things (-n, -g, -o, -l, -s, -p).
+func cloudPositionals(args []shell.Word) (pos []string, dynamic bool) {
+	shortValued := toSet("-n", "-g", "-o", "-l", "-s", "-p", "-h", "-u", "-c", "-z", "-f", "-e")
+	for i := 0; i < len(args); i++ {
+		w := args[i]
+		t := w.Text
+		if !w.Resolved {
+			t = w.Prefix
+		}
+		if strings.HasPrefix(t, "-") && t != "-" {
+			next := i+1 < len(args) && !strings.HasPrefix(args[i+1].Text, "-")
+			switch {
+			case strings.Contains(t, "="):
+			case strings.HasPrefix(t, "--") && !cloudBool[t] && !strings.HasPrefix(t, "--no-") && next:
+				i++
+			case !strings.HasPrefix(t, "--") && shortValued[t] && next:
+				i++
+			}
+			continue
+		}
+		if !w.Resolved && len(pos) == 0 {
+			return nil, true
+		}
+		pos = append(pos, t)
+	}
+	return pos, false
+}
+
+func hasArg(args []shell.Word, name string) bool {
+	for _, w := range args {
+		if w.Text == name {
+			return true
+		}
+	}
+	return false
+}
+
+func toSet(ss ...string) map[string]bool {
+	m := make(map[string]bool, len(ss))
+	for _, s := range ss {
+		m[s] = true
+	}
+	return m
 }
 
 // flagValue returns the value of a flag given as "--name value" or
@@ -561,6 +679,68 @@ func texts(ws []shell.Word) []string {
 	out := make([]string, len(ws))
 	for i, w := range ws {
 		out[i] = w.Text
+	}
+	return out
+}
+
+// terragruntDir applies Terragrunt's working-directory options, which may
+// appear anywhere in the arguments (--working-dir, --terragrunt-working-dir)
+// or in the environment (TG_WORKING_DIR, TERRAGRUNT_WORKING_DIR), and
+// returns the arguments without them.
+func terragruntDir(a *Action, args []shell.Word) []shell.Word {
+	setDir := func(w shell.Word) {
+		if w.Resolved && w.Text != "" {
+			a.Dir = absPath(a.Dir, w.Text, "")
+		} else {
+			a.Dir, a.AnyDir = "", true
+		}
+	}
+	for _, k := range []string{"TERRAGRUNT_WORKING_DIR", "TG_WORKING_DIR"} {
+		if v, ok := a.Env[k]; ok {
+			setDir(shell.Word{Text: v, Resolved: v != "", Prefix: v})
+		}
+	}
+	out := make([]shell.Word, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		w := args[i]
+		t := w.Text
+		if !w.Resolved {
+			t = w.Prefix
+		}
+		name, val, eq := strings.Cut(t, "=")
+		if name != "--working-dir" && name != "--terragrunt-working-dir" {
+			out = append(out, w)
+			continue
+		}
+		switch {
+		case eq:
+			setDir(shell.Word{Text: val, Resolved: w.Resolved, Prefix: val})
+		case i+1 < len(args):
+			setDir(args[i+1])
+			i++
+		}
+	}
+	return out
+}
+
+// cliArgs returns the arguments Terraform takes from TF_CLI_ARGS and
+// TF_CLI_ARGS_<subcommand>, which it inserts after the subcommand. An
+// exported value that cannot be resolved (empty in the environment map) is
+// one unresolved word.
+func cliArgs(env map[string]string, sub string) []shell.Word {
+	var out []shell.Word
+	for _, k := range []string{"TF_CLI_ARGS", "TF_CLI_ARGS_" + strings.ReplaceAll(sub, "-", "_")} {
+		v, ok := env[k]
+		if !ok {
+			continue
+		}
+		if v == "" || strings.ContainsAny(v, `"'\$`) {
+			out = append(out, shell.Word{Text: v})
+			continue
+		}
+		for _, f := range strings.Fields(v) {
+			out = append(out, shell.Word{Text: f, Resolved: true, Prefix: f})
+		}
 	}
 	return out
 }

@@ -134,6 +134,31 @@ func envRunner(bn string, rest []Word) (cmd []Word, script *Word, ok bool) {
 			return skipFlags(rest[1:], nil), nil, true
 		}
 	case "nix":
+		if len(rest) >= 2 && rest[0].Text == "run" {
+			// nix run INSTALLABLE [-- args]: the installable's main program,
+			// named by the attribute after # (nixpkgs#terraform).
+			for i, w := range rest[1:] {
+				if strings.HasPrefix(w.Text, "-") {
+					continue
+				}
+				attr := w.Text
+				if _, after, ok := strings.Cut(attr, "#"); ok {
+					attr = after
+				}
+				if j := strings.LastIndexAny(attr, "./"); j >= 0 {
+					attr = attr[j+1:]
+				}
+				if attr == "opentofu" {
+					attr = "tofu"
+				}
+				prog := Word{Text: attr, Resolved: w.Resolved && attr != "", Prefix: attr}
+				args := rest[2+i:]
+				if len(args) > 0 && args[0].Text == "--" {
+					args = args[1:]
+				}
+				return append([]Word{prog}, args...), nil, true
+			}
+		}
 		if len(rest) >= 2 && (rest[0].Text == "develop" || rest[0].Text == "shell") {
 			for i, w := range rest[1:] {
 				if w.Text == "-c" || w.Text == "--command" {
@@ -209,7 +234,7 @@ func (a *analyzer) backstop(bn string, rest []Word, redirs []Redir, cmdSt, st *s
 				return true
 			}
 		}
-		if !tfEngines[w.Text] && !(strings.Contains(w.Text, "/") && tfEngines[base(w.Text)] && !strings.HasSuffix(w.Text, "/")) {
+		if !tfEngines[base(w.Text)] || strings.HasSuffix(w.Text, "/") {
 			continue
 		}
 		if i > 0 && rest[i-1].Resolved && messageFlags[rest[i-1].Text] {

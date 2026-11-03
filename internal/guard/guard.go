@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 )
 
 // FoldCase is true where the default file system ignores case.
@@ -56,7 +57,7 @@ func Canonical(p string) string {
 	p = filepath.Clean(p)
 	rest := ""
 	for cur := p; ; {
-		if r, err := filepath.EvalSymlinks(cur); err == nil {
+		if r, ok := evalSymlinks(cur); ok {
 			p = filepath.Join(r, rest)
 			break
 		}
@@ -68,6 +69,22 @@ func Canonical(p string) string {
 		cur = parent
 	}
 	return fold(filepath.ToSlash(p))
+}
+
+// resolved caches EvalSymlinks for the life of the process: one decision
+// resolves dozens of guard paths that share their parents (~/.claude/...).
+var resolved sync.Map // path -> string ("" when it does not resolve)
+
+func evalSymlinks(p string) (string, bool) {
+	if v, ok := resolved.Load(p); ok {
+		return v.(string), v.(string) != ""
+	}
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		r = ""
+	}
+	resolved.Store(p, r)
+	return r, r != ""
 }
 
 // canonicalGlob canonicalizes the literal prefix of an absolute glob.

@@ -406,6 +406,12 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	}
 	var res config.Resolution
 	switch {
+	case a.AnyDir && rootOf(cfg, ev) != "":
+		why := "the directory this command runs in could not be followed statically"
+		if a.Dir != "" {
+			why = "the analysis of this command stopped early, so what it did not see may run in any directory"
+		}
+		res = cfg.ResolveUnder(rootOf(cfg, ev), sig, why)
 	case dirKnown || a.Dir == "":
 		res = cfg.Resolve(sig)
 	case cfg.UnknownDirMostProtected():
@@ -635,6 +641,16 @@ func findPlanfile(root, rel string) (matches []string, truncated bool) {
 		truncated = true
 	}
 	return matches, truncated
+}
+
+// rootOf is the directory a command whose directory is not known is
+// assumed to run under: the repository config's directory, else the
+// event's.
+func rootOf(cfg *config.Config, ev Event) string {
+	if cfg.Root != "" {
+		return cfg.Root
+	}
+	return ev.Cwd
 }
 
 func first(ss []string, n int) []string {
