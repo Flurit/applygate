@@ -53,6 +53,17 @@
       - `TF_CLI_ARGS` and `TF_CLI_ARGS_<subcommand>` are part of the command.
       - `gsutil` is classified.
       - `kubectl --cluster`/`--server` and `helm --kube-apiserver` name the target.
+  - **Tier resolution** (findings D4 to D8):
+    - **Symlinks and case:** a directory is matched as written and with symlinks resolved (case folded on macOS and Windows), and the stricter environment wins. Before, `envs/dev/p -> ../prod` was judged as dev.
+    - **`TF_DATA_DIR`:** the recorded backend is read from it, not only the workspace. A `TF_DATA_DIR` that cannot be resolved is judged as protected.
+    - **Backend patterns:** `*` matches across `/`, so `s3://bucket/*` covers `s3://bucket/payments/terraform.tfstate`.
+    - **`applygate suggest`** escapes control characters in every logged value it writes and quotes names. Its check refuses a proposal holding a key it does not write. Before, a profile name with newlines could inject `name_hints: false`.
+    - **Targets on the command line:** `kubectl`/`helm --kubeconfig` and `gcloud --configuration` decide the target when no context or project is given.
+  - **The plan gate** (findings E2 to E5):
+    - **Providers checked before show:** every provider in `.terraform/providers` must match `.terraform.lock.hcl` as git HEAD has it. `show` runs without the user's CLI configuration, and `terragrunt show` is never run: the plan is shown with `terraform` in its `.terragrunt-cache` directory. Tested with Terraform 1.14.6: before, a provider binary replaced in `.terraform` ran with the user's credentials once the working-tree lock file was edited to match; now the plan counts as unreadable and nothing runs.
+    - **Replace counts as destroy:** a plan that replaces a resource is judged like one that deletes it.
+    - **Instance keys:** `protected_resources` ignore `count` and `for_each` keys, so `aws_instance.bastion` covers `aws_instance.bastion[0]`.
+    - **Values known only after apply:** a watched attribute unknown until apply (an ingress CIDR, or `deletion_protection` on an update) is a high `unknown-watched` finding.
 - **Behaviour changes:**
   - **One-time approvals are off by default.** Only the user config turns them on. The approval key now binds write content and full MCP arguments, the store's lock never waits more than about half a second, and the approve prompt escapes control characters.
   - **`applygate apply` has no `--yes` and no `--plan-json`.** An ask outside a terminal is refused; in CI, gate with `applygate plan-check` and run the engine yourself.
@@ -62,6 +73,8 @@
     - **`applygate suggest`** no longer proposes a mode.
     - **Path patterns:** a repository's `**` patterns are rooted at its own directory.
   - **`on_error: auto` judges an error at the most protected tier under the repository root.** An internal error from a disposable directory now blocks when the repository has a protected environment.
+  - **The plan gate needs a committed `.terraform.lock.hcl`** wherever `.terraform/providers` holds providers. Without one, applying a saved plan in a protected tier is blocked as unreadable.
+  - **Replacing a resource in a saved plan is a destroy**, so it blocks in protected tiers and asks in standard ones. A first apply of a network stack in a protected tier usually asks, because its CIDRs are known only after apply.
   - **Stricter shell analysis asks more often in protected tiers.** A command that runs a file it wrote itself, or that globs or uses `=name` in its program name, is asked about there. On the 162 recorded agent-trial calls, one verdict changed: installing a freshly downloaded `terragrunt` and running `--version` in a directory the name hints mark as production is now an ask.
 - Model judge, opt-in (`judge:` in the user config, docs/judge.md). A call the rules let through without recognizing anything is sent to a language model, and the call gets the stricter of the two verdicts. That covers a shell command that starts a program outside a short list of local ones, every file write or edit (with up to 4,000 characters of content), and an MCP call to a tool the known-tool table does not cover.
   - **Backends, with no default model.** The user chooses one:

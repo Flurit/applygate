@@ -110,7 +110,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 		return nil, fmt.Errorf("plan JSON: %w", err)
 	}
 	res := &Result{}
-	var stateful, protection, exposure, stateInfra, outOfScope, unprotectedCreate, reducedCreate, protectedAddr []string
+	var stateful, protection, exposure, stateInfra, outOfScope, unprotectedCreate, reducedCreate, protectedAddr, unknownAttrs []string
 	var crit = func(list *[]string, s string) { *list = append(*list, s) }
 
 	for _, rc := range p.ResourceChanges {
@@ -141,7 +141,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 			if rules.stateful[rc.Type] {
 				crit(&stateful, rc.Address+" ("+rc.Type+") is "+verb)
 			}
-			if len(in.Protected) > 0 && inScope(rc.Address, in.Protected) {
+			if len(in.Protected) > 0 && isProtected(rc.Address, in.Protected) {
 				crit(&protectedAddr, rc.Address+" is "+verb+" (listed in protected_resources)")
 			}
 		}
@@ -183,6 +183,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 			}
 		}
 		if !del {
+			unknownAttrs = append(unknownAttrs, unknownWatched(rc, rules)...)
 			ev := exposed(rc, after, rules)
 			if acts.Update() {
 				// An update reports only the exposure it introduces; what
@@ -223,6 +224,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 	add("code-execution", preflight.High, "applying this plan runs code outside Terraform's own providers (provisioners or external data sources)", codeExecution(&p))
 	add("protection-removed", preflight.Critical, "plan removes data protection", protection)
 	add("exposure", preflight.High, "plan exposes resources", exposure)
+	add("unknown-watched", preflight.High, "values the exposure and protection rules check are known only at apply time, so the plan cannot show they are safe", unknownAttrs)
 	add("state-infrastructure", preflight.Critical, "plan changes the Terraform state backend itself", stateInfra)
 	add("out-of-scope", preflight.High, "plan changes resources outside the declared scope", outOfScope)
 	var meta struct {
@@ -357,6 +359,77 @@ func stripKeys(addr string) string {
 }
 
 // exposed returns exposure findings for a resource's planned values.
+// exposureAttrs are the attributes exposed reads, by resource type.
+var exposureAttrs = map[string][]string{
+	"aws_security_group":                  {"ingress"},
+	"aws_security_group_rule":             {"cidr_blocks", "ipv6_cidr_blocks", "from_port", "to_port", "protocol"},
+	"aws_vpc_security_group_ingress_rule": {"cidr_ipv4", "cidr_ipv6", "from_port", "to_port", "ip_protocol"},
+	"aws_s3_bucket_public_access_block":   {"block_public_acls", "block_public_policy", "ignore_public_acls", "restrict_public_buckets"},
+	"aws_s3_account_public_access_block":  {"block_public_acls", "block_public_policy", "ignore_public_acls", "restrict_public_buckets"},
+	"aws_s3_bucket_acl":                   {"acl"},
+	"aws_s3_bucket_policy":                {"policy"},
+	"aws_iam_policy":                      {"policy"},
+	"aws_iam_role_policy":                 {"policy"},
+	"aws_iam_user_policy":                 {"policy"},
+	"aws_iam_group_policy":                {"policy"},
+}
+
+// unknownWatched lists the attributes of a created, updated or replaced
+// resource that the exposure rules (and, for an update or replace, the
+// protection rules) check but whose value is known only at apply time
+// (after_unknown): an open CIDR or a removed deletion protection would not
+// show in the plan.
+func unknownWatched(rc *tfjson.ResourceChange, rules *Rules) []string {
+	unk, _ := rc.Change.AfterUnknown.(map[string]any)
+	if len(unk) == 0 {
+		return nil
+	}
+	if rc.Type == "aws_security_group_rule" {
+		if after, _ := rc.Change.After.(map[string]any); after != nil && after["type"] == "egress" {
+			return nil
+		}
+	}
+	attrs := append([]string(nil), exposureAttrs[rc.Type]...)
+	// Protection can only be removed from a resource that exists.
+	if acts := rc.Change.Actions; acts.Update() || acts.Replace() {
+		for _, pr := range rules.Protection {
+			if contains(pr.Types, rc.Type) && (pr.When == "change" || pr.When == "both") {
+				attrs = append(attrs, pr.Attr)
+			}
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, a := range attrs {
+		if v, ok := lookup(unk, a); ok && anyTrue(v) && !seen[a] {
+			seen[a] = true
+			out = append(out, rc.Address+": "+a+" is known only after apply")
+		}
+	}
+	return out
+}
+
+// anyTrue reports whether an after_unknown value marks anything unknown.
+func anyTrue(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case []any:
+		for _, e := range x {
+			if anyTrue(e) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, e := range x {
+			if anyTrue(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func exposed(rc *tfjson.ResourceChange, after map[string]any, rules *Rules) []string {
 	if after == nil {
 		return nil
@@ -603,6 +676,21 @@ func firstString(after, before map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+// isProtected matches an address against protected_resources with the
+// instance keys of count and for_each left out on both sides, so
+// aws_instance.bastion covers aws_instance.bastion[0] and module.data covers
+// module.data["eu"].aws_s3_bucket.b.
+func isProtected(addr string, patterns []string) bool {
+	bare := stripKeys(addr)
+	for _, p := range patterns {
+		bp := stripKeys(p)
+		if inScope(addr, []string{p}) || inScope(bare, []string{bp}) || bare == bp || strings.HasPrefix(bare, bp+".") {
+			return true
+		}
+	}
+	return false
 }
 
 func inScope(addr string, scope []string) bool {

@@ -386,6 +386,7 @@ func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 			break
 		}
 	}
+	kubeconfigFlag(&a, args)
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		t := args[i].Text
@@ -440,6 +441,7 @@ func helmArgs(base Action, args []shell.Word) (Action, bool) {
 	if a.Target = flagValue(args, "--kube-context"); a.Target == "" {
 		a.Target = flagValue(args, "--kube-apiserver")
 	}
+	kubeconfigFlag(&a, args)
 	pos, dynamic := positionals(args, map[string]bool{"-n": true, "--namespace": true, "--kube-context": true, "--kubeconfig": true, "--kube-apiserver": true, "--kube-token": true, "--kube-as-user": true,
 		"-f": true, "--values": true, "--set": true, "--set-string": true, "--version": true, "-o": true, "--output": true, "--repo": true})
 	if dynamic {
@@ -473,6 +475,9 @@ func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
 	switch name {
 	case "gcloud":
 		a.Target = flagValue(args, "--project")
+		if c := flagValue(args, "--configuration"); c != "" {
+			a.TargetEnv = map[string]string{"CLOUDSDK_ACTIVE_CONFIG_NAME": c}
+		}
 	case "gsutil":
 		a.Engine, a.Target = "gcloud", flagValue(args, "-p")
 	default:
@@ -743,4 +748,12 @@ func cliArgs(env map[string]string, sub string) []shell.Word {
 		}
 	}
 	return out
+}
+
+// kubeconfigFlag records kubectl's and helm's --kubeconfig, which selects
+// the kubeconfig whose current context is the target.
+func kubeconfigFlag(a *Action, args []shell.Word) {
+	if v := flagValue(args, "--kubeconfig"); v != "" {
+		a.TargetEnv = map[string]string{"KUBECONFIG": absPath(a.Dir, v, "")}
+	}
 }

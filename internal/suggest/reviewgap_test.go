@@ -30,3 +30,18 @@ func TestReviewD7LoggedValuesEscaped(t *testing.T) {
 	}
 	reviewgap.Check(t, "D7", !injected, "a logged value became config lines:\n%s", y)
 }
+
+// Check refuses a proposal holding a key the generator never writes.
+func TestCheckRejectsKeysNotEmitted(t *testing.T) {
+	for _, y := range []string{
+		"version: 1\nname_hints: false\n",
+		"version: 1\nenvironments:\n  - name: a\n    tier: protected\n    match: {paths: [\"a/**\"], aliases: x}\n",
+	} {
+		if err := onlyEmittedKeys(y); err == nil {
+			t.Errorf("accepted:\n%s", y)
+		}
+	}
+	if err := onlyEmittedKeys("version: 1\nenvironments: []\nplan_gate:\n  max_destroy: {protected: 0}\n"); err != nil {
+		t.Errorf("rejected a proposal's own keys: %v", err)
+	}
+}

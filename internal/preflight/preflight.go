@@ -79,11 +79,7 @@ func Workspace(dir string, env map[string]string) string {
 		return w
 	}
 	if dir != "" {
-		dataDir := ".terraform"
-		if d := env["TF_DATA_DIR"]; d != "" {
-			dataDir = d
-		}
-		if b, err := os.ReadFile(filepath.Join(dir, dataDir, "environment")); err == nil {
+		if b, err := os.ReadFile(filepath.Join(DataDir(dir, env), "environment")); err == nil {
 			if w := strings.TrimSpace(string(b)); w != "" {
 				return w
 			}
@@ -94,8 +90,24 @@ func Workspace(dir string, env map[string]string) string {
 
 // InitBackend reads the backend recorded by the last init in
 // .terraform/terraform.tfstate.
-func InitBackend(dir string) *Backend {
-	b, err := os.ReadFile(filepath.Join(dir, ".terraform", "terraform.tfstate"))
+func InitBackend(dir string) *Backend { return InitBackendEnv(dir, nil) }
+
+// DataDir is the directory Terraform keeps its working data in: TF_DATA_DIR
+// (relative to dir) when set, else .terraform.
+func DataDir(dir string, env map[string]string) string {
+	if d := env["TF_DATA_DIR"]; d != "" {
+		if filepath.IsAbs(d) {
+			return d
+		}
+		return filepath.Join(dir, d)
+	}
+	return filepath.Join(dir, ".terraform")
+}
+
+// InitBackendEnv reads the backend recorded by the last init in the data
+// directory TF_DATA_DIR names, else .terraform.
+func InitBackendEnv(dir string, env map[string]string) *Backend {
+	b, err := os.ReadFile(filepath.Join(DataDir(dir, env), "terraform.tfstate"))
 	if err != nil {
 		return nil
 	}

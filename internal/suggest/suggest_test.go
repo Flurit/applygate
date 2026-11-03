@@ -170,7 +170,7 @@ func TestBuildKeepsTheExistingConfig(t *testing.T) {
 		t.Fatalf("unclassified %v, root runs %d", p.Unclassified, p.RootRuns)
 	}
 	y := p.YAML()
-	for _, want := range []string{"# from the existing config", "max_destroy: {protected: 0, standard: 3}", "protected_resources: [\"module.data.*\"]", "- {name: runit, skip: 1, profile_arg: 0}"} {
+	for _, want := range []string{"# from the existing config", "max_destroy: {protected: 0, standard: 3}", "protected_resources: [\"module.data.*\"]", `- {name: "runit", skip: 1, profile_arg: 0}`} {
 		if !strings.Contains(y, want) {
 			t.Errorf("YAML lacks %q:\n%s", want, y)
 		}

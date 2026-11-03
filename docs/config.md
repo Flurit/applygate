@@ -36,9 +36,9 @@ environments:            # any matching signal applies; the most protected match
   - name: prod
     tier: protected      # protected | standard | disposable
     match:
-      paths: ["envs/prod/**"]                 # relative to this file
+      paths: ["envs/prod/**"]                 # relative to this file; a directory is matched as written and with symlinks resolved
       workspaces: ["prod", "production"]
-      backends: ["s3://acme-tf-state-prod/*"] # s3://bucket/key
+      backends: ["s3://acme-tf-state-prod/*"] # s3://bucket/key; * matches across /
       aws_profiles: ["prod*"]
       aws_accounts: ["123456789012"]          # only with preflight.live_identity
       kube_contexts: ["prod-eks", "arn:aws:eks:*:123456789012:cluster/*"]   # kubectl and helm
@@ -78,7 +78,7 @@ protected_resources: []         # address globs whose destroy/replace is critica
 
 **Defaults.** Because the most protected matching environment wins, an environment that matches everything (`paths: ["**"]`) overrides every less protected one: `examples/**` → disposable plus `**` → standard makes the examples standard too. For a default, set `strict: false` and `default_tier` instead.
 
-`kube_contexts`, `gcp_projects` and `azure_subscriptions` match what a `kubectl` or `helm`, `gcloud` or `az` command targets, also when it comes through an MCP tool ([mcp.md](mcp.md)). The value is the one on the command line (`--context`, `--kube-context`, `--project`, `--subscription`), else what the CLI's own local configuration selects: the current context of the kubeconfig in `KUBECONFIG` or `~/.kube/config`; `CLOUDSDK_CORE_PROJECT` or the active gcloud configuration's `core/project`; the default subscription in `~/.azure/azureProfile.json` (name or id). These are local file reads, never a network call. As with every signal, the most protected match wins, so a `kubectl delete` run from a disposable directory against a protected cluster is judged protected, and the name hints apply too (`prod-eks` looks like production).
+`kube_contexts`, `gcp_projects` and `azure_subscriptions` match what a `kubectl` or `helm`, `gcloud` or `az` command targets, also when it comes through an MCP tool ([mcp.md](mcp.md)). The value is the one on the command line (`--context`, `--cluster` or `--server` for kubectl, `--kube-context` or `--kube-apiserver` for helm, `--project`, `--subscription`), else what the CLI's own local configuration selects: the current context of the kubeconfig named by `--kubeconfig`, `KUBECONFIG` or `~/.kube/config`; the configuration named by gcloud's `--configuration`; `CLOUDSDK_CORE_PROJECT` or that (else the active) gcloud configuration's `core/project`; the default subscription in `~/.azure/azureProfile.json` (name or id). These are local file reads, never a network call. As with every signal, the most protected match wins, so a `kubectl delete` run from a disposable directory against a protected cluster is judged protected, and the name hints apply too (`prod-eks` looks like production).
 
 `unknown_dir` applies when the host reports only the session root and not the directory a command runs in (Codex 0.165.0; see [hosts.md](hosts.md)). `most_protected` (the default) judges the command at the most protected tier it could be in under the root: every environment whose `paths` could match a directory under the root, every environment with `workspaces`, `backends`, `aws_profiles` or `aws_accounts` matchers, and `strict`/`default_tier` for an unmatched directory ([policy.md](policy.md) step 4). `session_root` judges it at the root as if it ran there, which is what applygate v0.1.4 and earlier did. Only the user config can set `session_root`; a repository config may set `most_protected` to switch it back on, and any other value in a repository config is ignored. A `cd` or `-chdir` inside the command always wins over this setting.
 

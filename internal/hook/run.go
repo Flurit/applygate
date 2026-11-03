@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -78,21 +79,43 @@ func EnvMap() map[string]string {
 	return m
 }
 
-// ShowPlan runs "<engine> show -json <planfile>" in dir. It is read-only:
-// show never plans or applies, though it starts provider plugins to load
-// their schemas. The subprocess is cancelled when parent is done (the internal
-// deadline) or after timeout, whichever comes first.
+// ShowPlan runs "terraform show -json <planfile>" (tofu for OpenTofu) in
+// dir. show never plans or applies, but it starts the provider plugins in
+// the data directory to load their schemas, and the agent can write that
+// directory: every provider must first match .terraform.lock.hcl as git
+// HEAD has it (preflight.VerifyProviders), and the user's CLI configuration
+// (dev_overrides) is not read. Terragrunt's own show is never run, since it
+// evaluates run_cmd() and hooks: the plan is shown with terraform in the
+// Terragrunt cache directory that holds it. The subprocess is cancelled
+// when parent is done (the internal deadline) or after timeout, whichever
+// comes first.
 func ShowPlan(parent context.Context, timeout time.Duration) func(engine, dir, planfile string) ([]byte, error) {
 	return func(engine, dir, planfile string) ([]byte, error) {
 		bin := engine
-		if bin == "" {
+		switch bin {
+		case "", "terraform":
 			bin = "terraform"
+		case "terragrunt":
+			bin = "terraform"
+			if p := os.Getenv("TG_TF_PATH"); p != "" {
+				bin = p
+			} else if p := os.Getenv("TERRAGRUNT_TFPATH"); p != "" {
+				bin = p
+			}
+			d, err := terragruntCacheDir(dir, planfile)
+			if err != nil {
+				return nil, err
+			}
+			dir = d
 		}
 		ctx, cancel := context.WithTimeout(parent, timeout)
 		defer cancel()
+		if err := preflight.VerifyProviders(ctx, dir, preflight.DataDir(dir, map[string]string{"TF_DATA_DIR": os.Getenv("TF_DATA_DIR")})); err != nil {
+			return nil, fmt.Errorf("%s show not run: %v", bin, err)
+		}
 		cmd := exec.CommandContext(ctx, bin, "show", "-json", "-no-color", planfile)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1")
+		cmd.Env = append(os.Environ(), "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1", "TF_CLI_CONFIG_FILE="+os.DevNull)
 		// On cancel, don't wait forever for output: terraform's provider
 		// plugins can hold the stdout pipe open after terraform itself is
 		// killed. WaitDelay force-closes the pipe so cmd.Output returns.
@@ -108,6 +131,46 @@ func ShowPlan(parent context.Context, timeout time.Duration) func(engine, dir, p
 		}
 		return out, nil
 	}
+}
+
+// terragruntCacheDir finds the Terragrunt cache directory a saved plan
+// belongs to: terragrunt plan -out=F writes F in the working copy under
+// .terragrunt-cache, next to its .terraform. Exactly one must exist.
+func terragruntCacheDir(dir, planfile string) (string, error) {
+	if filepath.IsAbs(planfile) {
+		if d := filepath.Dir(planfile); isDir(filepath.Join(d, ".terraform")) {
+			return d, nil
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, planfile)); err == nil && isDir(filepath.Join(dir, ".terraform")) {
+		return dir, nil
+	}
+	cache := filepath.Join(dir, ".terragrunt-cache")
+	var found []string
+	_ = filepath.WalkDir(cache, func(p string, d os.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		if rel, _ := filepath.Rel(cache, p); strings.Count(rel, string(filepath.Separator)) > 8 || d.Name() == ".terraform" {
+			return filepath.SkipDir
+		}
+		if _, err := os.Stat(filepath.Join(p, planfile)); err == nil && isDir(filepath.Join(p, ".terraform")) {
+			found = append(found, p)
+		}
+		return nil
+	})
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return "", fmt.Errorf("the plan %s is not in %s or its .terragrunt-cache, and terragrunt show is not run (it evaluates run_cmd and hooks)", planfile, dir)
+	}
+	return "", fmt.Errorf("the plan %s is in %d Terragrunt cache directories under %s; which one would be applied is not known", planfile, len(found), cache)
+}
+
+func isDir(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 func firstLine(s string) string {

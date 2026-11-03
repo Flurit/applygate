@@ -19,6 +19,7 @@ import (
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/policy"
+	"gopkg.in/yaml.v3"
 )
 
 // Options select the log entries and the baseline.
@@ -474,7 +475,16 @@ func advice(f Flag) string {
 // comments. The result parses as a config (see Check).
 func (p *Proposal) YAML() string {
 	var b strings.Builder
-	w := func(format string, args ...any) { fmt.Fprintf(&b, format, args...) }
+	// Every value comes from the decision log, which the agent's commands
+	// fill: a control character in one must not start a new YAML line.
+	w := func(format string, args ...any) {
+		for i, a := range args {
+			if s, ok := a.(string); ok {
+				args[i] = escapeControl(s)
+			}
+		}
+		fmt.Fprintf(&b, format, args...)
+	}
 
 	w("# .applygate.yaml proposed by \"applygate suggest\" on %s from %d logged decisions,\n", p.Now.UTC().Format("2006-01-02"), p.Entries)
 	span := ""
@@ -493,7 +503,7 @@ func (p *Proposal) YAML() string {
 	if len(p.Envs) > 0 {
 		w("environments:\n")
 		for _, e := range p.Envs {
-			w("  - name: %s\n", e.Name)
+			w("  - name: %s\n", q(e.Name))
 			note := "# guessed from the name; confirm"
 			if e.Existing {
 				note = "# from the existing config"
@@ -574,7 +584,7 @@ func (p *Proposal) YAML() string {
 	if x := p.Existing; x != nil && len(x.Wrappers) > 0 {
 		w("wrappers:\n")
 		for _, wr := range x.Wrappers {
-			w("  - {name: %s, skip: %d, profile_arg: %d}\n", wr.Name, wr.Skip, wr.ProfileArg)
+			w("  - {name: %s, skip: %d, profile_arg: %d}\n", q(wr.Name), wr.Skip, wr.ProfileArg)
 		}
 	}
 	if len(p.Wrappers) > 0 {
@@ -611,8 +621,87 @@ func (p *Proposal) Check() error {
 	if err := os.WriteFile(path, []byte(p.YAML()), 0o600); err != nil {
 		return err
 	}
-	_, err = config.LoadFile(path)
-	return err
+	if _, err = config.LoadFile(path); err != nil {
+		return err
+	}
+	return onlyEmittedKeys(p.YAML())
+}
+
+// emitted are the keys YAML writes, by parent; a proposal holding any other
+// key was not written by it (a logged value got out of its quotes).
+var emitted = map[string][]string{
+	"":            {"version", "environments", "plan_gate", "protected_resources", "wrappers"},
+	"environment": {"name", "tier", "match"},
+	"match":       {"paths", "workspaces", "backends", "aws_profiles", "kube_contexts", "gcp_projects", "azure_subscriptions"},
+	"plan_gate":   {"max_destroy"},
+	"max_destroy": {string(config.Protected), string(config.Standard), string(config.Disposable)},
+	"wrapper":     {"name", "skip", "profile_arg"},
+}
+
+func onlyEmittedKeys(y string) error {
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(y), &doc); err != nil {
+		return err
+	}
+	check := func(parent string, m map[string]any) error {
+		for k := range m {
+			if !slices.Contains(emitted[parent], k) {
+				return fmt.Errorf("proposal holds key %q, which suggest does not write; a logged value may contain YAML", k)
+			}
+		}
+		return nil
+	}
+	if err := check("", doc); err != nil {
+		return err
+	}
+	envs, _ := doc["environments"].([]any)
+	for _, e := range envs {
+		em, _ := e.(map[string]any)
+		if err := check("environment", em); err != nil {
+			return err
+		}
+		mm, _ := em["match"].(map[string]any)
+		if err := check("match", mm); err != nil {
+			return err
+		}
+	}
+	pg, _ := doc["plan_gate"].(map[string]any)
+	if err := check("plan_gate", pg); err != nil {
+		return err
+	}
+	md, _ := pg["max_destroy"].(map[string]any)
+	if err := check("max_destroy", md); err != nil {
+		return err
+	}
+	ws, _ := doc["wrappers"].([]any)
+	for _, w := range ws {
+		wm, _ := w.(map[string]any)
+		if err := check("wrapper", wm); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// escapeControl writes control characters (and the Unicode line and
+// paragraph separators) as escapes, so text stays on its line.
+func escapeControl(s string) string {
+	if !strings.ContainsFunc(s, isControl) {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if isControl(r) {
+			fmt.Fprintf(&b, "\\u%04x", r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func isControl(r rune) bool {
+	return r < 0x20 || r == 0x7f || r == 0x85 || r == 0x2028 || r == 0x2029 || r == 0xfeff
 }
 
 func appendUnique(dst []string, vals ...string) []string {

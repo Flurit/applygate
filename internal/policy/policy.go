@@ -307,6 +307,9 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		return r
 	}
 	env := mergeEnv(deps.Env, a.Env)
+	for k, v := range a.TargetEnv {
+		env[k] = v
+	}
 	tf := a.Engine == "terraform" || a.Engine == "tofu" || a.Engine == "terragrunt"
 	// The directory is known when the host reported it or the command
 	// itself moved there (cd, pushd, -chdir); a.Dir then differs from the
@@ -342,7 +345,7 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	if tf && a.Dir != "" {
 		r.Workspace = preflight.Workspace(a.Dir, env)
 		sig.Workspace = r.Workspace
-		recorded = preflight.InitBackend(a.Dir)
+		recorded = preflight.InitBackendEnv(a.Dir, env)
 		declared = preflight.DeclaredBackend(a.Dir)
 		if len(a.BackendConfig) > 0 {
 			// An init in this command re-points the directory: judge this
@@ -421,6 +424,12 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		res.Matched = append([]string{fmt.Sprintf("command directory not reported by %s; judged at the session root %s (unknown_dir: session_root)", orHost(ev.Agent), a.Dir)}, res.Matched...)
 	}
 	r.Tier, r.Env, r.Matched = res.Tier, res.Env, res.Matched
+	if v, set := a.Env["TF_DATA_DIR"]; tf && set && v == "" && r.Tier.Rank() < config.Protected.Rank() {
+		// TF_DATA_DIR is exported with a value that cannot be resolved: the
+		// workspace and backend it records are unknown.
+		r.Tier, r.Env = config.Protected, "unknown"
+		r.Matched = append(r.Matched, "TF_DATA_DIR cannot be resolved statically, so the workspace and backend it selects are unknown; judged as protected")
+	}
 	if a.DataDirWritten && r.Tier.Rank() < config.Protected.Rank() {
 		// The workspace and backend this directory records are rewritten by
 		// an earlier step of the command, so they cannot tell the target.
@@ -574,8 +583,17 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 		r.PlanSHA256 = "json:" + hex.EncodeToString(sum[:])
 	}
 	r.Findings = append(r.Findings, gres.Findings...)
-	if len(gres.Deletes) > 0 {
-		r.Why = fmt.Sprintf("applies saved plan %s, which destroys %d resource(s): %s", a.PlanFile, len(gres.Deletes), strings.Join(first(gres.Deletes, 5), ", "))
+	// Replacing a resource destroys it first (or after its successor is
+	// created): it is judged like deleting it.
+	if gone := append(append([]string(nil), gres.Deletes...), gres.Replaces...); len(gone) > 0 {
+		verb := "destroys"
+		switch {
+		case len(gres.Deletes) == 0:
+			verb = "replaces"
+		case len(gres.Replaces) > 0:
+			verb = "destroys or replaces"
+		}
+		r.Why = fmt.Sprintf("applies saved plan %s, which %s %d resource(s): %s", a.PlanFile, verb, len(gone), strings.Join(first(gone, 5), ", "))
 		return classify.Destroy
 	}
 	r.Why = fmt.Sprintf("applies saved plan %s (%d change(s))", a.PlanFile, gres.Changes)
