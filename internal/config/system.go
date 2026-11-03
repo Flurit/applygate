@@ -139,7 +139,9 @@ func rootOnly(p string, fi os.FileInfo) error {
 // managedGuards are the managed install's files, guarded like the rest.
 func managedGuards() []string {
 	var out []string
-	for _, d := range []string{SystemDir, ManagedBinDir} {
+	// Claude Code's managed directories of every system: a path is just a
+	// path, and the hook judges commands that name either.
+	for _, d := range []string{SystemDir, ManagedBinDir, ClaudeManagedDir, "/Library/Application Support/ClaudeCode", "/etc/claude-code"} {
 		if d != "" {
 			out = append(out, d, filepath.Join(d, "**"))
 		}

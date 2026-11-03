@@ -128,3 +128,25 @@ func TestReview2D13CheckEnforce(t *testing.T) {
 		t.Fatalf("--enforce under observe: rc %d %s", rc, out.String())
 	}
 }
+
+// plan-check says when the repository config was not read, and reads it
+// with --trust-config, for CI (finding 3T2).
+func TestReview3T2PlanCheckUntrustedConfig(t *testing.T) {
+	config.TrustAll = false
+	t.Cleanup(func() { config.TrustAll = true })
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte("version: 1\nstrict: true\nenvironments:\n  - {name: dev, tier: disposable, match: {paths: [\"dev/**\"]}}\n"), 0o644)
+	dev := filepath.Join(root, "dev")
+	os.MkdirAll(dev, 0o755)
+	var out, errb bytes.Buffer
+	cmdPlanCheck([]string{"--cwd", dev, "../../harness/pack/plans/replace_stateless.json"}, &out, &errb)
+	if !strings.Contains(out.String(), "tier protected") || !strings.Contains(out.String(), "is not trusted") {
+		t.Fatalf("untrusted config: %s", out.String())
+	}
+	out.Reset()
+	cmdPlanCheck([]string{"--trust-config", "--cwd", dev, "../../harness/pack/plans/replace_stateless.json"}, &out, &errb)
+	if !strings.Contains(out.String(), "tier disposable") {
+		t.Fatalf("--trust-config did not read the config: %s", out.String())
+	}
+}

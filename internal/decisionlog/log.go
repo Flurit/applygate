@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Flurit/applygate/internal/policy"
 	"github.com/Flurit/applygate/internal/preflight"
@@ -101,6 +102,19 @@ var secretPatterns = []redaction{
 	{regexp.MustCompile(`(\b(?:docker|podman|nerdctl)\s+login\b[^|;&\n]*?\s-p\s*)(?:` + quotedValue + `|` + secretValue + `)`), true},
 	{regexp.MustCompile(`(\bredis-cli\b[^|;&\n]*?\s-a\s*)(?:` + quotedValue + `|` + secretValue + `)`), true},
 	{regexp.MustCompile(`(\bsshpass\b[^|;&\n]*?\s-p\s*)(?:` + quotedValue + `|` + secretValue + `)`), true},
+	// Secret stores' own value options: aws ssm put-parameter --value,
+	// kubectl create secret --from-literal=k=v, gh secret set --body,
+	// az login -p, and text piped into one of them.
+	{regexp.MustCompile(`(\bput-parameter\b[^|;&\n]*?\s--value(?:\s+|=))(?:` + quotedValue + `|` + secretValue + `)`), true},
+	{regexp.MustCompile(`(--from-literal=[^=\s]+=)(?:` + quotedValue + `|` + secretValue + `)`), true},
+	{regexp.MustCompile(`(\bgh\s+secret\s+set\b[^|;&\n]*?\s(?:-b|--body)(?:\s+|=))(?:` + quotedValue + `|` + secretValue + `)`), true},
+	{regexp.MustCompile(`(\baz\s+login\b[^|;&\n]*?\s-p(?:\s+|=))(?:` + quotedValue + `|` + secretValue + `)`), true},
+	{regexp.MustCompile(`((?:\becho|\bprintf)\s+(?:-[ne]+\s+)?)(?:` + quotedValue + `|` + secretValue + `)(\s*\|\s*(?:docker\s+secret\s+create|gh\s+secret\s+set|kubectl\s+create\s+secret|vault\s|aws\s+ssm\s|aws\s+secretsmanager\s))`), true},
+	// vault kv put PATH k=v ... and vault write PATH k=v ...: every value.
+	{regexp.MustCompile(`(\bvault\s+(?:kv\s+(?:put|patch)|write)\b[^|;&\n]*?\s[A-Za-z0-9_.-]+=)(?:` + quotedValue + `|` + secretValue + `)`), true},
+	// Cookie headers and Slack webhook URLs.
+	{regexp.MustCompile(`(?i)(\bcookie["']?\s*:\s*["']?)[^"'\n]+`), true},
+	{regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]+`), false},
 	// name="value with spaces" and name='value': the whole quoted value.
 	{regexp.MustCompile(`(?i)(` + secretName + `["']?\s*[=:]\s*)` + quotedValue), true},
 	{regexp.MustCompile(`(?i)((?:^|\s)--?` + secretName + `(?:\s+|=))` + quotedValue), true},
@@ -131,6 +145,24 @@ func Redact(s string) string {
 	return s
 }
 
+// maxField caps a text field of a log entry, before redaction: redacting
+// megabytes of command text would take seconds the hook does not have, and
+// one call must not fill the log.
+const maxField = 64 << 10
+
+// capField cuts s to maxField bytes at a rune boundary, saying how much was
+// left out.
+func capField(s string) string {
+	if len(s) <= maxField {
+		return s
+	}
+	cut := maxField
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + fmt.Sprintf(" …(%d bytes, cut for the log)", len(s))
+}
+
 func redactEntry(e *Entry) {
 	// The actions are shared with the caller's decision: redact copies.
 	e.Actions = append([]policy.ActionResult(nil), e.Actions...)
@@ -141,36 +173,36 @@ func redactEntry(e *Entry) {
 			e.Actions[i].Findings[j].Evidence = append([]string(nil), e.Actions[i].Findings[j].Evidence...)
 		}
 	}
-	e.Command = Redact(e.Command)
+	e.Command = Redact(capField(e.Command))
 	for i := range e.Actions {
-		e.Actions[i].Command = Redact(e.Actions[i].Command)
-		e.Actions[i].Why = Redact(e.Actions[i].Why)
+		e.Actions[i].Command = Redact(capField(e.Actions[i].Command))
+		e.Actions[i].Why = Redact(capField(e.Actions[i].Why))
 		for j := range e.Actions[i].Via {
-			e.Actions[i].Via[j] = Redact(e.Actions[i].Via[j])
+			e.Actions[i].Via[j] = Redact(capField(e.Actions[i].Via[j]))
 		}
 		for j := range e.Actions[i].Findings {
 			f := &e.Actions[i].Findings[j]
-			f.Message = Redact(f.Message)
+			f.Message = Redact(capField(f.Message))
 			for k := range f.Evidence {
-				f.Evidence[k] = Redact(f.Evidence[k])
+				f.Evidence[k] = Redact(capField(f.Evidence[k]))
 			}
 		}
 	}
-	e.Error = Redact(e.Error)
+	e.Error = Redact(capField(e.Error))
 	// Notes quote commands too (the MCP note holds the translated one).
 	e.Notes = append([]string(nil), e.Notes...)
 	for i := range e.Notes {
-		e.Notes[i] = Redact(e.Notes[i])
+		e.Notes[i] = Redact(capField(e.Notes[i]))
 	}
 	for i := range e.Actions {
 		e.Actions[i].Matched = append([]string(nil), e.Actions[i].Matched...)
 		for j := range e.Actions[i].Matched {
-			e.Actions[i].Matched[j] = Redact(e.Actions[i].Matched[j])
+			e.Actions[i].Matched[j] = Redact(capField(e.Actions[i].Matched[j]))
 		}
 	}
 	if e.Judge != nil {
 		j := *e.Judge
-		j.Reason, j.Error = Redact(j.Reason), Redact(j.Error)
+		j.Reason, j.Error = Redact(capField(j.Reason)), Redact(capField(j.Error))
 		e.Judge = &j
 	}
 }
@@ -183,6 +215,7 @@ func Append(path string, e Entry) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
+	rotate(path)
 	f, err := safefile.OpenAppend(path, 0o600)
 	if err != nil {
 		return err
@@ -194,6 +227,17 @@ func Append(path string, e Entry) error {
 	}
 	_, err = f.Write(append(b, '\n'))
 	return err
+}
+
+// maxLog is the size at which the log is rotated to path.1, which replaces
+// the previous one.
+const maxLog = 64 << 20
+
+// rotate moves a log over maxLog aside, so it cannot grow without bound.
+func rotate(path string) {
+	if fi, err := os.Lstat(path); err == nil && fi.Mode().IsRegular() && fi.Size() > maxLog {
+		_ = os.Rename(path, path+".1")
+	}
 }
 
 // Read loads all entries; malformed lines are counted, not fatal.

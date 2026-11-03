@@ -1,6 +1,7 @@
 // Package reviewgap tracks which findings of the v0.6.0 reviews
-// (review/v0.6.0/2026-11-02-pre-release-review.md, and round 2 in
-// review/v0.6.0/2026-11-03-red-team-round-2.md, IDs starting with 2) are not
+// (review/v0.6.0/2026-11-02-pre-release-review.md, round 2 in
+// review/v0.6.0/2026-11-03-red-team-round-2.md, IDs starting with 2, and round 3
+// in review/v0.6.0/2026-11-03-red-team-round-3.md, IDs starting with 3) are not
 // fixed yet, so the tests that reproduce them can live in the suite before the
 // fixes do.
 //

@@ -84,10 +84,18 @@ func cmdApprove(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 // printable shows control characters in s as escapes, so text the agent
 // wrote cannot move the cursor or rewrite what the person reads.
-func printable(s string) string {
+func printable(s string) string { return escapeControls(s, false) }
+
+// printableLines is printable with line breaks and tabs kept, for showing a
+// whole file.
+func printableLines(s string) string { return escapeControls(s, true) }
+
+func escapeControls(s string, lines bool) string {
 	var b strings.Builder
 	for _, r := range s {
 		switch {
+		case lines && (r == '\n' || r == '\t'):
+			b.WriteRune(r)
 		case r == '\n':
 			b.WriteString(`\n`)
 		case r == '\t':

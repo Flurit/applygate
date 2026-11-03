@@ -12,12 +12,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	hcljson "github.com/hashicorp/hcl/v2/json"
+	"github.com/zclconf/go-cty/cty"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -136,167 +142,216 @@ func InitBackendEnv(dir string, env map[string]string) *Backend {
 
 var (
 	// The label may be unquoted: Terraform accepts backend s3 { }.
-	backendBlock = regexp.MustCompile(`(?s)\bbackend\s+"?([A-Za-z0-9_-]+)"?\s*\{`)
-	cloudBlock   = regexp.MustCompile(`(?s)\bcloud\s*\{`)
-	attrLine     = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"`)
+	attrLine = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"`)
 	// anyAttr is every attribute line; a value that refers to anything
 	// (OpenTofu allows variables and locals in a backend) or is a template
 	// is not known.
-	anyAttr    = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$`)
-	quotedStr  = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
-	refInValue = regexp.MustCompile(`\b(?:var|local|data|module|each|path|terraform)\.|[A-Za-z_][A-Za-z0-9_]*\s*\(`)
-	plainStr   = regexp.MustCompile(`^"[^"\\]*"$`)
-	nestedName = regexp.MustCompile(`(?s)\bworkspaces\s*\{([^}]*)\}`)
 	// configLine also accepts unquoted values (bucket=acme-prod-tfstate) in
 	// -backend-config files. Terraform rejects those as HCL, but reading
 	// them can only make the tier stricter.
 	configLine = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:"([^"]*)"|([^\s"#]+))`)
 )
 
-// DeclaredBackend reads the backend or cloud block from the .tf and .tf.json
-// files in dir, override files last, as Terraform merges them. Only plain
-// values are read; this is not a full HCL parser. A block it cannot read in
-// full is returned with Unreadable set.
+// DeclaredBackend reads the backend or cloud block from dir's configuration
+// files as Terraform and OpenTofu do, with HashiCorp's HCL parser: .tf and
+// .tf.json files (and OpenTofu's .tofu and .tofu.json, which replace the
+// .tf file of the same name for tofu), skipping names that start with "."
+// as both do, override files last. A value that is not a plain literal, a
+// file that names a backend and does not parse, and Terraform and OpenTofu
+// reading different backends are each returned with Unreadable set.
 func DeclaredBackend(dir string) *Backend {
-	var files, overrides []string
-	for _, pat := range []string{"*.tf", "*.tf.json"} {
-		m, _ := filepath.Glob(filepath.Join(dir, pat))
-		for _, f := range m {
-			b := strings.TrimSuffix(strings.TrimSuffix(filepath.Base(f), ".json"), ".tf")
-			if b == "override" || strings.HasSuffix(b, "_override") {
-				overrides = append(overrides, f)
-			} else {
-				files = append(files, f)
-			}
+	tf, tofu := configFiles(dir)
+	a := backendFrom(tf)
+	if len(tofu) == 0 {
+		return a
+	}
+	b := backendFrom(tofu)
+	if !sameBackend(a, b) {
+		if b == nil {
+			b = &Backend{Type: "unknown", Config: map[string]string{}, Declared: true}
+		}
+		c := *b
+		c.Unreadable = "Terraform and OpenTofu read different backends in " + dir
+		return &c
+	}
+	return b
+}
+
+// configFiles lists the configuration files Terraform reads in dir, and,
+// when dir has .tofu files, the ones OpenTofu reads.
+func configFiles(dir string) (tf, tofu []string) {
+	entries, _ := os.ReadDir(dir)
+	byStem := map[string]string{} // stem -> .tofu file, for OpenTofu
+	var tfFiles []string
+	hasTofu := false
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || strings.HasPrefix(n, ".") || strings.HasPrefix(n, "#") || strings.HasSuffix(n, "~") {
+			continue
+		}
+		switch {
+		case strings.HasSuffix(n, ".tf"), strings.HasSuffix(n, ".tf.json"):
+			tfFiles = append(tfFiles, filepath.Join(dir, n))
+		case strings.HasSuffix(n, ".tofu"), strings.HasSuffix(n, ".tofu.json"):
+			hasTofu = true
+			stem := strings.TrimSuffix(strings.TrimSuffix(n, ".json"), ".tofu")
+			byStem[stem+filepath.Ext(strings.TrimSuffix(n, ".tofu"))] = filepath.Join(dir, n)
 		}
 	}
-	sort.Strings(files)
-	sort.Strings(overrides)
+	tf = orderOverrides(tfFiles)
+	if !hasTofu {
+		return tf, nil
+	}
+	var tofuFiles []string
+	for _, f := range tfFiles {
+		n := filepath.Base(f)
+		stem := strings.TrimSuffix(strings.TrimSuffix(n, ".json"), ".tf")
+		if _, replaced := byStem[stem+filepath.Ext(strings.TrimSuffix(n, ".tf"))]; !replaced {
+			tofuFiles = append(tofuFiles, f)
+		}
+	}
+	for _, f := range byStem {
+		tofuFiles = append(tofuFiles, f)
+	}
+	return tf, orderOverrides(tofuFiles)
+}
+
+// orderOverrides sorts files by name with override files last.
+func orderOverrides(files []string) []string {
+	var base, over []string
+	for _, f := range files {
+		n := filepath.Base(f)
+		for _, ext := range []string{".json", ".tofu", ".tf"} {
+			n = strings.TrimSuffix(n, ext)
+		}
+		if n == "override" || strings.HasSuffix(n, "_override") {
+			over = append(over, f)
+		} else {
+			base = append(base, f)
+		}
+	}
+	sort.Strings(base)
+	sort.Strings(over)
+	return append(base, over...)
+}
+
+func sameBackend(a, b *Backend) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Type == b.Type && a.Unreadable == b.Unreadable && reflect.DeepEqual(a.Config, b.Config)
+}
+
+// emptyCtx evaluates expressions with no variables or functions: a
+// reference fails, and JSON strings are read as templates, as Terraform
+// reads them.
+var emptyCtx = &hcl.EvalContext{}
+
+var (
+	terraformSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "terraform"}}}
+	backendSchema   = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "backend", LabelNames: []string{"type"}}, {Type: "cloud"}}}
+	providerSchema  = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "provider", LabelNames: []string{"name"}}}}
+	nestedSchema    = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "workspaces"}, {Type: "assume_role"}, {Type: "assume_role_with_web_identity"}, {Type: "endpoints"}}}
+)
+
+// backendFrom reads the backend the files declare; a later file's block
+// replaces an earlier one's, as override files do.
+func backendFrom(files []string) *Backend {
 	var found *Backend
-	for _, f := range append(files, overrides...) {
+	for _, f := range files {
 		src, err := os.ReadFile(f)
 		if err != nil {
 			continue
 		}
-		var be *Backend
+		var file *hcl.File
+		var diags hcl.Diagnostics
 		if strings.HasSuffix(f, ".json") {
-			be = jsonBackend(src)
+			file, diags = hcljson.Parse(src, f)
 		} else {
-			be = hclBackend(stripComments(string(src)))
+			file, diags = hclsyntax.ParseConfig(src, f, hcl.Pos{Line: 1, Column: 1})
 		}
-		if be != nil {
-			found = be
-		}
-	}
-	return found
-}
-
-func hclBackend(s string) *Backend {
-	if loc := backendBlock.FindStringSubmatchIndex(s); loc != nil {
-		body := braceBody(s, loc[1]-1)
-		be := &Backend{Type: s[loc[2]:loc[3]], Config: map[string]string{}, Declared: true}
-		readAttrs(be, body)
-		return be
-	}
-	if loc := cloudBlock.FindStringIndex(s); loc != nil {
-		be := &Backend{Type: "cloud", Config: map[string]string{}, Declared: true}
-		readAttrs(be, braceBody(s, loc[1]-1))
-		return be
-	}
-	return nil
-}
-
-// readAttrs reads a block's plain attributes, and the workspace name or
-// prefix of a cloud or remote backend.
-func readAttrs(be *Backend, body string) {
-	if m := nestedName.FindStringSubmatch(body); m != nil {
-		for _, a := range attrLine.FindAllStringSubmatch(m[1], -1) {
-			if a[1] == "name" || a[1] == "prefix" || a[1] == "project" {
-				be.Config["workspaces"] = a[2]
+		if diags.HasErrors() || file == nil {
+			if bytes.Contains(src, []byte("backend")) || bytes.Contains(src, []byte("cloud")) {
+				found = &Backend{Type: "unknown", Config: map[string]string{}, Declared: true, Unreadable: filepath.Base(f) + " does not parse: " + diags.Error()}
 			}
-		}
-		body = strings.Replace(body, m[0], "", 1)
-	}
-	for _, m := range anyAttr.FindAllStringSubmatch(body, -1) {
-		v := m[2]
-		if strings.Contains(v, "${") || strings.Contains(v, "%{") || refInValue.MatchString(quotedStr.ReplaceAllString(v, `""`)) {
-			be.Unreadable = "the backend's " + m[1] + " is computed (" + clip(v) + ")"
 			continue
 		}
-		if plainStr.MatchString(v) {
-			be.Config[m[1]] = strings.Trim(v, `"`)
-		}
-	}
-}
-
-// jsonBackend reads terraform.backend.<type> or terraform.cloud from a
-// .tf.json file. terraform may be an object or a list of objects.
-func jsonBackend(src []byte) *Backend {
-	var doc map[string]json.RawMessage
-	if json.Unmarshal(src, &doc) != nil {
-		if strings.Contains(string(src), `"backend"`) || strings.Contains(string(src), `"cloud"`) {
-			return &Backend{Type: "unknown", Config: map[string]string{}, Declared: true, Unreadable: "a .tf.json file that names a backend does not parse"}
-		}
-		return nil
-	}
-	var blocks []map[string]json.RawMessage
-	if raw, ok := doc["terraform"]; ok {
-		var one map[string]json.RawMessage
-		if json.Unmarshal(raw, &one) == nil {
-			blocks = append(blocks, one)
-		} else {
-			json.Unmarshal(raw, &blocks)
-		}
-	}
-	var found *Backend
-	for _, t := range blocks {
-		if raw, ok := t["backend"]; ok {
-			var byType map[string]json.RawMessage
-			if json.Unmarshal(raw, &byType) != nil || len(byType) != 1 {
-				return &Backend{Type: "unknown", Config: map[string]string{}, Declared: true, Unreadable: "a .tf.json backend block applygate cannot read"}
+		top, _, _ := file.Body.PartialContent(terraformSchema)
+		for _, tb := range top.Blocks {
+			inner, _, _ := tb.Body.PartialContent(backendSchema)
+			for _, b := range inner.Blocks {
+				be := &Backend{Type: "cloud", Config: map[string]string{}, Declared: true}
+				if b.Type == "backend" {
+					be.Type = b.Labels[0]
+				}
+				readBody(be, b.Body)
+				found = be
 			}
-			for typ, body := range byType {
-				found = &Backend{Type: typ, Config: map[string]string{}, Declared: true}
-				jsonAttrs(found, body)
-			}
-		}
-		if raw, ok := t["cloud"]; ok {
-			found = &Backend{Type: "cloud", Config: map[string]string{}, Declared: true}
-			jsonAttrs(found, raw)
 		}
 	}
 	return found
 }
 
-func jsonAttrs(be *Backend, raw json.RawMessage) {
-	var attrs map[string]any
-	if json.Unmarshal(raw, &attrs) != nil {
-		// A list of blocks, or something else: not read.
-		be.Unreadable = "a .tf.json backend body applygate cannot read"
-		return
-	}
-	for k, v := range attrs {
-		switch x := v.(type) {
-		case string:
-			if strings.Contains(x, "${") || strings.Contains(x, "%{") {
-				be.Unreadable = "the backend's " + k + " is a template (" + clip(x) + ")"
-				continue
-			}
-			be.Config[k] = x
-		case bool, float64:
-			be.Config[k] = fmt.Sprint(x)
-		case map[string]any:
-			if k == "workspaces" {
-				for _, n := range []string{"name", "prefix", "project"} {
-					if s, ok := x[n].(string); ok {
-						be.Config["workspaces"] = s
-					}
+// readBody reads a backend block's literal attributes, and the workspace
+// name or prefix of a cloud or remote backend. A value that refers to
+// anything or is computed is not known.
+func readBody(be *Backend, body hcl.Body) {
+	nested, rest, _ := body.PartialContent(nestedSchema)
+	for _, nb := range nested.Blocks {
+		if nb.Type != "workspaces" {
+			continue
+		}
+		attrs, _ := nb.Body.JustAttributes()
+		for _, k := range []string{"name", "prefix", "project"} {
+			if a, ok := attrs[k]; ok {
+				if v, ok := literal(a.Expr); ok {
+					be.Config["workspaces"] = v
+				} else {
+					be.Unreadable = "the backend's workspaces." + k + " is computed"
 				}
 			}
-		default:
-			be.Unreadable = "the backend's " + k + " is not a plain value"
 		}
 	}
+	attrs, diags := attributesOf(rest)
+	if diags.HasErrors() {
+		be.Unreadable = "the backend block cannot be read: " + diags.Error()
+		return
+	}
+	for k, a := range attrs {
+		v, err := a.Expr.Value(emptyCtx)
+		switch {
+		case err.HasErrors() || !v.IsWhollyKnown():
+			be.Unreadable = "the backend's " + k + " is computed"
+		case v.Type() == cty.String:
+			be.Config[k] = v.AsString()
+		case v.Type() == cty.Bool:
+			be.Config[k] = strconv.FormatBool(v.True())
+		case v.Type() == cty.Number:
+			be.Config[k] = v.AsBigFloat().Text('f', -1)
+		}
+	}
+}
+
+// attributesOf returns a body's attributes. A native-syntax body is read
+// directly: its JustAttributes rejects nested blocks even when a schema has
+// set them aside.
+func attributesOf(body hcl.Body) (hcl.Attributes, hcl.Diagnostics) {
+	if sb, ok := body.(*hclsyntax.Body); ok {
+		out := make(hcl.Attributes, len(sb.Attributes))
+		for k, a := range sb.Attributes {
+			out[k] = a.AsHCLAttribute()
+		}
+		return out, nil
+	}
+	return body.JustAttributes()
+}
+
+func literal(e hcl.Expression) (string, bool) {
+	v, diags := e.Value(emptyCtx)
+	if diags.HasErrors() || !v.IsWhollyKnown() || v.Type() != cty.String {
+		return "", false
+	}
+	return v.AsString(), true
 }
 
 func clip(s string) string {
@@ -311,27 +366,60 @@ var (
 	roleARN     = regexp.MustCompile(`(?m)^\s*role_arn\s*=\s*"([^"]*)"`)
 )
 
-// ProviderAWS returns the literal profile and role_arn values of the aws
-// provider blocks in dir's .tf files, aliases included: each is a target
-// the configuration may change.
+// ProviderAWS returns the profile and role_arn values of the aws provider
+// blocks in dir's configuration files, aliases included: each is a target
+// the configuration may change. Only literal values are read.
 func ProviderAWS(dir string) (profiles, roles []string) {
-	files, _ := filepath.Glob(filepath.Join(dir, "*.tf"))
-	sort.Strings(files)
-	for _, f := range files {
+	tf, tofu := configFiles(dir)
+	seen := map[string]bool{}
+	for _, f := range append(tf, tofu...) {
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
 		src, err := os.ReadFile(f)
 		if err != nil {
 			continue
 		}
-		s := stripComments(string(src))
-		for _, loc := range providerAWS.FindAllStringIndex(s, -1) {
-			body := braceBody(s, loc[1]-1)
-			for _, m := range attrLine.FindAllStringSubmatch(body, -1) {
-				if m[1] == "profile" {
-					profiles = append(profiles, m[2])
+		var file *hcl.File
+		var diags hcl.Diagnostics
+		if strings.HasSuffix(f, ".json") {
+			file, diags = hcljson.Parse(src, f)
+		} else {
+			file, diags = hclsyntax.ParseConfig(src, f, hcl.Pos{Line: 1, Column: 1})
+		}
+		if diags.HasErrors() || file == nil {
+			continue
+		}
+		top, _, _ := file.Body.PartialContent(providerSchema)
+		for _, pb := range top.Blocks {
+			if pb.Labels[0] != "aws" {
+				continue
+			}
+			inner, rest, _ := pb.Body.PartialContent(nestedSchema)
+			attrs, _ := attributesOf(rest)
+			if a, ok := attrs["profile"]; ok {
+				if v, ok := literal(a.Expr); ok {
+					profiles = append(profiles, v)
 				}
 			}
-			for _, m := range roleARN.FindAllStringSubmatch(body, -1) {
-				roles = append(roles, m[1])
+			if a, ok := attrs["assume_role"]; ok {
+				if v, d := a.Expr.Value(emptyCtx); !d.HasErrors() && v.IsWhollyKnown() && (v.Type().IsObjectType() || v.Type().IsMapType()) && v.Type().HasAttribute("role_arn") {
+					if r := v.GetAttr("role_arn"); r.Type() == cty.String {
+						roles = append(roles, r.AsString())
+					}
+				}
+			}
+			for _, nb := range inner.Blocks {
+				if nb.Type != "assume_role" {
+					continue
+				}
+				na, _ := nb.Body.JustAttributes()
+				if a, ok := na["role_arn"]; ok {
+					if v, ok := literal(a.Expr); ok {
+						roles = append(roles, v)
+					}
+				}
 			}
 		}
 	}

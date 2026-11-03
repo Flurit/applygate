@@ -134,6 +134,8 @@
          "cases": [{"command": "terraform apply -auto-approve"}], "note": "without a plan_id the server plans and applies at once"},
         {"names": ["destroy_terraform"], "requires": ["plan_id"],
          "cases": [{"command": "terraform destroy"}]},
+        {"names": ["destroy_terraform"],
+         "cases": [{"command": "terraform destroy -auto-approve"}], "note": "without a plan_id the server destroys at once"},
         {"names": ["terraform_refresh"],
          "cases": [{"command": "terraform apply -refresh-only -auto-approve -target={target}"}]},
         {"names": ["terraform_import"], "requires": ["resource_type", "resource_id", "name"],

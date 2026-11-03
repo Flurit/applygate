@@ -18,7 +18,11 @@ and later refuse that mismatch themselves) and local state freshness, which
 are preflight checks in the hook path. Rules and tiers come from the
 repository's `.applygate.yaml` as everywhere else, and the tier from the same
 signals the hook reads: the path, the selected workspace and the backend. A
-replace is judged like a destroy, as in the hook. Pass `--tier protected`,
+replace is judged like a destroy, as in the hook. A runner has no trust store,
+so the repository config is not read and every directory is judged protected,
+and `plan-check` says so; pass `--trust-config` (the Action's `trust-config:
+true`) to read the checked-out config. On pull requests from forks that config
+is the contributor's. Pass `--tier protected`,
 `standard` or `disposable` to override; any other value is an error (exit 2),
 and so is JSON that is not a plan, such as state JSON.
 
@@ -57,7 +61,8 @@ while a team is still tuning its config. An error (unreadable plan, config
 error, missing binary) always fails the job: the gate fails closed.
 
 Inputs: `plan` (required), `tier`, `fail-on`, `working-directory`,
-`terraform` (`tofu` for OpenTofu), `version` (a release tag such as v0.5.0,
+`terraform` (`tofu` for OpenTofu), `trust-config` (read the repository's
+`.applygate.yaml`, default false), `version` (a release tag such as v0.5.0,
 the default; anything else is an error), and `binary` to skip the download and
 use a binary already on the runner. The release is installed with the
 `install.sh` that comes with the action, at the ref your workflow pins, and its
@@ -120,7 +125,8 @@ terraform {
 }
 ```
 
-This hook follows Terragrunt's documented `get_terraform_command()` and
+On a CI runner, add `--trust-config` to the `plan-check` line, since a
+runner has no trust store. This hook follows Terragrunt's documented `get_terraform_command()` and
 `get_terraform_cli_args()`; it has not been run against a live Terragrunt
 plan yet.
 

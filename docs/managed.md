@@ -16,7 +16,7 @@ It is supported on macOS and Linux. Windows is not supported yet, because applyg
 | Part | Path | What it does |
 |---|---|---|
 | Binary | `/usr/local/libexec/applygate/applygate` | a root-owned copy of the binary that ran the install; the managed hooks run it |
-| System config | `/etc/applygate/config.yaml` | read after the user config, so what it sets wins. The install writes `mode: enforce` and `approvals: false`, and keeps a file that is already there |
+| System config | `/etc/applygate/config.yaml` | read before the user config, which may then only tighten, like a repository config: loosening settings (`mode: observe`, `strict: false`, a looser `default_tier` or `on_error`, `aliases`, `wrappers`, `unknown_dir: session_root`, disposable or standard environments, the judge, `log_path`, the network checks) come from the system config only. The install writes `mode: enforce` and `approvals: false`, and keeps a file that is already there |
 | Trust store | `/etc/applygate/trusted.json` | the repository configs a person trusted with `sudo applygate trust`. Under a managed install it is the only store that counts |
 | Claude Code | `managed-settings.d/applygate.json` in `/Library/Application Support/ClaudeCode/` (macOS) or `/etc/claude-code/` (Linux) | the `PreToolUse` hook with matcher `*` and `onFailure: block`, `permissions.disableBypassPermissionsMode: "disable"`, and with `--exclusive` `allowManagedHooksOnly: true` |
 | Codex | `/etc/codex/requirements.toml` | not written: the install prints a snippet to add, since that file is the organisation's policy |
@@ -27,6 +27,7 @@ It is supported on macOS and Linux. Windows is not supported yet, because applyg
 
 ## What changes for the person
 
+- **Your user config may only tighten.** Settings in it that would loosen protection are ignored, and `applygate doctor` lists them; put them in `/etc/applygate/config.yaml` with `sudo` if you want them. This is what keeps the agent's user from loosening the guard through a file it owns.
 - **Repository configs need trusting again,** with `sudo applygate trust` in each repository. Configs trusted before the install are not carried over, because the user's store is one the agent's user could have written.
 - **Every change to a repository config** needs `sudo applygate trust` before it takes effect. Until then every directory it covers is protected.
 - **The system config** is edited with `sudo`. A system config that root does not own, or that others can write, is not read, and every directory is protected until it is fixed; `doctor` says why.
@@ -39,7 +40,7 @@ sudo applygate uninstall --managed           # removes the binary and the Claude
 sudo applygate uninstall --managed --purge   # also removes /etc/applygate
 ```
 
-Without `--purge`, `/etc/applygate` stays, and repository configs are still judged by its trust store. Remove applygate's hook from Codex's `requirements.toml` yourself.
+Without `--purge`, `/etc/applygate` stays: the system config keeps overriding your user config (which may then still only tighten), and repository configs are still judged by its trust store. Remove applygate's hook from Codex's `requirements.toml` yourself.
 
 ## What it does not cover
 

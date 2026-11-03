@@ -136,7 +136,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 		if rc == nil || rc.Change == nil || rc.Mode == tfjson.DataResourceMode {
 			continue
 		}
-		acts := rc.Change.Actions
+		acts := normalActions(rc.Change.Actions)
 		if acts.NoOp() || acts.Read() || len(acts) == 0 {
 			continue
 		}
@@ -286,7 +286,7 @@ func codeExecution(p *tfjson.Plan) []string {
 		if rc == nil || rc.Change == nil {
 			continue
 		}
-		acts := rc.Change.Actions
+		acts := normalActions(rc.Change.Actions)
 		if rc.Mode == tfjson.DataResourceMode {
 			if rc.Type == "external" && acts.Read() {
 				note(rc.Address + ": external data source runs a program")
@@ -410,7 +410,7 @@ func unknownWatched(rc *tfjson.ResourceChange, rules *Rules) []string {
 	}
 	attrs := append([]string(nil), exposureAttrs[rc.Type]...)
 	// Protection can only be removed from a resource that exists.
-	if acts := rc.Change.Actions; acts.Update() || acts.Replace() {
+	if acts := normalActions(rc.Change.Actions); acts.Update() || acts.Replace() {
 		for _, pr := range rules.Protection {
 			if contains(pr.Types, rc.Type) && (pr.When == "change" || pr.When == "both") {
 				attrs = append(attrs, pr.Attr)
@@ -447,6 +447,46 @@ func anyTrue(v any) bool {
 		}
 	}
 	return false
+}
+
+// normalActions reads an action list as Terraform means it, whatever its
+// form: show -json writes lower-case lists of known shapes, but a plan
+// handed to plan-check may not come from show. A list holding delete (in
+// any case) deletes, and replaces when it also creates; an action
+// applygate does not know counts as a delete.
+func normalActions(in tfjson.Actions) tfjson.Actions {
+	var create, del, update, read, noop, unknown bool
+	for _, a := range in {
+		switch tfjson.Action(strings.ToLower(string(a))) {
+		case tfjson.ActionCreate:
+			create = true
+		case tfjson.ActionDelete:
+			del = true
+		case tfjson.ActionUpdate:
+			update = true
+		case tfjson.ActionRead:
+			read = true
+		case tfjson.ActionNoop:
+			noop = true
+		default:
+			unknown = true
+		}
+	}
+	switch {
+	case (del || unknown) && create:
+		return tfjson.Actions{tfjson.ActionDelete, tfjson.ActionCreate}
+	case del || unknown:
+		return tfjson.Actions{tfjson.ActionDelete}
+	case create:
+		return tfjson.Actions{tfjson.ActionCreate}
+	case update:
+		return tfjson.Actions{tfjson.ActionUpdate}
+	case read:
+		return tfjson.Actions{tfjson.ActionRead}
+	case noop:
+		return tfjson.Actions{tfjson.ActionNoop}
+	}
+	return nil
 }
 
 func exposed(rc *tfjson.ResourceChange, after map[string]any, rules *Rules) []string {

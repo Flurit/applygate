@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -31,7 +32,14 @@ func cmdTrust(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	dir, _ = filepath.Abs(dir)
 	var pending []string
+	shown := map[string][]byte{}
 	for _, p := range config.RepoConfigs(dir) {
+		// Only a regular file can be trusted: a symlink would be read at
+		// one place and checked against another.
+		if fi, err := os.Lstat(p); err != nil || !fi.Mode().IsRegular() {
+			fmt.Fprintf(stderr, "applygate: %s is not a regular file (a symlink?); replace it with the file itself\n", p)
+			return 1
+		}
 		b, err := safefile.ReadFile(p)
 		if err != nil {
 			fmt.Fprintln(stderr, "applygate:", err)
@@ -42,7 +50,8 @@ func cmdTrust(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			continue
 		}
 		pending = append(pending, p)
-		fmt.Fprintf(stdout, "\n--- %s (not trusted) ---\n%s\n--- end of %s ---\n", p, printable(string(b)), p)
+		shown[p] = b
+		fmt.Fprintf(stdout, "\n--- %s (not trusted) ---\n%s\n--- end of %s ---\n", p, printableLines(string(b)), p)
 	}
 	if len(pending) == 0 {
 		if len(config.RepoConfigs(dir)) == 0 {
@@ -60,7 +69,16 @@ func cmdTrust(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "not trusted")
 		return 1
 	}
-	if err := config.Trust(pending); err != nil {
+	// Trust what was shown, and only if it is still what is on disk: a
+	// file changed while the person read it is not what they approved.
+	for _, p := range pending {
+		b, err := safefile.ReadFile(p)
+		if err != nil || !bytes.Equal(b, shown[p]) {
+			fmt.Fprintf(stderr, "applygate: %s changed while it was shown; nothing trusted. Run applygate trust again.\n", p)
+			return 1
+		}
+	}
+	if err := config.TrustContent(shown); err != nil {
 		fmt.Fprintln(stderr, "applygate:", err)
 		return 1
 	}

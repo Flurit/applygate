@@ -466,3 +466,16 @@ func TestExposureEquivalents(t *testing.T) {
 		})
 	}
 }
+
+// Action lists show -json never writes still count (finding 3T3).
+func TestNonCanonicalActions(t *testing.T) {
+	for _, acts := range [][]string{{"Delete"}, {"delete", "delete"}, {"update", "delete"}, {"forget"}} {
+		r, err := Evaluate(Input{PlanJSON: planJSON(rc{"aws_db_instance.db", "aws_db_instance", acts, map[string]any{"identifier": "db"}, nil}), MaxDestroy: -1}, DefaultRules())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Deletes)+len(r.Replaces) == 0 {
+			t.Errorf("%v: no delete or replace", acts)
+		}
+	}
+}

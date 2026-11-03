@@ -323,8 +323,12 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	tier := fs.String("tier", "", "tier to evaluate for (default: resolved from --cwd)")
 	cwd := fs.String("cwd", "", "directory for tier and backend resolution (default: current)")
+	trustConfig := fs.Bool("trust-config", false, "read the repository's .applygate.yaml without a trust record, for CI, where the checked-out commit is the reviewed config")
 	if err := fs.Parse(args); err != nil {
 		return 2
+	}
+	if *trustConfig {
+		config.TrustAll = true
 	}
 	if fs.NArg() != 1 {
 		fmt.Fprintln(stderr, "expected a plan JSON file (terraform show -json tfplan > plan.json)")
@@ -365,6 +369,11 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	v := policy.SavedPlanVerdict(res, t)
 	fmt.Fprintf(stdout, "tier %s: %s (%d changes, %d deletes, %d replaces)\n", t, v, res.Changes, len(res.Deletes), len(res.Replaces))
+	for _, u := range cfg.Untrusted {
+		// Say so: the config's environments and protected_resources are
+		// not applied, and every directory is protected.
+		fmt.Fprintf(stdout, "- note: %s is not trusted, so it was not read and the tier is protected; trust it with applygate trust, or in CI pass --trust-config\n", u)
+	}
 	for _, f := range res.Findings {
 		fmt.Fprintf(stdout, "- %s %s: %s\n", f.Severity, f.Rule, f.Message)
 		for _, e := range f.Evidence {

@@ -32,6 +32,13 @@ inputs:
     description: applygate release tag to install (ignored when binary is set).
     required: false
     default: v0.5.0
+  trust-config:
+    description: >-
+      Read the repository's .applygate.yaml without a trust record (true or false). A CI runner has no trust store, so without
+      this every directory is judged protected and the config's environments and protected_resources are not applied. The config
+      read is the one in the checked-out commit, so on pull requests from forks it is the contributor's.
+    required: false
+    default: "false"
   binary:
     description: Path to an existing applygate binary. Skips the release download; for this repository's own CI.
     required: false
@@ -91,5 +98,6 @@ runs:
         TIER: ${{ inputs.tier }}
         FAIL_ON: ${{ inputs.fail-on }}
         WORKDIR: ${{ inputs.working-directory }}
+        TRUST_CONFIG: ${{ inputs.trust-config }}
         TF_BIN: ${{ inputs.terraform }}
       run: "${{ github.action_path }}/scripts/ci-plan-check.sh"

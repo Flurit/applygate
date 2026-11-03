@@ -135,6 +135,8 @@ if need cosign; then
         --bundle "${tmp}/${bundle}" \
         --certificate-identity "$identity" \
         --certificate-oidc-issuer "$issuer" \
+        --certificate-github-workflow-repository "$REPO" \
+        --certificate-github-workflow-ref "refs/tags/${tag}" \
         "${tmp}/checksums.txt" >/dev/null 2>"${tmp}/cosign.err"; then
         log "signature verified: checksums.txt was signed by ${identity}"
     else

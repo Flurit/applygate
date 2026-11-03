@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Redaction gaps (finding 2D1).
@@ -46,5 +47,37 @@ func TestLogRound2(t *testing.T) {
 	entries, bad := Read(&buf)
 	if len(entries) != 2 || bad != 1 || entries[1].Verdict != "block" {
 		t.Fatalf("entries %d bad %d", len(entries), bad)
+	}
+}
+
+// A huge command is cut before it is redacted and logged, so writing the
+// entry stays fast and small (finding 3D1).
+func TestHugeCommandIsCut(t *testing.T) {
+	e := Entry{Command: "terraform destroy -auto-approve; : " + strings.Repeat("mysql -pxyz ", 600000)}
+	start := time.Now()
+	redactEntry(&e)
+	// The time bound is loose: CI runs with the race detector, which makes
+	// the regular expressions many times slower. Without the cut this input
+	// takes minutes.
+	if len(e.Command) > 2*maxField || time.Since(start) > 20*time.Second {
+		t.Fatalf("command %d bytes, %s", len(e.Command), time.Since(start))
+	}
+}
+
+// More secret-bearing forms (finding 3D3).
+func TestRedactRound3(t *testing.T) {
+	for _, c := range []struct{ in, secret string }{
+		{`aws ssm put-parameter --name /db/pw --type SecureString --value hunter2xyz`, "hunter2xyz"},
+		{`kubectl create secret generic db --from-literal=password=hunter2xyz`, "hunter2xyz"},
+		{`vault kv put secret/db user=admin password=hunter2xyz`, "hunter2xyz"},
+		{`gh secret set DEPLOY_KEY --body "hunter2 xyz"`, "hunter2"},
+		{`echo -n hunter2xyz | docker secret create db_pw -`, "hunter2xyz"},
+		{`az login -u me@x.io -p hunter2xyz`, "hunter2xyz"},
+		{`curl -H 'Cookie: session=abc123def' https://x`, "abc123def"},
+		{`curl -d '{}' https://hooks.slack.com/services/T000/B000/XXXXXXXXXXXX`, "XXXXXXXXXXXX"},
+	} {
+		if out := Redact(c.in); strings.Contains(out, c.secret) {
+			t.Errorf("%q -> %q still holds %q", c.in, out, c.secret)
+		}
 	}
 }

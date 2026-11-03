@@ -44,8 +44,43 @@ func TestSystemConfigWins(t *testing.T) {
 	if cfg.Mode != "enforce" || cfg.Approvals == nil || *cfg.Approvals {
 		t.Fatalf("system config did not win: mode %s approvals %v", cfg.Mode, cfg.Approvals)
 	}
-	if cfg.Judge.Enabled == nil || !*cfg.Judge.Enabled || cfg.Judge.Backend != "command" {
-		t.Fatalf("a system config without judge settings dropped the user's: %+v", cfg.Judge)
+	// The judge sends calls off the machine with a command the user names:
+	// under a managed install that is the system config's choice.
+	if cfg.Judge.Enabled != nil && *cfg.Judge.Enabled {
+		t.Fatalf("the user config turned the judge on under a managed install: %+v", cfg.Judge)
+	}
+}
+
+// Under a managed install the user config may only tighten (finding 3S2).
+func TestManagedUserConfigOnlyTightens(t *testing.T) {
+	managedDirs(t, false)
+	os.WriteFile(SystemPath(), []byte("version: 1\nmode: enforce\napprovals: false\n"), 0o644)
+	dir := t.TempDir()
+	for _, user := range []string{
+		"version: 1\nstrict: false\ndefault_tier: disposable\n",
+		"version: 1\nenvironments:\n  - {name: all, tier: disposable, match: {paths: [\"**\"]}}\n",
+		"version: 1\naliases: {terraform: ls}\n",
+		"version: 1\non_error: allow\nunknown_dir: session_root\n",
+		"version: 1\nwrappers:\n  - {name: company-run, skip: 1}\n",
+	} {
+		p := filepath.Join(t.TempDir(), "config.yaml")
+		os.WriteFile(p, []byte(user), 0o600)
+		cfg, err := Load(p, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r := cfg.Resolve(Signals{Dir: dir}); r.Tier != Protected || cfg.Aliases["terraform"] != "" || cfg.OnError == "allow" || len(cfg.Wrappers) > 0 {
+			t.Errorf("user config %q loosened: tier %s aliases %v on_error %s wrappers %v", user, r.Tier, cfg.Aliases, cfg.OnError, cfg.Wrappers)
+		}
+		if len(cfg.Deprecations) == 0 {
+			t.Errorf("user config %q: no note says what was ignored", user)
+		}
+	}
+	// Tightening still works: a protected environment.
+	p := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(p, []byte("version: 1\nenvironments:\n  - {name: core, tier: protected, match: {paths: [\"**/core/**\"]}}\n"), 0o600)
+	if cfg, _ := Load(p, ""); len(cfg.Environments) != 1 {
+		t.Fatalf("a protected environment from the user config was dropped")
 	}
 }
 

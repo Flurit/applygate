@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -60,6 +61,14 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 	if !args[0].Resolved {
 		record()
 		return
+	}
+	if p, ok := st.hashed[args[0].Text]; ok && !strings.Contains(args[0].Text, "/") {
+		// hash -p PATH NAME: NAME runs PATH.
+		args = append([]Word{p}, args[1:]...)
+		if !p.Resolved {
+			record()
+			return
+		}
 	}
 	name := args[0].Text
 	bn := base(name)
@@ -157,6 +166,15 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			st.dir = a.opt.Env["HOME"]
 		case target == "-":
 			st.dir = ""
+		case strings.HasPrefix(target, "~") && !strings.HasPrefix(target, "~/"):
+			// ~- is OLDPWD, ~+ is PWD, ~user another home, ~N the stack.
+			st.dir = ""
+		case !filepath.IsAbs(target) && !dotRelative(target) && a.cdSearches(st):
+			// With CDPATH set, or cdable_vars on, a bare name may go to a
+			// directory elsewhere, or to a variable's value. A CDPATH from
+			// the person's own environment is followed as bash does;
+			// otherwise the directory is unknown.
+			st.dir = a.cdPathDir(st, target)
 		case st.dir == "" && !filepath.IsAbs(target):
 		default:
 			st.dir = a.abs(st, target)
@@ -222,6 +240,47 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		}
 		if st.params != nil {
 			st.params = st.params[min(n, len(st.params)):]
+		}
+		return
+	case "hash":
+		// hash -p PATH NAME... makes each NAME run PATH; hash -r forgets.
+		for i := 0; i < len(rest); i++ {
+			switch t := rest[i].Text; {
+			case t == "-r":
+				st.hashed = nil
+			case t == "-p" && i+1 < len(rest):
+				p := rest[i+1]
+				i++
+				for _, n := range rest[i+1:] {
+					if st.hashed == nil {
+						st.hashed = map[string]Word{}
+					}
+					if !n.Resolved {
+						// Any name may now run p.
+						a.problem(st, via, "hash -p "+joinWords(rest), "hash -p binds a name that cannot be resolved statically")
+						continue
+					}
+					st.hashed[n.Text] = p
+				}
+				return
+			case !rest[i].Resolved:
+				a.problem(st, via, "hash "+joinWords(rest), "hash with an argument that cannot be resolved statically")
+				return
+			}
+		}
+		return
+	case "shopt":
+		// shopt -s cdable_vars: cd NAME may go to $NAME.
+		set := false
+		for _, w := range rest {
+			switch {
+			case w.Text == "-s":
+				set = true
+			case w.Text == "-u":
+				set = false
+			case !w.Resolved || set && w.Text == "cdable_vars":
+				st.cdableVars = true
+			}
 		}
 		return
 	case "set":
@@ -585,10 +644,16 @@ func (a *analyzer) env(rest []Word, redirs []Redir, cmdSt, st *state, via []stri
 func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string, depth int, in stdin) {
 	child := cmdSt.childState()
 	var hasC bool
+	var rcfiles []Word
 	i := 0
 	for i < len(rest) {
 		t := rest[i].Text
-		if t == "-o" || t == "+o" || t == "-O" || t == "+O" || t == "--rcfile" || t == "--init-file" {
+		if (t == "--rcfile" || t == "--init-file") && i+1 < len(rest) {
+			rcfiles = append(rcfiles, rest[i+1])
+			i += 2
+			continue
+		}
+		if t == "-o" || t == "+o" || t == "-O" || t == "+O" {
 			i += 2
 			continue
 		}
@@ -610,6 +675,7 @@ func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string,
 		break
 	}
 	rest = rest[i:]
+	a.startupFiles(bn, rcfiles, cmdSt, child, st, via, depth)
 	label := bn
 	switch {
 	case hasC:
@@ -632,6 +698,12 @@ func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string,
 			return
 		}
 		b, err := a.read(st, rest[0].Text)
+		if errorsIsWritten(err) {
+			// Written in this command: what it does, and where (it may cd
+			// anywhere), is unknown.
+			a.unbounded(st, via, bn+" "+rest[0].Text, "script cannot be read: "+err.Error())
+			return
+		}
 		if err != nil {
 			a.problem(st, via, bn+" "+rest[0].Text, "script cannot be read: "+err.Error())
 			return
@@ -671,14 +743,99 @@ func isBinary(b []byte) bool {
 	return bytes.IndexByte(head, 0) >= 0
 }
 
+// dotRelative reports whether a cd target starts with . or .., which cd
+// takes as it is: CDPATH and cdable_vars do not apply.
+func dotRelative(t string) bool {
+	return t == "." || t == ".." || strings.HasPrefix(t, "./") || strings.HasPrefix(t, "../")
+}
+
+// cdSearches reports whether cd may look a bare name up somewhere else:
+// CDPATH is set (exported or not, with any value but empty) or cdable_vars
+// is on.
+func (a *analyzer) cdSearches(st *state) bool {
+	if st.cdableVars {
+		return true
+	}
+	if v, ok := st.vars["CDPATH"]; ok {
+		return v.text != "" || !v.ok
+	}
+	_, inEnv := a.opt.Env["CDPATH"]
+	return inEnv && a.opt.Env["CDPATH"] != ""
+}
+
+// cdPathDir is where cd NAME goes with the hook environment's CDPATH: the
+// first CDPATH entry holding NAME (an empty entry or . is the current
+// directory), else NAME under the current directory. It is "" (unknown)
+// when the command set CDPATH or cdable_vars itself, or wrote files
+// before the cd.
+func (a *analyzer) cdPathDir(st *state, target string) string {
+	v, set := st.vars["CDPATH"]
+	if st.cdableVars || set && (!v.ok || v.text != a.opt.Env["CDPATH"]) || st.dir == "" || len(a.written) > 0 || a.writtenUnknown {
+		return ""
+	}
+	for _, e := range strings.Split(a.opt.Env["CDPATH"], ":") {
+		base := st.dir
+		if e != "" && e != "." {
+			if !filepath.IsAbs(e) {
+				return ""
+			}
+			base = e
+		}
+		if fi, err := os.Stat(filepath.Join(base, target)); err == nil && fi.IsDir() {
+			return filepath.Join(base, target)
+		}
+	}
+	return a.abs(st, target)
+}
+
+// startupFiles runs what a shell reads before its command, in the shell's
+// own state: BASH_ENV (bash without a terminal, bash -c included), ENV
+// (sh, dash, ksh), ZDOTDIR's start-up files (zsh), and --rcfile or
+// --init-file. A file that cannot be named or read exactly leaves what the
+// shell runs unknown.
+func (a *analyzer) startupFiles(bn string, rcfiles []Word, cmdSt, child, st *state, via []string, depth int) {
+	var files []Word
+	for _, k := range []string{"BASH_ENV", "ENV"} {
+		if v, ok := cmdSt.vars[k]; ok && cmdSt.exported[k] && (v.text != "" || !v.ok) {
+			files = append(files, Word{Text: v.text, Resolved: v.ok, Prefix: v.text})
+		}
+	}
+	if v, ok := cmdSt.vars["ZDOTDIR"]; ok && cmdSt.exported["ZDOTDIR"] && strings.HasPrefix(strings.TrimRight(bn, "0123456789.-"), "zsh") {
+		if !v.ok {
+			files = append(files, Word{})
+		} else {
+			for _, f := range []string{".zshenv", ".zprofile", ".zshrc", ".zlogin"} {
+				files = append(files, Word{Text: filepath.Join(v.text, f), Resolved: true, Prefix: filepath.Join(v.text, f)})
+			}
+		}
+	}
+	files = append(files, rcfiles...)
+	for _, f := range files {
+		if !f.Resolved {
+			a.unbounded(st, via, bn+" start-up file "+f.Text, bn+" reads a start-up file that cannot be resolved statically")
+			continue
+		}
+		b, err := a.read(child, f.Text)
+		switch {
+		case errorsIsWritten(err):
+			a.unbounded(st, via, bn+" start-up file "+f.Text, bn+" reads the start-up file "+f.Text+", "+err.Error())
+		case err != nil:
+			// A start-up file that is not there is skipped by the shell.
+		default:
+			a.source(string(b), child, append(via, bn+" start-up file "+f.Text), depth+1)
+		}
+	}
+}
+
 var shebangShell = regexp.MustCompile(`^#!\s*(\S*/)?(env\s+)?(ba|z|da|k|mk|a)?sh\b`)
 
 func (a *analyzer) script(name string, rest []Word, cmdSt, st *state, via []string, depth int) bool {
 	b, err := a.read(st, name)
 	if errorsIsWritten(err) {
 		// Still recorded: the classifier judges the program by its
-		// arguments too (a renamed copy of applygate).
-		a.problem(st, via, name, "script cannot be read: "+err.Error())
+		// arguments too (a renamed copy of applygate). What it does, and
+		// where, is unknown.
+		a.unbounded(st, via, name, "script cannot be read: "+err.Error())
 		return false
 	}
 	if err != nil {
@@ -1156,11 +1313,62 @@ func (a *analyzer) parallel(rest []Word, redirs []Redir, cmdSt, st *state, via [
 	}
 }
 
-// concatRe matches a string-literal concatenation operator sitting between two
-// quotes, e.g. `'+'`, `" . "`, "`+`". Collapsing it rejoins split literals.
-var concatRe = regexp.MustCompile("['\"`]\\s*[+.]\\s*['\"`]")
+// stringLit matches a single-line string literal of the common languages.
+var stringLit = regexp.MustCompile("'([^'\\\\\\n]*)'|\"([^\"\\\\\\n]*)\"|`([^`]*)`")
 
-func dejoinLiterals(s string) string { return concatRe.ReplaceAllString(s, "") }
+// litGap is what may sit between two literals that form one string: a
+// concatenation operator (+ or .), nothing (Python's implicit
+// concatenation), or the commas and parentheses of a path join.
+var litGap = regexp.MustCompile(`^[\s+.,()]*$`)
+
+// dejoinLiterals returns the strings that runs of adjacent literals build:
+// '.'+'applygate.yaml', '~/' '.' 'claude' (implicit concatenation), and
+// os.path.join(home, '.claude', 'settings.json'). Literals joined by an
+// operator or nothing are concatenated; at a comma the run is written once
+// with a space ('ter'+'raform', 'destroy') and once with a "/" (a path
+// join). The result is s followed by those strings, one per line.
+func dejoinLiterals(s string) string {
+	locs := stringLit.FindAllStringSubmatchIndex(s, -1)
+	var out []string
+	var spaced, slashed strings.Builder
+	n := 0
+	flush := func() {
+		if n > 1 {
+			out = append(out, spaced.String(), slashed.String())
+		}
+		spaced.Reset()
+		slashed.Reset()
+		n = 0
+	}
+	end := -1
+	for _, m := range locs {
+		lit := ""
+		for g := 2; g < len(m); g += 2 {
+			if m[g] >= 0 {
+				lit = s[m[g]:m[g+1]]
+			}
+		}
+		if end >= 0 {
+			gap := s[end:m[0]]
+			switch {
+			case !litGap.MatchString(gap):
+				flush()
+			case strings.ContainsAny(gap, ",()"):
+				spaced.WriteByte(' ')
+				slashed.WriteByte('/')
+			}
+		}
+		spaced.WriteString(lit)
+		slashed.WriteString(lit)
+		n++
+		end = m[1]
+	}
+	flush()
+	if len(out) == 0 {
+		return s
+	}
+	return s + "\n" + strings.Join(out, "\n")
+}
 
 func (a *analyzer) reparse(r []Word, st *state, via []string, label string, depth int) {
 	a.reparseIn(r, st.childState(), via, label, depth)
