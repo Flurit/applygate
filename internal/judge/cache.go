@@ -10,9 +10,11 @@ import (
 	"github.com/Flurit/applygate/internal/policy"
 )
 
-// Cache keeps recent verdicts so a call the agent repeats does not pay the
-// model again. Only answers are kept, never errors. Concurrent hooks may
-// race; the last writer wins, which only costs a repeated model call.
+// Cache keeps recent escalations (ask and block) so a call the agent
+// repeats does not pay the model again. An allow is never kept: the cache
+// lives where the agent can write, so an entry can only make a verdict
+// stricter, never skip the judge. Errors are not kept either. Concurrent
+// hooks may race; the last writer wins, which only costs a repeated call.
 type Cache struct {
 	Path string
 	TTL  time.Duration
@@ -43,7 +45,9 @@ func (c Cache) Get(key string, now time.Time) (Result, bool) {
 		return Result{}, false
 	}
 	e, ok := c.load()[key]
-	if !ok || now.Sub(e.At) > c.TTL || e.Verdict == "" {
+	// An entry dated in the future (beyond a minute of clock skew) was not
+	// written by this machine's hook.
+	if !ok || now.Sub(e.At) > c.TTL || e.At.After(now.Add(time.Minute)) || e.Verdict == "" || e.Verdict == policy.Allow {
 		return Result{}, false
 	}
 	return Result{Verdict: e.Verdict, Reason: e.Reason, Model: e.Model, Cached: true}, true
@@ -51,12 +55,12 @@ func (c Cache) Get(key string, now time.Time) (Result, bool) {
 
 // Put stores a verdict, dropping expired entries and the oldest beyond Max.
 func (c Cache) Put(key string, r Result, now time.Time) error {
-	if c.Path == "" || r.Err != "" || r.Verdict == "" {
+	if c.Path == "" || r.Err != "" || r.Verdict == "" || r.Verdict == policy.Allow {
 		return nil
 	}
 	m := c.load()
 	for k, e := range m {
-		if now.Sub(e.At) > c.TTL {
+		if now.Sub(e.At) > c.TTL || e.At.After(now.Add(time.Minute)) || e.Verdict == policy.Allow {
 			delete(m, k)
 		}
 	}

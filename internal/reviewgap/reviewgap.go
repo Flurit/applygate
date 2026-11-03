@@ -15,19 +15,7 @@ import (
 
 // Open lists the findings not fixed yet, by review ID.
 var Open = map[string]string{
-	"A13": "the judge cache can be pre-filled with allow entries",
-	"F1":  "the judge filter's local programs can run arbitrary commands",
-	"F2":  "shell writes skip the judge and test runners run them",
-	"F3":  "the judge filter's outside() ignores cd",
-	"F4":  "oversized input, refusals and unreadable answers leave the rule decision",
-	"F5":  "create_run destroy flags other than literal true are judged as plan",
-	"F6":  "EKS and GKE translations drop the named cluster",
-	"F7":  "infrastructure credential reads skip the judge",
-	"F8":  "the judge sees no content for Copilot, OpenCode and Cline edits",
-	"F9":  "call_aws input that is not an aws command is allowed",
-	"G1":  "redaction misses common secret forms",
-	"G2":  "telemetry forwards raw strings from the log",
-	"I2":  "ci-plan-check.sh outputs can be injected through the plan text",
+	"I2": "ci-plan-check.sh outputs can be injected through the plan text",
 }
 
 // Check reports one test of finding id. ok is whether the behaviour the

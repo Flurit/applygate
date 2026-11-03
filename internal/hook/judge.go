@@ -47,8 +47,11 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 	if opt.JudgeCache == "-" {
 		cache.Path = ""
 	}
-	key := judge.Key(j.Name(), in)
+	key := judge.Key(judge.Identity(j), in)
 	r, hit := cache.Get(key, now())
+	if n := max(len(in.Command), len(in.Args)); n > judge.MaxCall {
+		r, hit = judge.Result{Model: j.Name(), Err: fmt.Sprintf("the call is %d bytes, more than the %d the judge is sent", n, judge.MaxCall), Unjudgeable: true}, true
+	}
 	if !hit {
 		ctx, cancel := context.WithTimeout(ctx, cfg.JudgeTimeout())
 		r = j.Judge(ctx, in)
@@ -59,6 +62,13 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 	}
 	rec := &decisionlog.Judge{Model: j.Name(), Verdict: r.Verdict, Reason: r.Reason, MS: r.APIms, Cached: r.Cached, Error: r.Err}
 	merged := judge.Merge(d.Verdict, r)
+	if r.Unjudgeable && in.Tier != config.Disposable {
+		// The call kept the judge from answering (too large, refused, no
+		// verdict in the answer): outside a disposable tier that is an ask,
+		// so a call cannot get past the judge by breaking it.
+		merged = policy.Max(merged, policy.Ask)
+		r.Reason = "it could not judge this call (" + r.Err + "), and outside a disposable environment that is an ask."
+	}
 	if merged == d.Verdict {
 		return d, rec
 	}

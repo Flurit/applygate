@@ -209,8 +209,8 @@ func TestAfterDecisionSendsAtMostOnceADayAndNeverFails(t *testing.T) {
 	if _, err := TurnOn(c.srv.URL); err != nil {
 		t.Fatal(err)
 	}
-	AfterDecision(trialLog, "0.3.0", nil)
-	AfterDecision(trialLog, "0.3.0", nil)
+	AfterDecision(trialLog, "0.3.0", nil, time.Time{})
+	AfterDecision(trialLog, "0.3.0", nil, time.Time{})
 	if c.n.Load() != 1 {
 		t.Fatalf("%d requests; the second call is inside the interval", c.n.Load())
 	}
@@ -220,7 +220,7 @@ func TestAfterDecisionSendsAtMostOnceADayAndNeverFails(t *testing.T) {
 	if err := Save(s); err != nil {
 		t.Fatal(err)
 	}
-	AfterDecision(trialLog, "0.3.0", nil)
+	AfterDecision(trialLog, "0.3.0", nil, time.Time{})
 	if c.n.Load() != 2 {
 		t.Fatalf("%d requests; after the interval it sends again", c.n.Load())
 	}
@@ -228,7 +228,7 @@ func TestAfterDecisionSendsAtMostOnceADayAndNeverFails(t *testing.T) {
 	if _, err := TurnOff(); err != nil {
 		t.Fatal(err)
 	}
-	AfterDecision("/nonexistent/log", "0.3.0", nil)
+	AfterDecision("/nonexistent/log", "0.3.0", nil, time.Time{})
 	if c.n.Load() != 2 {
 		t.Fatal("sent while off")
 	}

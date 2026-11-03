@@ -40,6 +40,13 @@ From each server's source code at the commit named in `rules.json`, **not tested
 | googleapis gcloud-mcp | `run_gcloud_command`, `delete_bucket` | `gcloud …` |
 | shell command servers (Desktop Commander, mcp-server-commands, mcp-shell-server, cli-mcp-server, wcgw, Serena, iterm-mcp) | `start_process`, `interact_with_process`, `run_process`, `run_command`, `shell_execute`, `BashCommand`, `execute_shell_command`, `write_to_terminal` | the shell command, or the text typed into a running shell |
 
+How arguments are read:
+- **A flag argument** (`is_destroy`, `auto_apply`) is true when it is present and not a falsy value (`false`, `0`, `""`, `no`, `off`), as the servers read it.
+- **An argument the cases look into** (`params`) must be an object; sent as a JSON string, the call is asked about.
+- **The cluster a call names** (`cluster_name` for the EKS and GKE servers) goes into the translated `kubectl` command as `--cluster`, so it picks the tier, and Flux159's `flags` become command-line flags.
+- **A server that runs one program** (`call_aws` runs `aws`): a command that starts with another program is asked about, and a JSON-array string is read as the list it holds.
+- **A bare shell operator** (`&&`, `;`, `>`) in an argv array is asked about, since a server that builds a command line from argv may hand it to a shell.
+
 `helm`, `az` and `gcloud` commands are classified by verb, in MCP calls and in shell commands alike: `helm uninstall` and any `az`/`gcloud` command whose verb is `delete` or `purge` (or ends in `-delete`) is cloud-destructive; `list`, `show`, `describe`, `get` and `status` are read-only; anything else changes cloud resources.
 
 ## Not covered

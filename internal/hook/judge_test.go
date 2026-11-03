@@ -216,3 +216,27 @@ func TestJudgeObserveMode(t *testing.T) {
 		t.Fatalf("observe entry %+v", e)
 	}
 }
+
+// hangingJudge answers only when its context ends.
+type hangingJudge struct{}
+
+func (hangingJudge) Name() string { return "hanging" }
+func (hangingJudge) Judge(ctx context.Context, _ judge.Input) judge.Result {
+	<-ctx.Done()
+	return judge.Result{Model: "hanging", Err: ctx.Err().Error()}
+}
+
+// A judge that never answers cannot hold the hook past its budget, less the
+// reserve kept for the judge's process to exit and the log (finding F12).
+func TestHangingJudgeStaysInsideTheBudget(t *testing.T) {
+	root, opt := judgeSetup(t, "enforce", "version: 1\njudge:\n  enabled: true\n  timeout: 60s\n")
+	opt.Budget, opt.Judge, opt.LogPath = 4*time.Second, hangingJudge{}, filepath.Join(t.TempDir(), "log.jsonl")
+	start := time.Now()
+	o := Run(Claude{}, strings.NewReader(event("Bash", filepath.Join(root, "prod"), map[string]any{"command": "pulumi destroy --yes"})), opt)
+	if took := time.Since(start); took > opt.Budget-judgeReserve+time.Second {
+		t.Fatalf("run took %s with a budget of %s", took, opt.Budget)
+	}
+	if !o.Deadline.Equal(start.Add(opt.Budget)) && o.Deadline.Sub(start.Add(opt.Budget)).Abs() > 50*time.Millisecond {
+		t.Errorf("deadline %s not the budget's end", o.Deadline)
+	}
+}

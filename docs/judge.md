@@ -9,7 +9,7 @@
 
 **What the judge adds.** The model judge is an optional second look at exactly those calls. When you turn it on and choose a model, applygate sends a call the rules let through without recognizing anything to that model. The model answers allow, ask or block, and the call gets the stricter of the rule verdict and the model's.
 
-- **Escalate only.** The judge can add a prompt or a block, never remove one. A call the rules stop stays stopped whatever the model says, and an error, a timeout or an answer the model was talked into by text inside the call leaves the rule decision as it is.
+- **Escalate only.** The judge can add a prompt or a block, never remove one. A call the rules stop stays stopped whatever the model says, and an answer the model was talked into by text inside the call leaves the rule decision as it is. So does a network error or a timeout. A call that keeps the judge from answering is different: one too large to send (over 16,000 bytes of command or MCP arguments), one the model refuses, or one whose answer holds no verdict is asked about in protected and standard environments, so a call cannot get past the judge by breaking it.
 - **Off by default, no default model, user config only.** You choose the provider and model; applygate recommends none. The call leaves the machine, so only the user config can turn the judge on or configure it, and a repository config can only turn it off (`judge: {enabled: false}`).
 - **Your own key or your own program.** applygate talks to any OpenAI-compatible endpoint with a key from your environment, or runs a program you name. It ships no model, no key and no account.
 
@@ -41,7 +41,7 @@ Secrets are redacted first, the same way as in the decision log: AWS keys, `pass
 
 ## Choosing a judge
 
-Every option below was measured the same way: on the fifth held-out set (143 calls the rules let through, written independently and scored once per judge), with applygate's prompt and filter. The full method is under [How well it works](#how-well-it-works).
+Every option below was measured the same way: on the fifth held-out set (143 calls the rules let through, written independently and scored once per judge), with applygate's prompt and the filter of that time. The filter now sends more calls to the judge (see Limits), which these numbers do not reflect; they have not been measured again. The full method is under [How well it works](#how-well-it-works).
 
 | Option | Should be stopped: caught (72) | Should go through: escalated (71) | Model time p95 | Cost per judged call |
 |---|---|---|---|---|
@@ -192,7 +192,7 @@ judge:
 The command backend runs any program you name. That is how the `claude` CLI, the decision models, another gateway or your own logic plug in.
 - **Input:** one request as JSON on stdin, `{"system", "prompt", "schema", "call"}`.
 - **Output:** `{"verdict": "allow"|"ask"|"block", "reason": "..."}` on stdout.
-- **Anything else** counts as an error, which leaves the rule decision. That includes a non-zero exit, unreadable output or running past the timeout.
+- **Anything else** counts as an error. A non-zero exit or running past the timeout leaves the rule decision. Output without a verdict is asked about outside a disposable environment. When the output holds several JSON objects, the last one with a `verdict` is the answer.
 
 The scripts in [`examples/judge`](../examples/judge) take `APPLYGATE_JUDGE_MODEL` to choose another model.
 
@@ -207,7 +207,7 @@ The scripts in [`examples/judge`](../examples/judge) take `APPLYGATE_JUDGE_MODEL
 | `api_key_env` | none (no key sent) | Environment variable holding the key. |
 | `reasoning_effort` | not sent | Passed through as `reasoning_effort`. |
 | `command` | none; required for `command` | Program and arguments. |
-| `timeout` | `10s` | Per call. The hook also ends the judge 3 seconds after its own decision deadline, so the Claude Code plugin's 30-second hook timeout is never reached. |
+| `timeout` | `10s` | Per call. The hook's whole run, the rules, the judge, approvals, the log and telemetry included, has 29 seconds, one under the Claude Code plugin's 30-second hook timeout. The judge gets what is left of that, less 3 seconds for its process to exit and for the log; telemetry gets what is left after the verdict, or nothing. |
 | `skip_mcp` | none | MCP tool name globs never sent, for tools you know only read, for example `["mcp__playwright__*"]`. |
 
 ## What the agent and the person see
@@ -223,7 +223,7 @@ applygate: ASK.
 - **Prompts and blocks:** asks become blocks on agents that cannot show a prompt, and observe mode allows and records, exactly as for rule verdicts.
 - **Approvals:** a person can approve a judge's block once with `applygate approve`, like an ask. It is a model's opinion, not a rule. A rule's block still can never be approved.
 - **The log:** every judge call is recorded in the decision log under `judge` (model, verdict, reason, time, whether it came from the cache, error).
-- **The cache:** answers are cached for 24 hours in `judge-cache.json` next to the log, which is a guard path, so a repeated call does not pay the model again.
+- **The cache:** asks and blocks are cached for 24 hours in `judge-cache.json` next to the log, which is a guard path, so a repeated call does not pay the model again. An allow is never cached, so a pre-filled cache cannot let a call skip the judge, and an entry dated in the future is ignored. Entries are keyed on the endpoint and model, or the whole command line of a command backend. `applygate check` keeps its own cache, `judge-cache-check.json`.
 - **`applygate check`** runs the judge when it is on (`--no-judge` skips it), so you can try a command before an agent does.
 - **`applygate doctor`** reports the judge's model, endpoint and timeout, or why it cannot be asked (for example a missing key), without calling the model.
 
@@ -281,7 +281,17 @@ With Anthropic's endpoint the hook took 1.2 to 3.0 s per judged call, against 3.
 
 - **A model can be wrong.** It missed up to three calls of each held-out set, mostly writes whose effect depends on context it cannot see, and it can be fooled in ways the sets did not try. The rules stay the guarantee; the judge is extra coverage.
 - **Some calls skip the judge.** The filter keeps local work away from the model: reads inside the working tree, builds, tests, local git. So a destructive call that looks like local work is not judged, for example `git log -p` printing a key from history.
+  - **Not local:**
+    - a program started through its own options (`git -c`, `git config` that sets a value, `tar --to-command`, `sort --compress-program`, `rg --pre`, `go test -exec`, `go build -toolexec`, `go env -w`);
+    - `mvn`, `gradle`, `dotnet` and `npm init`;
+    - a forced `git push`, also in clustered flags (`-uf`);
+    - a file the shell writes outside `/tmp` (a redirect, `tee`, `sed -i`), because the next step may run it;
+    - a path outside the session's working directory once `cd` is followed;
+    - reads of Terraform state, `.tfvars`, `.vault-token`, `.my.cnf`, `.s3cfg`, `.boto` and CLI credential directories.
+
+    These go to the judge.
+  - **The cost:** on the agent trial's 162 calls, 111 go to the judge, against 102 before.
 - **Latency.** A judged call waits for the model. With Claude Haiku 5.5 that was 1.5 to 1.8 s at the median and 2.6 to 3.6 s at p95 in the measurements; with Gemini 3.8 Flash it was 5.1 s and 9.4 s; with Jev, 0.46 s and 0.56 s; with `gpt-6-luna`, 0.40 s and 0.74 s. A cached answer costs nothing.
-- **A timeout means no judgement.** A call that runs past `timeout` is left to the rules, which allow it. Set the timeout above your endpoint's slowest answers; the judge's limit is 25 seconds, inside the plugin's 30-second hook limit.
+- **A timeout means no judgement.** A call that runs past `timeout` is left to the rules, which allow it. Set the timeout above your endpoint's slowest answers. The judge never runs past 26 seconds after the hook started, whatever `timeout` says (the budget above).
 - **Your data goes to the endpoint you configure.** Use a local server or a provider whose data terms you accept. Turn it off per repository with `judge: {enabled: false}`.
 - **Workspace keys.** Anthropic's compatible endpoint needs an `anthropic-workspace-id` header for keys not scoped to a workspace, which applygate does not send. Use a workspace-scoped key.

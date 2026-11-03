@@ -84,24 +84,39 @@ func (o OpenAI) Judge(ctx context.Context, in Input) Result {
 			msg = out.Error.Message
 		}
 		r.Err = fmt.Sprintf("openai: %s: %s", resp.Status, msg)
+		// A request the endpoint rejects as malformed or too large failed
+		// because of the call; auth, quota and server errors did not.
+		switch resp.StatusCode {
+		case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+			r.Unjudgeable = true
+		}
 	case len(out.Choices) == 0:
 		r.Err = "openai: no choices in the answer"
 	case out.Choices[0].Message.Refusal != "":
-		r.Err = "openai: refused: " + out.Choices[0].Message.Refusal
+		r.Err, r.Unjudgeable = "openai: refused: "+out.Choices[0].Message.Refusal, true
 	case out.Choices[0].FinishReason == "length":
-		r.Err = "openai: answer cut off at the token limit"
+		r.Err, r.Unjudgeable = "openai: answer cut off at the token limit", true
 	default:
 		answer(&r, []byte(jsonObject(out.Choices[0].Message.Content)))
 	}
 	return r
 }
 
-// jsonObject returns the outermost {...} in s, for servers that wrap the
-// JSON answer in prose or a code fence.
+// jsonObject returns the last JSON object in s that has a verdict, for
+// servers that wrap the answer in prose or a code fence, or write braces
+// before it.
 func jsonObject(s string) string {
-	i, j := strings.IndexByte(s, '{'), strings.LastIndexByte(s, '}')
-	if i < 0 || j < i {
-		return s
+	for i := strings.LastIndexByte(s, '{'); i >= 0; i = strings.LastIndexByte(s[:i], '{') {
+		var m map[string]any
+		if json.NewDecoder(strings.NewReader(s[i:])).Decode(&m) == nil {
+			if _, ok := m["verdict"]; ok {
+				b, _ := json.Marshal(m)
+				return string(b)
+			}
+		}
+		if i == 0 {
+			break
+		}
 	}
-	return s[i : j+1]
+	return s
 }

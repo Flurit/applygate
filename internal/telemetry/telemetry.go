@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -252,7 +253,7 @@ func Pending(entries []decisionlog.Entry, after time.Time, version string) Paylo
 		if e.Time.After(p.To) {
 			p.To = e.Time
 		}
-		counts[key{e.Version, e.Agent, e.Mode, e.Verdict}]++
+		counts[key{enumVersion(e.Version), enumOf(e.Agent, knownAgents), enumOf(e.Mode, knownModes), policy.Verdict(enumOf(string(e.Verdict), knownVerdicts))}]++
 	}
 	for k, n := range counts {
 		p.Counts = append(p.Counts, Count{Version: k.version, Agent: k.agent, Mode: k.mode, Verdict: k.verdict, N: n})
@@ -355,13 +356,21 @@ func Flush(ctx context.Context, logPath, version string, env map[string]string, 
 // cheap when telemetry is off (one small file read) and never panics or
 // returns an error: a decision has been made and nothing here may change
 // it.
-func AfterDecision(logPath, version string, env map[string]string) {
+func AfterDecision(logPath, version string, env map[string]string, deadline time.Time) {
 	defer func() { _ = recover() }()
 	st := Effective(env)
 	if !st.On || time.Since(st.LastAttempt) < MinInterval {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), HookTimeout)
+	// Only what is left of the hook's budget, less half a second to exit.
+	limit := HookTimeout
+	if !deadline.IsZero() {
+		limit = min(limit, time.Until(deadline)-500*time.Millisecond)
+	}
+	if limit <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	_, _ = Flush(ctx, logPath, version, env, false)
 }
@@ -395,4 +404,28 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// The log is written by the hook, which an agent can reach (a forged entry,
+// a renamed binary): only known values leave the machine, anything else is
+// "other".
+var (
+	knownAgents   = map[string]bool{"claude": true, "codex": true, "cursor": true, "copilot": true, "gemini": true, "windsurf": true, "devin": true, "opencode": true, "cline": true, "human": true}
+	knownModes    = map[string]bool{"enforce": true, "observe": true}
+	knownVerdicts = map[string]bool{"allow": true, "ask": true, "block": true}
+	semverRe      = regexp.MustCompile(`^v?\d{1,4}\.\d{1,4}\.\d{1,4}(-[0-9A-Za-z.]{1,32})?$`)
+)
+
+func enumOf(v string, known map[string]bool) string {
+	if v == "" || known[v] {
+		return v
+	}
+	return "other"
+}
+
+func enumVersion(v string) string {
+	if v == "" || v == "dev" || semverRe.MatchString(v) {
+		return v
+	}
+	return "other"
 }
