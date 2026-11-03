@@ -11,7 +11,9 @@ import (
 
 // TestCommandLatency measures in-process decision time for command-only
 // scenarios (no plan JSON) against the spec's 50 ms p95 target. It does not
-// include process start-up, which the agent pays per hook call.
+// include process start-up, which the agent pays per hook call. Under the
+// race detector the times are logged but not held to the target: CI checks
+// it in a step of its own, on a normal build.
 func TestCommandLatency(t *testing.T) {
 	p, _ := Load()
 	repo, _, home, err := Materialize(t.TempDir())
@@ -33,7 +35,7 @@ func TestCommandLatency(t *testing.T) {
 	sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
 	p50, p95 := ds[len(ds)/2], ds[len(ds)*95/100]
 	t.Logf("command decisions: n=%d p50=%s p95=%s max=%s", len(ds), p50, p95, ds[len(ds)-1])
-	if p95 > 50*time.Millisecond {
+	if p95 > 50*time.Millisecond && !raceBuild {
 		t.Errorf("p95 %s over the 50ms target", p95)
 	}
 }

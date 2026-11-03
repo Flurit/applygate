@@ -686,6 +686,10 @@ func terraformDir(dir string) bool {
 // otherRepo reports whether dir is under a repository config the session's
 // config did not read.
 func otherRepo(cfg *config.Config, dir string) bool {
+	if dir == cfg.LoadedFor {
+		// Load looked up this directory's configs: none is unread.
+		return false
+	}
 	read := map[string]bool{}
 	for _, p := range append(append([]string(nil), cfg.Sources...), cfg.Untrusted...) {
 		read[p] = true

@@ -35,6 +35,8 @@ jobs:
           "$(go env GOPATH)/bin/govulncheck" ./...
       - name: test
         run: go test -race -count=1 ./...
+      - name: decision latency (normal build, 50 ms p95)
+        run: go test -count=1 -v -run TestCommandLatency ./harness
       - name: build
         run: go build -trimpath -o bin/applygate ./cmd/applygate
       - name: selftest (scenario pack through the binary)

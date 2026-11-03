@@ -110,6 +110,8 @@ type Config struct {
 	// Untrusted lists the repository configs that were not read because
 	// their content was not approved with applygate trust.
 	Untrusted []string `yaml:"-"`
+	// LoadedFor is the directory whose repository configs Load looked up.
+	LoadedFor string `yaml:"-"`
 }
 
 // Wrapper declares a program that runs another command: the command
@@ -459,6 +461,7 @@ func Load(userPath, dir string) (*Config, error) {
 		}
 	}
 	if dir != "" {
+		cfg.LoadedFor = dir
 		n := 0
 		for _, p := range RepoConfigs(dir) {
 			// Trust is for the file read, so only a regular file counts: a
