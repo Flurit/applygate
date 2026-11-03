@@ -103,6 +103,9 @@ type Config struct {
 	// Deprecations notes legacy names still in use (a .seatbelt.yaml config
 	// file); doctor and check print them.
 	Deprecations []string `yaml:"-"`
+	// Untrusted lists the repository configs that were not read because
+	// their content was not approved with applygate trust.
+	Untrusted []string `yaml:"-"`
 }
 
 // Wrapper declares a program that runs another command: the command
@@ -387,11 +390,23 @@ func Load(userPath, dir string) (*Config, error) {
 		}
 	}
 	if dir != "" {
-		for i, p := range RepoConfigs(dir) {
+		n := 0
+		for _, p := range RepoConfigs(dir) {
+			b, err := safefile.ReadFile(p)
+			if err != nil {
+				return nil, err
+			}
+			if !Trusted(p, b) {
+				// Not read: a config nobody approved, or one changed since,
+				// decides nothing. Every directory is then protected.
+				cfg.Untrusted = append(cfg.Untrusted, p)
+				continue
+			}
 			l := layerRepo
-			if i > 0 {
+			if n > 0 {
 				l = layerNested
 			}
+			n++
 			if err := merge(cfg, p, l); err != nil {
 				return nil, err
 			}
@@ -865,6 +880,10 @@ func LooksProd(v string) bool {
 // Resolve maps signals to a tier. When several environments match, the most
 // protected one wins.
 func (c *Config) Resolve(s Signals) Resolution {
+	if len(c.Untrusted) > 0 {
+		return Resolution{Tier: Protected, Env: "untrusted config", Unknown: true, Matched: []string{
+			"the repository config " + c.Untrusted[len(c.Untrusted)-1] + " is not trusted (new, or changed since it was trusted), so it is not read and every directory is protected; a person reviews it and runs applygate trust"}}
+	}
 	best := Resolution{Tier: Disposable, Env: "", Unknown: true}
 	consider := func(env string, t Tier, why string) {
 		if best.Unknown || t.Rank() > best.Tier.Rank() {

@@ -386,6 +386,8 @@ func cmdReport(args []string, stdout, stderr io.Writer) int {
 
 func cmdSelftest(args []string, stdout, stderr io.Writer) int {
 	verbose := len(args) > 0 && args[0] == "-v"
+	// The pack's fixture configs are copies made for this run.
+	config.TrustAll = true
 	p, err := harness.Load()
 	if err != nil {
 		fmt.Fprintln(stderr, err)

@@ -22,6 +22,8 @@ internal or config error) is reported as "fail-closed" and never matches.
 import argparse
 import datetime
 import json
+import unicodedata
+import hashlib
 import os
 import shlex
 import shutil
@@ -55,7 +57,33 @@ def materialize(tmp):
     shutil.copytree(PACK, tmp, dirs_exist_ok=True)
     home = os.path.join(tmp, "home")
     os.makedirs(os.path.join(home, ".aws"), exist_ok=True)
-    return os.path.join(tmp, "fixtures", "repo"), os.path.join(tmp, "plans"), home
+    repo = os.path.join(tmp, "fixtures", "repo")
+    trust_configs(repo, os.path.join(tmp, "config", "applygate", "trusted.json"))
+    return repo, os.path.join(tmp, "plans"), home
+
+
+def canonical(p):
+    """guard.Canonical: symlinks resolved, and on macOS and Windows case
+    and Unicode folded the way their file systems compare names."""
+    p = os.path.realpath(p)
+    if sys.platform in ("darwin", "win32"):
+        p = unicodedata.normalize("NFC", p).replace("\u017f", "s").replace("\u212a", "k").lower()
+    return p
+
+
+def trust_configs(repo, store):
+    """applygate reads a repository config only when a person trusted it
+    (applygate trust); the runner is that person for the fixture's configs."""
+    trusted = {}
+    for root, _, files in os.walk(repo):
+        for name in files:
+            if name in (".applygate.yaml", ".seatbelt.yaml"):
+                path = os.path.join(root, name)
+                with open(path, "rb") as f:
+                    trusted[canonical(path)] = hashlib.sha256(f.read()).hexdigest()
+    os.makedirs(os.path.dirname(store), exist_ok=True)
+    with open(store, "w") as f:
+        json.dump(trusted, f)
 
 
 def sandbox_env(tmp, home):
