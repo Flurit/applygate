@@ -219,7 +219,13 @@ func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
 		}
 	}
 	if cfg.Preflight.LiveIdentity {
-		d.Account = func(p string) (string, error) { return preflight.CallerAccount(p, 5*time.Second) }
+		d.Account = func(p string) (string, error) {
+			bin, err := cfg.EngineBinary("aws")
+			if err != nil {
+				return "", err
+			}
+			return preflight.CallerAccount(bin, p, 5*time.Second)
+		}
 	}
 	if cfg.Preflight.LiveState {
 		d.StatePull = func(engine, dir string) ([]byte, error) {
@@ -313,7 +319,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	finish := func(cfg *config.Config, o Output) Output {
 		o.Deadline = deadline
 		entry.DurationMS = float64(time.Since(start).Microseconds()) / 1000
-		if !opt.NoLog {
+		if !opt.NoLog && filepath.IsAbs(logPath(cfg)) {
 			o.LogPath = logPath(cfg)
 			if err := decisionlog.Append(o.LogPath, entry); err != nil {
 				o.Stderr += "applygate: could not write decision log: " + err.Error() + "\n"
@@ -350,6 +356,9 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	}()
 	if err != nil {
 		return fail(userCfg, "", "could not read hook input: "+err.Error())
+	}
+	if p := config.HomeProblem(); p != "" {
+		return fail(nil, "", p)
 	}
 	if uerr != nil {
 		return fail(nil, "", "user config error: "+uerr.Error())

@@ -510,6 +510,17 @@ func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 		return a, false
 	}
 	a.Sub = pos[0]
+	switch {
+	case pos[0] == "auth" && len(pos) > 1 && pos[1] == "reconcile":
+		// reconcile writes RBAC objects, and --remove-extra-* deletes
+		// subjects and permissions.
+		if hasArg(args, "--remove-extra-subjects") || hasArg(args, "--remove-extra-permissions") {
+			a.Class, a.Why = CloudDestructive, "kubectl auth reconcile --remove-extra-* removes RBAC subjects or permissions"
+		} else {
+			a.Class, a.Why = CloudWrite, "kubectl auth reconcile changes RBAC objects"
+		}
+		return a, true
+	}
 	switch pos[0] {
 	case "delete", "drain":
 		a.Class, a.Why = CloudDestructive, "kubectl "+strings.Join(pos, " ")
@@ -597,6 +608,32 @@ func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
 	}
 	a.Sub = strings.Join(pos, " ")
 	cmd := name + " " + strings.Join(pos, " ")
+	// Access tokens printed are credentials, as aws configure
+	// export-credentials is.
+	if name == "gcloud" && (slices.Contains(pos, "print-access-token") || slices.Contains(pos, "print-identity-token") || slices.Contains(pos, "print-refresh-token")) ||
+		name == "az" && slices.Contains(pos, "get-access-token") {
+		a.Class, a.Why = CredentialAccess, cmd+" prints an access token"
+		return a, true
+	}
+	// az rest sends any request: its method decides.
+	if name == "az" && pos[0] == "rest" {
+		m := strings.ToLower(flagValue(args, "--method"))
+		if m == "" {
+			m = strings.ToLower(flagValue(args, "-m"))
+		}
+		switch m {
+		case "delete":
+			a.Class, a.Why = CloudDestructive, cmd+" --method delete deletes the resource it names"
+		case "get", "head", "":
+			a.Class, a.Why = ReadOnly, cmd+" reads"
+			if m == "" && (flagValue(args, "--body") != "" || flagValue(args, "-b") != "") {
+				a.Class, a.Why = CloudWrite, cmd+" with a body posts it"
+			}
+		default:
+			a.Class, a.Why = CloudWrite, cmd+" --method "+m+" changes resources"
+		}
+		return a, true
+	}
 	verb := ""
 	for _, p := range pos {
 		if cloudDestructive(p) {
@@ -786,12 +823,21 @@ func agentFlags(base Action, name string, args []shell.Word) (Action, bool) {
 	// disable|uninstall|remove, claude config set (hooks, permissions).
 	if pos := positional(args); len(pos) >= 2 {
 		switch {
-		case pos[0] == "plugin" || pos[0] == "plugins":
+		case pos[0] == "plugin" || pos[0] == "plugins" || pos[0] == "extensions" || pos[0] == "extension":
+			// A plugin or extension installed or turned on brings hooks and
+			// MCP servers of its own; one turned off may be the hook.
 			switch pos[1] {
-			case "disable", "uninstall", "remove", "rm", "marketplace":
-				a.Class, a.Why = Tampering, name+" "+pos[0]+" "+pos[1]+" changes the agent's plugins, which may remove the hook"
+			case "list", "ls", "help":
+			default:
+				a.Class, a.Why = Tampering, name+" "+pos[0]+" "+pos[1]+" changes the agent's plugins, which may remove the hook or add one"
 				return a, true
 			}
+		case pos[0] == "mcp" && pos[1] != "list" && pos[1] != "get" && pos[1] != "help":
+			a.Class, a.Why = Tampering, name+" mcp "+pos[1]+" changes the agent's MCP servers, whose tools run outside the shell hook"
+			return a, true
+		case pos[0] == "features" && pos[1] != "list" && pos[1] != "help":
+			a.Class, a.Why = Tampering, name+" features "+pos[1]+" changes the agent's features, hooks among them"
+			return a, true
 		case pos[0] == "config" && (pos[1] == "set" || pos[1] == "add" || pos[1] == "remove" || pos[1] == "unset"):
 			a.Class, a.Why = Tampering, name+" config "+pos[1]+" changes the agent's settings, which hold the hook"
 			return a, true

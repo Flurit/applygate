@@ -23,6 +23,10 @@ var FoldCase = runtime.GOOS == "darwin" || runtime.GOOS == "windows"
 type Set struct {
 	patterns []string // slash globs; a pattern without a leading slash matches any suffix
 	targets  []string // concrete canonical paths; their ancestors are guarded too
+	// progDirs and progNames guard any of these names in any of these
+	// directories (PATH plants), without a target for each pair.
+	progDirs  map[string]bool
+	progNames map[string]bool
 }
 
 // New returns the guard set for patterns (globs, as in the config) and
@@ -51,6 +55,69 @@ func New(patterns, targets []string) *Set {
 		}
 	}
 	return s
+}
+
+// Programs guards every name in names placed in any of dirs: program paths
+// such as ~/.local/bin/git. They are not looked for in code (Needles):
+// ordinary scripts name program paths.
+func (s *Set) Programs(dirs, names []string) *Set {
+	if s.progDirs == nil {
+		s.progDirs, s.progNames = map[string]bool{}, map[string]bool{}
+	}
+	for _, d := range dirs {
+		if filepath.IsAbs(d) {
+			s.progDirs[Canonical(d)] = true
+		}
+	}
+	for _, n := range names {
+		s.progNames[fold(n)] = true
+	}
+	return s
+}
+
+// program reports whether canonical path c is a guarded program path.
+func (s *Set) program(c string) bool {
+	return s.progDirs[path.Dir(c)] && s.progNames[path.Base(c)]
+}
+
+// holdsProgram reports whether canonical directory c is, or holds, a
+// directory of guarded programs.
+func (s *Set) holdsProgram(c string) bool {
+	if len(s.progNames) == 0 {
+		return false
+	}
+	for d := range s.progDirs {
+		if d == c || c == "/" || strings.HasPrefix(d, strings.TrimSuffix(c, "/")+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// NamedLike reports whether a file name is the name of a guard file or
+// directory (settings.json, hooks.json, config.toml, ...): with no
+// directory to resolve against, a relative path with that name may be one.
+func (s *Set) NamedLike(name string) bool {
+	name = fold(name)
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	for _, t := range s.targets {
+		if path.Base(t) == name {
+			return true
+		}
+	}
+	for _, p := range s.patterns {
+		lit := strings.TrimSuffix(strings.TrimPrefix(p, "**/"), "/**")
+		if !strings.ContainsAny(lit, "*?[") && path.Base(lit) == name {
+			return true
+		}
+	}
+	switch name {
+	case "approvals.json", "judge-cache.json", "telemetry.json", "decisions.jsonl", "config.yaml", "trusted.json":
+		return true
+	}
+	return false
 }
 
 // Canonical returns p cleaned, with symlinks resolved on its longest
@@ -141,6 +208,15 @@ func (s *Set) GlobTouches(pattern string) bool {
 			}
 		}
 	}
+	if dir := path.Dir(pat); s.progDirs[dir] {
+		for n := range s.progNames {
+			if segMatch(path.Base(pat), n) {
+				return true
+			}
+		}
+	} else if !strings.ContainsAny(dir, "*?[") && s.holdsProgram(dir) && strings.ContainsAny(path.Base(pat), "*?[") {
+		return true
+	}
 	// The repository config and other dot-names that may live in any
 	// directory (.applygate.yaml); other names, settings.json or the
 	// applygate binary, count only through the concrete targets above.
@@ -172,7 +248,7 @@ func (s *Set) Protected(p string) bool {
 			return true
 		}
 	}
-	return false
+	return s.program(c)
 }
 
 // Touches reports whether writing, moving, removing or extracting into p
@@ -192,7 +268,7 @@ func (s *Set) Touches(p string) bool {
 			return true
 		}
 	}
-	return false
+	return s.holdsProgram(c)
 }
 
 // Needles are strings whose presence in opaque text (interpreter code, a

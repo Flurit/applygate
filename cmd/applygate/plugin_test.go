@@ -296,11 +296,11 @@ func TestPluginHooksUseLauncher(t *testing.T) {
 		t.Fatalf("PreToolUse: %+v", pre)
 	}
 	h := pre[0].Hooks[0]
-	if h.Command != `sh "${CLAUDE_PLUGIN_ROOT}/scripts/applygate-hook" hook claude` || h.OnFailure != "block" || h.Timeout != 30 {
+	if h.Command != `/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/applygate-hook" hook claude` || h.OnFailure != "block" || h.Timeout != 30 {
 		t.Fatalf("PreToolUse hook: %+v", h)
 	}
 	start := hooks.Hooks["SessionStart"]
-	if len(start) != 1 || len(start[0].Hooks) != 1 || start[0].Hooks[0].Command != `sh "${CLAUDE_PLUGIN_ROOT}/scripts/applygate-hook" --fetch` {
+	if len(start) != 1 || len(start[0].Hooks) != 1 || start[0].Hooks[0].Command != `/bin/sh "${CLAUDE_PLUGIN_ROOT}/scripts/applygate-hook" --fetch` {
 		t.Fatalf("SessionStart: %+v", start)
 	}
 }

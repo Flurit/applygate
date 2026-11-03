@@ -41,10 +41,12 @@ func TrustCommand() string {
 	if Managed() {
 		// The managed binary by its path: the applygate first on the
 		// agent's PATH may be one it planted (R6-4).
+		// sudo by its path too: a sudo planted earlier on PATH would be
+		// handed the person's password.
 		if b := ManagedBinary(); b != "" {
-			return "sudo " + b + " trust"
+			return "/usr/bin/sudo " + b + " trust"
 		}
-		return "sudo applygate trust"
+		return "/usr/bin/sudo /usr/local/libexec/applygate/applygate trust"
 	}
 	return "applygate trust"
 }
@@ -115,7 +117,7 @@ func TrustContent(content map[string][]byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".trusted-*")
 	if err != nil {
 		if Managed() && errors.Is(err, os.ErrPermission) {
-			return fmt.Errorf("%s is root's under a managed install: run sudo applygate trust", path)
+			return fmt.Errorf("%s is root's under a managed install: run %s", path, TrustCommand())
 		}
 		return err
 	}

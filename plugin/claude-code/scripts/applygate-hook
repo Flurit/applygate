@@ -36,6 +36,19 @@
 # sha256 check still applies). POSIX sh, curl or wget.
 set -eu
 
+# The helpers below come from the system directories only: a sha256sum,
+# awk, tar or curl planted earlier on PATH would otherwise check or fetch
+# the binary for the launcher. The user's PATH is kept to find applygate
+# and is restored for the hook itself.
+user_path=${PATH:-}
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+run() {
+    PATH=$user_path
+    export PATH
+    exec "$@"
+}
+
 mode=hook
 [ "${1:-}" = --fetch ] && mode=fetch
 
@@ -66,7 +79,7 @@ if [ -f "$pinned" ]; then
     got=$(sha256 "$bin") || fail "sha256sum or shasum is required to check $bin"
     [ "$got" = "$want" ] || fail "$bin changed since the plugin pinned it (sha256 $want, now $got); if you upgraded applygate, remove $pinned to pin the new binary"
     if [ "$mode" = fetch ]; then exit 0; fi
-    exec "$bin" "$@"
+    run "$bin" "$@"
 fi
 
 # 1 and 2: a binary the user installed.
@@ -75,7 +88,19 @@ if [ -n "${APPLYGATE_BIN:-}" ]; then
     [ -x "$APPLYGATE_BIN" ] || fail "APPLYGATE_BIN=$APPLYGATE_BIN is not an executable file"
     bin=$APPLYGATE_BIN
 else
-    bin=$(command -v applygate 2>/dev/null) || bin=""
+    # Only absolute PATH entries: a relative one names a directory the
+    # agent's command may have written.
+    bin=""
+    old_ifs=$IFS
+    IFS=:
+    for d in $user_path; do
+        case "$d" in /*) ;; *) continue ;; esac
+        if [ -f "$d/applygate" ] && [ -x "$d/applygate" ]; then
+            bin="$d/applygate"
+            break
+        fi
+    done
+    IFS=$old_ifs
 fi
 if [ -n "$bin" ]; then
     case "$bin" in
@@ -89,7 +114,7 @@ if [ -n "$bin" ]; then
         mv -f "$pinned.$$" "$pinned" 2>/dev/null || rm -f "$pinned.$$"
     fi
     if [ "$mode" = fetch ]; then exit 0; fi
-    exec "$bin" "$@"
+    run "$bin" "$@"
 fi
 
 # 3: the pinned release, cached.
@@ -123,9 +148,18 @@ case "$version" in
 esac
 
 dest="$data/v$version/${os}_${arch}/applygate"
+# pin records the installed binary's sha256, so later runs check it at
+# step 0 instead of running the cache as it is.
+pin_dest() {
+    got=$(sha256 "$dest") || fail "sha256sum or shasum is required to pin $dest"
+    if printf '%s %s\n' "$got" "$dest" >"$pinned.$$" 2>/dev/null; then
+        mv -f "$pinned.$$" "$pinned" 2>/dev/null || rm -f "$pinned.$$"
+    fi
+}
 if [ -x "$dest" ]; then
-    if [ "$mode" = fetch ]; then exit 0; fi
-    exec "$dest" "$@"
+    # A cached binary with no pin record was not checked since its
+    # download: fetch and check it again.
+    rm -f "$dest" 2>/dev/null || fail "cannot replace the unchecked cached binary $dest"
 fi
 
 # 4: download, check, cache.
@@ -166,8 +200,9 @@ mkdir -p "$(dirname -- "$dest")" || fail "cannot create $(dirname -- "$dest")"
 # half-written binary.
 mv -f "$tmp/applygate" "$dest" || fail "cannot install into $dest"
 printf 'applygate plugin: installed applygate v%s to %s\n' "$version" "$dest" >&2
+pin_dest
 
 cleanup
 trap - EXIT
 if [ "$mode" = fetch ]; then exit 0; fi
-exec "$dest" "$@"
+run "$dest" "$@"

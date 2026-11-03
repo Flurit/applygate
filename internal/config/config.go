@@ -209,7 +209,8 @@ type PlanGate struct {
 	RunShow     *bool        `yaml:"run_show"`
 	ShowTimeout string       `yaml:"show_timeout"`
 	// Engines are the terraform, tofu and terragrunt binaries the hook runs
-	// (show -json, state pull), by name, as absolute paths. Without one the
+	// (show -json, state pull), and the aws CLI preflight.live_identity
+	// runs, by name, as absolute paths. Without one the
 	// hook looks the name up on PATH. User or system config only; under a
 	// managed install, system config only.
 	Engines map[string]string `yaml:"engines"`
@@ -290,7 +291,34 @@ var DefaultProtectedPaths = []string{
 	"**/.codeium/hooks.json", "**/.devin/config.json", "**/.devin/hooks.v1.json", "**/.config/devin/config.json",
 	"**/.opencode/plugins/**", "**/.config/opencode/plugins/**", "**/.clinerules/hooks/**", "**/.cline/hooks/**",
 	"**/Documents/Cline/Hooks/**",
+	// Claude Code's skills, subagents and commands, whose frontmatter can
+	// declare hooks Claude Code runs itself, and every plugin's files.
+	"**/.claude/skills/**", "**/.claude/agents/**", "**/.claude/commands/**", "**/.claude/plugins/**",
+	// The MCP server lists of the other hosts.
+	"**/.cursor/mcp.json", "**/.vscode/mcp.json", "**/.copilot/mcp-config.json", "**/.codeium/windsurf/mcp_config.json",
+	"**/.gemini/extensions/**", "**/opencode.json", "**/.config/opencode/opencode.json",
+	// Config files in which a program the hook trusts names a command to
+	// run: a plain git, aws, kubectl, gh, docker or terraform call would run
+	// what an earlier call planted there (strict shapes, docs/policy.md).
+	"**/.gitconfig", "**/.config/git/**", "**/.aws/config", "**/.aws/cli/**", "**/.kube/config", "**/.config/gh/**",
+	"**/.config/glab-cli/**", "**/.docker/config.json", "**/.terraformrc", "**/.terraform.d/**", "**/.tofurc",
+	"**/.vault", "**/.wgetrc", "**/.tflint.hcl", "**/.tflint.d/**", "**/.config/helm/**",
+	"**/Library/Preferences/helm/**", "**/Library/helm/plugins/**", "**/.local/share/helm/plugins/**",
 }
+
+// pathPrograms are names an agent may not place in a PATH directory: the
+// programs strict shapes trusts by name, the helpers the hook, its plugin
+// launcher and its documented commands run, and the engines the plan gate
+// runs (a plant could answer show -json with any plan).
+var pathPrograms = []string{"applygate", "seatbelt", "terraform", "tofu", "terragrunt", "sh", "bash", "zsh", "dash",
+	"env", "sudo", "su", "doas", "awk", "sha256sum", "shasum", "cut", "uname", "tar", "curl", "git", "aws", "gcloud",
+	"az", "gsutil", "kubectl", "helm", "kustomize", "gh", "glab", "go", "gofmt", "docker", "podman", "make", "vault",
+	"jq", "yq", "sed", "grep", "egrep", "rg", "find", "ls", "cat", "head", "tail", "wc", "sort", "uniq", "tr", "tee",
+	"diff", "cmp", "tree", "stat", "file", "du", "df", "basename", "dirname", "realpath", "readlink", "mkdir", "touch",
+	"cp", "mv", "rm", "ln", "chmod", "column", "xxd", "od", "base64", "md5sum", "gzip", "gunzip", "unzip", "zip",
+	"nl", "fold", "comm", "join", "paste", "seq", "id", "whoami", "hostname", "printenv", "printf", "echo", "date",
+	"sleep", "which", "test", "true", "false", "pwd", "wget", "tflint", "tfsec", "terraform-docs", "infracost",
+	"shellcheck", "actionlint", "checkov", "trivy", "conftest", "opa", "python3", "python", "node", "perl", "ruby"}
 
 // Default returns the built-in configuration.
 func Default() *Config {
@@ -308,8 +336,21 @@ func UserPath() string {
 // never falls back to the pre-rename seatbelt directory.
 func UserDir() string { return filepath.Dir(userPathFor("applygate")) }
 
+// HomeProblem says why the user's own files cannot be placed: without an
+// absolute home directory, the user config, trust store and log would be
+// read relative to the directory the hook runs in, which a repository can
+// fill. "" when there is none.
+func HomeProblem() string {
+	home, err := os.UserHomeDir()
+	if err != nil || !filepath.IsAbs(home) {
+		return "no absolute home directory (HOME is unset or relative), so the user config, trust store and log cannot be found"
+	}
+	return ""
+}
+
 func userPathFor(name string) string {
-	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" {
+	// A relative XDG directory is ignored, as the XDG spec says.
+	if d := os.Getenv("XDG_CONFIG_HOME"); d != "" && filepath.IsAbs(d) {
 		return filepath.Join(d, name, "config.yaml")
 	}
 	home, _ := os.UserHomeDir()
@@ -338,7 +379,7 @@ func JudgeCachePath() string {
 }
 
 func logPathFor(name string) string {
-	if d := os.Getenv("XDG_STATE_HOME"); d != "" {
+	if d := os.Getenv("XDG_STATE_HOME"); d != "" && filepath.IsAbs(d) {
 		return filepath.Join(d, name, "decisions.jsonl")
 	}
 	home, _ := os.UserHomeDir()
@@ -492,7 +533,9 @@ func Load(userPath, dir string) (*Config, error) {
 				l = layerNested
 			}
 			n++
-			if err := merge(cfg, p, l); err != nil {
+			// The bytes that were hashed are the ones parsed: reading the
+			// path again would parse whatever replaced it since.
+			if err := mergeBytes(cfg, p, b, l); err != nil {
 				return nil, err
 			}
 		}
@@ -521,13 +564,17 @@ func LoadFile(path string) (*Config, error) {
 }
 
 func merge(cfg *Config, path string, l layer) error {
-	// repo: the layer may only tighten. The user config under a managed
-	// install is held to the same rule as a repository config.
-	repo := l != layerUser && l != layerSystem
 	b, err := safefile.ReadFile(path)
 	if err != nil {
 		return err
 	}
+	return mergeBytes(cfg, path, b, l)
+}
+
+func mergeBytes(cfg *Config, path string, b []byte, l layer) error {
+	// repo: the layer may only tighten. The user config under a managed
+	// install is held to the same rule as a repository config.
+	repo := l != layerUser && l != layerSystem
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(b))
 	dec.KnownFields(true)
@@ -713,8 +760,8 @@ func merge(cfg *Config, path string, l layer) error {
 			userOnly("plan_gate.engines")
 		case repo:
 			ignored("plan_gate.engines (under a managed install it comes from the system config)")
-		case !filepath.IsAbs(p) || (name != "terraform" && name != "tofu" && name != "terragrunt"):
-			ignored("plan_gate.engines." + name + ": an absolute path for terraform, tofu or terragrunt")
+		case !filepath.IsAbs(p) || (name != "terraform" && name != "tofu" && name != "terragrunt" && name != "aws"):
+			ignored("plan_gate.engines." + name + ": an absolute path for terraform, tofu, terragrunt or aws")
 		default:
 			if cfg.PlanGate.Engines == nil {
 				cfg.PlanGate.Engines = map[string]string{}
@@ -955,6 +1002,39 @@ func (c *Config) GuardTargets(home string) []string {
 	return append(out, guard.Executable()...)
 }
 
+// PathDirs are the PATH directories, and the usual user bin directories,
+// that the agent's user can write: a pathPrograms name placed there runs
+// instead of the program a plain command or the hook names
+// (guard.Set.Programs).
+func PathDirs(home string) []string {
+	var out []string
+	for _, d := range pathDirs(home) {
+		if userWritable(d) {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// PathPrograms are the names guarded in PathDirs.
+func PathPrograms() []string { return pathPrograms }
+
+func pathDirs(home string) []string {
+	dirs := filepath.SplitList(os.Getenv("PATH"))
+	if home != "" {
+		dirs = append(dirs, filepath.Join(home, ".local", "bin"), filepath.Join(home, "bin"), filepath.Join(home, "go", "bin"),
+			filepath.Join(home, ".cargo", "bin"))
+	}
+	dirs = append(dirs, "/usr/local/bin", "/opt/homebrew/bin")
+	var out []string
+	for _, d := range dirs {
+		if d != "" && filepath.IsAbs(d) {
+			out = append(out, filepath.Clean(d))
+		}
+	}
+	return out
+}
+
 // launchTargets are the places that decide which applygate binary runs and
 // with which environment: an applygate or seatbelt (or an engine the plan
 // gate runs) in any PATH directory or
@@ -974,8 +1054,6 @@ func launchTargets(home string) []string {
 			continue
 		}
 		out = append(out, filepath.Join(d, "applygate"), filepath.Join(d, "seatbelt"))
-		// The engines the plan gate runs: a plant could answer show -json
-		// with any plan (4H1).
 		out = append(out, filepath.Join(d, "terraform"), filepath.Join(d, "tofu"), filepath.Join(d, "terragrunt"))
 	}
 	if home != "" {

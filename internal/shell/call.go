@@ -194,6 +194,12 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 				// here: it may be a symlink to anywhere.
 				st.dir = ""
 			}
+			if st.dir != "" && a.opt.IsDir != nil && !a.opt.IsDir(st.dir) && !a.created(st.dir) {
+				// The directory does not exist: cd fails, and the shell
+				// stays where it was, which the hook cannot assume the
+				// command expects.
+				st.dir = ""
+			}
 		}
 		return
 	case "read", "mapfile", "readarray", "getopts":
@@ -2003,6 +2009,10 @@ func (a *analyzer) alias(name, rep string, rest []Word, redirs []Redir, cmdSt, s
 			st.aliases[name] = rep
 		}
 	}()
+	if nestingDepth(rep) > maxNesting {
+		a.unbounded(st, via, rep, "alias "+name+" nests deeper than the analyzer parses")
+		return
+	}
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(rep), "")
 	if err != nil {
 		a.unbounded(st, via, rep, "alias "+name+" could not be parsed as shell: "+err.Error())

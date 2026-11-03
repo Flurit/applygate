@@ -90,6 +90,11 @@ type Options struct {
 	// command given in their arguments.
 	Wrappers map[string]WrapperSpec
 	ReadFile func(path string) ([]byte, error)
+	// IsDir reports whether a directory exists. When it is set, a cd to
+	// a directory that does not exist, and that no earlier step creates,
+	// leaves the directory unknown: the cd fails and the shell stays
+	// where it was.
+	IsDir    func(path string) bool
 	MaxDepth int
 	// ProtectedPaths are the guard-file patterns from the config. An
 	// interpreter body that names one of them is never a plain file edit.

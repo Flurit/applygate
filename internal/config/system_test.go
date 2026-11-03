@@ -121,7 +121,7 @@ func TestManagedTrustStore(t *testing.T) {
 	if cfg, _ := Load("", repo); len(cfg.Untrusted) != 1 {
 		t.Fatalf("the user trust store counted under a managed install")
 	}
-	if TrustPath() != SystemTrustPath() || TrustCommand() != "sudo "+ManagedBinary()+" trust" {
+	if TrustPath() != SystemTrustPath() || TrustCommand() != "/usr/bin/sudo "+ManagedBinary()+" trust" {
 		t.Fatalf("trust path %s", TrustPath())
 	}
 	if err := Trust([]string{p}); err != nil {

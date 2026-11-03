@@ -391,6 +391,13 @@ var exposureAttrs = map[string][]string{
 	"aws_iam_role_policy":                 {"policy"},
 	"aws_iam_user_policy":                 {"policy"},
 	"aws_iam_group_policy":                {"policy"},
+	"aws_sqs_queue_policy":                {"policy"},
+	"aws_sns_topic_policy":                {"policy"},
+	"aws_kms_key_policy":                  {"policy"},
+	"aws_ecr_repository_policy":           {"policy"},
+	"aws_secretsmanager_secret_policy":    {"policy"},
+	"aws_lambda_permission":               {"principal"},
+	"aws_lambda_function_url":             {"authorization_type"},
 	// 4H14: every type exposed reads.
 	"aws_default_security_group":      {"ingress"},
 	"aws_db_instance":                 {"publicly_accessible"},
@@ -533,12 +540,22 @@ func exposed(rc *tfjson.ResourceChange, after map[string]any, rules *Rules) []st
 		if f <= 0 && t >= 65535 || f == -1 {
 			return "all ports", true
 		}
+		// Every admin port in the range is named: an update that widens a
+		// range already open on one of them adds the others, which the
+		// update's before/after comparison must see.
+		var hit []string
 		for _, port := range rules.AdminPorts {
 			if float64(port) >= f && float64(port) <= t {
-				return "port " + strconv.Itoa(port), true
+				hit = append(hit, strconv.Itoa(port))
 			}
 		}
-		return "", false
+		switch len(hit) {
+		case 0:
+			return "", false
+		case 1:
+			return "port " + hit[0], true
+		}
+		return "ports " + strings.Join(hit, ", "), true
 	}
 	switch rc.Type {
 	case "aws_security_group", "aws_default_security_group":
@@ -570,7 +587,7 @@ func exposed(rc *tfjson.ResourceChange, after map[string]any, rules *Rules) []st
 			}
 		}
 	case "aws_s3_bucket_acl":
-		if acl, _ := after["acl"].(string); acl == "public-read" || acl == "public-read-write" {
+		if acl, _ := after["acl"].(string); acl == "public-read" || acl == "public-read-write" || acl == "authenticated-read" {
 			out = append(out, rc.Address+": bucket ACL "+acl)
 		}
 		if b, err := json.Marshal(after["access_control_policy"]); err == nil &&
@@ -603,9 +620,22 @@ func exposed(rc *tfjson.ResourceChange, after map[string]any, rules *Rules) []st
 				}
 			}
 		}
-	case "aws_s3_bucket_policy":
+	case "aws_s3_bucket_policy", "aws_sqs_queue_policy", "aws_sns_topic_policy", "aws_kms_key_policy", "aws_ecr_repository_policy",
+		"aws_secretsmanager_secret_policy", "aws_glacier_vault_lock", "aws_elasticsearch_domain_policy", "aws_opensearch_domain_policy":
 		if s, _ := after["policy"].(string); policyPublic(s) {
-			out = append(out, rc.Address+": bucket policy allows any principal")
+			out = append(out, rc.Address+": resource policy allows any principal")
+		}
+	case "aws_kms_key", "aws_sqs_queue", "aws_sns_topic", "aws_ecr_repository", "aws_secretsmanager_secret":
+		if s, _ := after["policy"].(string); policyPublic(s) {
+			out = append(out, rc.Address+": resource policy allows any principal")
+		}
+	case "aws_lambda_permission":
+		if p, _ := after["principal"].(string); p == "*" {
+			out = append(out, rc.Address+": lets any principal invoke the function")
+		}
+	case "aws_lambda_function_url":
+		if t, _ := after["authorization_type"].(string); strings.EqualFold(t, "NONE") {
+			out = append(out, rc.Address+": a function URL without authorization")
 		}
 	case "aws_iam_policy", "aws_iam_role_policy", "aws_iam_user_policy", "aws_iam_group_policy":
 		if s, _ := after["policy"].(string); s != "" {
@@ -671,7 +701,10 @@ func policyWildcards(doc string) []string {
 			continue
 		}
 		for _, a := range stringsOf(s.Action) {
-			if a == "*" || strings.HasSuffix(a, ":*") {
+			// Any action pattern whose part after the service is only
+			// wildcards (*, ?*, **, *?) matches every action of it.
+			_, act, _ := strings.Cut(a, ":")
+			if a == "*" || act != "" && strings.Trim(act, "*?") == "" && strings.Contains(act, "*") || strings.Trim(a, "*?") == "" && a != "" {
 				out = append(out, "IAM policy allows wildcard action "+a)
 			}
 		}

@@ -3,11 +3,17 @@
 Without a managed install, applygate's files belong to the user the agent runs as. The hook blocks the routes it sees, but an agent with that user's shell can, in the end, change anything that user can change: that self-protection is best-effort. A managed install moves the guard out of the agent's reach: root owns every part of it, so the agent's user cannot change it at all. It is the only setup whose self-protection applygate documents as a guarantee ([threat-model.md](threat-model.md#self-protection)).
 
 ```sh
-sudo applygate install --managed            # Claude Code managed hooks next to the user's own
-sudo applygate install --managed --exclusive  # only managed hooks run in Claude Code
-sudo applygate trust                         # in each repository, after reviewing its .applygate.yaml
-applygate doctor                             # check the install
+# Install from a release you verified (docs/install.md), by its full path:
+/usr/bin/sudo /path/to/verified/applygate install --managed --exclusive  # only managed hooks run in Claude Code
+/usr/bin/sudo /path/to/verified/applygate install --managed              # Claude Code managed hooks next to the user's own
+# From then on, use the managed binary by its path:
+/usr/bin/sudo /usr/local/libexec/applygate/applygate trust    # in each repository, after reviewing its .applygate.yaml
+/usr/local/libexec/applygate/applygate doctor                 # check the install
 ```
+
+**Why full paths:** `sudo` and `applygate` found on `PATH` may be programs the agent's user planted. The hook blocks the plants it sees, but a managed install should not depend on that. A planted `sudo` would be handed your password, and a planted `applygate` run as root could change the system config and trust store. So run `/usr/bin/sudo` with an absolute path to a binary root owns, or to a release you verified yourself. `applygate doctor` and the trust prompt print the commands that way.
+
+**`--exclusive` is recommended.** Without it, Claude Code runs user, project and plugin hooks next to the managed one. Those are files the agent's user can write (the hook blocks the writes it sees, such as skills, subagents and commands whose frontmatter declares hooks). From Claude Code's docs, not tested live: hooks run in parallel, and one that returns `updatedInput` replaces the call's input after applygate allowed the original. `--exclusive` sets `allowManagedHooksOnly`, which turns the others off.
 
 It is supported on macOS and Linux. Windows is not supported yet, because applygate does not check file ownership there.
 
@@ -17,7 +23,7 @@ It is supported on macOS and Linux. Windows is not supported yet, because applyg
 |---|---|---|
 | Binary | `/usr/local/libexec/applygate/applygate` | a root-owned copy of the binary that ran the install; the managed hooks run it |
 | System config | `/etc/applygate/config.yaml` | read before the user config, which may then only tighten, like a repository config: loosening settings (`mode: observe`, `strict: false`, a looser `default_tier` or `on_error`, `aliases`, `wrappers`, `unknown_dir: session_root`, disposable or standard environments, the judge, `log_path`, the network checks) come from the system config only. The install writes `mode: enforce` and `approvals: false`, and keeps a file that is already there |
-| Trust store | `/etc/applygate/trusted.json` | the repository configs a person trusted with `sudo applygate trust`. Under a managed install it is the only store that counts |
+| Trust store | `/etc/applygate/trusted.json` | the repository configs a person trusted with the managed binary's `trust`. Under a managed install it is the only store that counts |
 | Claude Code | `managed-settings.d/applygate.json` in `/Library/Application Support/ClaudeCode/` (macOS) or `/etc/claude-code/` (Linux) | the `PreToolUse` hook with matcher `*` and `onFailure: block`, `permissions.disableBypassPermissionsMode: "disable"`, and with `--exclusive` `allowManagedHooksOnly: true` |
 | Codex | `/etc/codex/requirements.toml` | not written: the install prints a snippet to add, since that file is the organisation's policy |
 
@@ -28,8 +34,8 @@ It is supported on macOS and Linux. Windows is not supported yet, because applyg
 ## What changes for the person
 
 - **Your user config may only tighten.** Settings in it that would loosen protection are ignored, and `applygate doctor` lists them; put them in `/etc/applygate/config.yaml` with `sudo` if you want them. This is what keeps the agent's user from loosening the guard through a file it owns.
-- **Repository configs need trusting again,** with `sudo applygate trust` in each repository. Configs trusted before the install are not carried over, because the user's store is one the agent's user could have written.
-- **Every change to a repository config** needs `sudo applygate trust` before it takes effect. Until then every directory it covers is protected.
+- **Repository configs need trusting again,** with `/usr/bin/sudo /usr/local/libexec/applygate/applygate trust` in each repository. Configs trusted before the install are not carried over, because the user's store is one the agent's user could have written.
+- **Every change to a repository config** needs the managed binary's `trust` again before it takes effect. Until then every directory it covers is protected.
 - **The system config** is edited with `sudo`. A system config that root does not own, or that others can write, is not read, and every directory is protected until it is fixed; `doctor` says why.
 - **The judge is the system config's.** A `judge:` section in your user config is ignored; one in the system config cannot be turned off from the user config.
 - **The plan gate runs a root-owned engine only.** To read a saved plan the hook runs `terraform show -json` (or `tofu`). Under a managed install that binary, after symlinks, and its directory must be owned and writable by root only; a Homebrew or `~/.local/bin` install is neither, so the saved plan is unverifiable until you name a root-owned copy in the system config:
@@ -40,14 +46,14 @@ It is supported on macOS and Linux. Windows is not supported yet, because applyg
       terraform: /usr/local/libexec/applygate/terraform
   ```
 
-  `TG_TF_PATH` is held to the same rule. `plan_gate.engines` in the user config is ignored under a managed install.
-- **Upgrading:** run `sudo applygate install --managed` from the new binary. It replaces the managed binary and keeps the system config and trust store.
+  `TG_TF_PATH` is held to the same rule, and so is the `aws` CLI that `preflight.live_identity` runs (`plan_gate.engines.aws`). `plan_gate.engines` in the user config is ignored under a managed install.
+- **Upgrading:** run `/usr/bin/sudo /path/to/verified/applygate install --managed` with the new release, verified as in [install.md](install.md), by its full path. It replaces the managed binary and keeps the system config and trust store.
 
 ## Removing it
 
 ```sh
-sudo applygate uninstall --managed           # removes the binary and the Claude Code drop-in file
-sudo applygate uninstall --managed --purge   # also removes /etc/applygate
+/usr/bin/sudo /usr/local/libexec/applygate/applygate uninstall --managed           # removes the binary and the Claude Code drop-in file
+/usr/bin/sudo /usr/local/libexec/applygate/applygate uninstall --managed --purge   # also removes /etc/applygate
 ```
 
 Without `--purge`, `/etc/applygate` stays: the system config keeps overriding your user config (which may then still only tighten), and repository configs are still judged by its trust store. Remove applygate's hook from Codex's `requirements.toml` yourself.

@@ -859,7 +859,10 @@ func guardNeedles(pattern string) []string {
 	if !strings.ContainsAny(p, "*?[") {
 		out = append(out, p)
 	}
-	if b := path.Base(p); b != "." && b != "/" && b != p && !strings.ContainsAny(b, "*?[") {
+	// The last segment alone only when it is a file name with a dot
+	// (settings.json, .mcp.json) or applygate's own: a bare directory name
+	// such as config, git or plugins is in ordinary code.
+	if b := path.Base(p); b != "." && b != "/" && b != p && !strings.ContainsAny(b, "*?[") && (strings.Contains(b, ".") || strings.Contains(b, "applygate") || strings.Contains(b, "seatbelt")) {
 		out = append(out, b)
 	}
 	return out

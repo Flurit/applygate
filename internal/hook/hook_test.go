@@ -356,8 +356,9 @@ func TestPluginFilesAreGuarded(t *testing.T) {
 			t.Errorf("cp onto %s: %s", p, got)
 		}
 	}
-	// Another plugin's data directory is not ours to guard.
-	if got := run("Write", map[string]any{"file_path": home + "/.claude/plugins/data/other-plugin/state.json", "content": "{}"}); got != "allow" {
+	// Every plugin's files are guarded: another plugin's hooks run outside
+	// this one, and its files decide what they run.
+	if got := run("Write", map[string]any{"file_path": home + "/.claude/plugins/data/other-plugin/state.json", "content": "{}"}); got != "deny" {
 		t.Errorf("other plugin's data: %s", got)
 	}
 }
