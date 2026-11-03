@@ -81,3 +81,18 @@ func TestReviewA1ApplyHasNoTestFlags(t *testing.T) {
 	yes := rc2 == 2 && strings.Contains(errb.String(), "flag provided but not defined")
 	reviewgap.Check(t, "A1", planJSON && yes, "apply still accepts --plan-json (%v, exit %d) or --yes (%v, exit %d): %s", !planJSON, rc1, !yes, rc2, errb.String())
 }
+
+// plan-check, which the Action and the Terragrunt gate run, must judge a
+// replace like the hook does (finding 2T12) and refuse a tier it does not
+// know (finding 2T14).
+func TestReview2T12PlanCheckReplaceIsADestroy(t *testing.T) {
+	var out, errb bytes.Buffer
+	rc := cmdPlanCheck([]string{"--tier", "standard", "../../harness/pack/plans/replace_stateless.json"}, &out, &errb)
+	reviewgap.Check(t, "2T12", rc != 0, "plan-check allowed a replace in a standard tier (the hook asks): %s", out.String())
+}
+
+func TestReview2T14PlanCheckRejectsUnknownTier(t *testing.T) {
+	var out, errb bytes.Buffer
+	rc := cmdPlanCheck([]string{"--tier", "prod", "../../harness/pack/plans/s5_replace_db.json"}, &out, &errb)
+	reviewgap.Check(t, "2T14", rc == 2, "plan-check --tier prod exited %d: %s", rc, out.String())
+}

@@ -310,11 +310,17 @@ func archiveStates(path string) []string {
 // LockfileDrift asks git whether .terraform.lock.hcl or module/provider
 // sources changed since HEAD. It runs git read-only with a short timeout and
 // returns nil when git or the repository is unavailable.
+// gitCommand is how the hook runs git in a repository.
+func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	return cmd
+}
+
 func LockfileDrift(dir string) *Finding {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "--no-optional-locks", "diff", "HEAD", "--no-color", "--no-ext-diff", "-U0", "--", ".terraform.lock.hcl", "*.tf")
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd := gitCommand(ctx, dir, "--no-optional-locks", "diff", "HEAD", "--no-color", "--no-ext-diff", "-U0", "--", ".terraform.lock.hcl", "*.tf")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if cmd.Run() != nil {
