@@ -320,7 +320,7 @@ func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	base := []string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat",
 		"-c", "core.sshCommand=false", "-c", "core.askPass=", "--no-pager"}
 	cmd := exec.CommandContext(ctx, gitPath(), append(base, args...)...)
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + os.Getenv("HOME"), "LANG=C", "GIT_TERMINAL_PROMPT=0",
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + os.Getenv("HOME"), "TMPDIR=" + os.TempDir(), "LANG=C", "GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1"}
 	return cmd
 }
@@ -334,7 +334,10 @@ var gitBin struct {
 // put earlier on PATH is not the one the hook runs.
 func gitPath() string {
 	gitBin.once.Do(func() {
-		for _, p := range []string{"/usr/bin/git", "/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"} {
+		// On macOS /usr/bin/git is a shim that looks the real one up with
+		// xcrun, which can be slow; the real binaries come first.
+		for _, p := range []string{"/Library/Developer/CommandLineTools/usr/bin/git", "/Applications/Xcode.app/Contents/Developer/usr/bin/git",
+			"/usr/bin/git", "/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"} {
 			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
 				gitBin.path = p
 				return
@@ -353,7 +356,7 @@ func gitPath() string {
 // which runs no filters) with the files on disk, rather than running git
 // diff, which can start the repository's fsmonitor, textconv and filters.
 func LockfileDrift(dir string) *Finding {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 	files, _ := filepath.Glob(filepath.Join(dir, "*.tf"))
 	files = append([]string{filepath.Join(dir, ".terraform.lock.hcl")}, files...)
