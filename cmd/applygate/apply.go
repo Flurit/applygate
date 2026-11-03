@@ -10,9 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
-	"unsafe"
 
 	"github.com/Flurit/applygate/internal/approval"
 	"github.com/Flurit/applygate/internal/config"
@@ -48,17 +46,9 @@ var applyExec = func(bin string, args []string, dir string, stdin io.Reader, std
 }
 
 // isTerminal reports whether r is an interactive terminal; tests replace it.
-// It asks the terminal driver (isatty), so /dev/null and other character
-// devices do not count.
-var isTerminal = func(r io.Reader) bool {
-	f, ok := r.(*os.File)
-	if !ok {
-		return false
-	}
-	var t syscall.Termios
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), uintptr(ioctlGetTermios), uintptr(unsafe.Pointer(&t)))
-	return errno == 0
-}
+// It asks the terminal driver (isatty; the console mode on Windows), so
+// /dev/null and other character devices do not count.
+var isTerminal = terminal
 
 // applyPlanJSON replaces how apply reads a saved plan's JSON (tests only).
 var applyPlanJSON func(engine, dir, planfile string) ([]byte, error)

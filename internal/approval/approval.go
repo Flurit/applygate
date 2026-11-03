@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Flurit/applygate/internal/config"
@@ -284,7 +283,7 @@ func update(path string, now time.Time, f func([]Record) []Record) error {
 	// keeps its decision when the store cannot be updated.
 	locked := false
 	for i := 0; i < 20; i++ {
-		if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+		if err := tryLock(lock); err == nil {
 			locked = true
 			break
 		}
@@ -293,7 +292,7 @@ func update(path string, now time.Time, f func([]Record) []Record) error {
 	if !locked {
 		return ErrLocked
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	defer unlock(lock)
 	recs, err := read(path)
 	if err != nil {
 		return err
