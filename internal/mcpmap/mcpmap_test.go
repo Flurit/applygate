@@ -114,3 +114,28 @@ func TestTranslateRound2(t *testing.T) {
 		}
 	}
 }
+
+// A server-split command is judged as the one argv the server builds: a
+// newline, ; or $( ) is part of a word there, not a second command (4M1).
+func TestServerSplitWords(t *testing.T) {
+	for in, want := range map[string]string{
+		"aws s3\nrb s3://prod-bucket --force":  "aws s3 rb s3://prod-bucket --force",
+		`aws s3 ls "s3://b/a b" --query 'x[]'`: `aws s3 ls 's3://b/a b' --query 'x[]'`,
+		`aws s3 ls s3://b; rm -rf /`:           `aws s3 ls 's3://b;' rm -rf /`,
+		`aws s3 ls $(terraform destroy)`:       `aws s3 ls '$(terraform' 'destroy)'`,
+		`aws s3 ls "a\"b" 'c\d' e\ f`:          `aws s3 ls 'a"b' 'c\d' 'e f'`,
+	} {
+		f, why := splitWords(in)
+		for i := range f {
+			f[i] = quote(f[i])
+		}
+		if got := strings.Join(f, " "); why != "" || got != want {
+			t.Errorf("%q: got %q (%s), want %q", in, got, why, want)
+		}
+	}
+	for _, in := range []string{`aws s3 ls 'x`, `aws s3 ls x\`, `aws s3 ls | sh`, `aws s3 ls && rm x`} {
+		if _, why := splitWords(in); why == "" {
+			t.Errorf("%q: split", in)
+		}
+	}
+}

@@ -37,7 +37,9 @@ func judgeSetup(t *testing.T, mode, userCfg string) (string, Options) {
 	root := setup(t, mode, "auto")
 	user := filepath.Join(t.TempDir(), "config.yaml")
 	if userCfg == "" {
-		userCfg = "version: 1\njudge:\n  enabled: true\n  skip_mcp: [\"mcp__browser__*\"]\n"
+		// Strict shapes would ask about these unknown programs before the
+		// judge; these tests are about the judge.
+		userCfg = "version: 1\nstrict_shapes: false\njudge:\n  enabled: true\n  skip_mcp: [\"mcp__browser__*\"]\n"
 		if mode == "observe" {
 			// Observe mode comes from the user config only.
 			userCfg += "mode: observe\n"
@@ -154,7 +156,7 @@ func TestJudgeSeesMCPAndWrites(t *testing.T) {
 func TestJudgeNoEndpointChosen(t *testing.T) {
 	// Turning the judge on without choosing an endpoint leaves the rules to
 	// decide, as without the judge, and says why in the log.
-	root, opt := judgeSetup(t, "enforce", "version: 1\njudge:\n  enabled: true\n")
+	root, opt := judgeSetup(t, "enforce", "version: 1\nstrict_shapes: false\njudge:\n  enabled: true\n")
 	log := filepath.Join(t.TempDir(), "log.jsonl")
 	opt.LogPath = log
 	o := Run(Claude{}, strings.NewReader(event("Bash", filepath.Join(root, "prod"), map[string]any{"command": "pulumi destroy --yes"})), opt)

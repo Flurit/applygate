@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Red-team round 4 fixes** (`review/v0.6.0/2026-11-03-red-team-round-4.md`, plan in `2026-11-03-round-4-fix-plan.md`):
+  - **The managed install is the documented guarantee.** Without one, self-protection is best-effort, and the README, threat model and limits say so.
+  - **Strict shapes are on** (`strict_shapes`, user config only to turn off). In a protected environment a shell command that is not a plain list or pipeline of known programs asks; a wrapper or shell counts as the program it runs. This covers exported functions, arithmetic on a variable holding `$(…)`, `PS4` under tracing and `BASH_ENV=/dev/stdin` (4C1 to 4C4). Measured cost: 29 of 162 real agent calls (18%) ask in a protected directory.
+  - **Tiers:**
+    - `-backend-config` files are read as HCL or JSON, as Terraform reads them; a file that does not parse, a computed value, a missing file, or one written earlier in the same command is an unknown backend (4T3, 4T4). A computed value in the declared block stays unknown (4H9).
+    - `..` is resolved after symlinks for `-chdir`, planfiles, `TF_DATA_DIR` and redirections; a `cd` through a symlink and `..` is unknown unless `-P` (4T1, 4T2).
+    - A provider `profile` or `role_arn` in `var.NAME` takes every value the variable can have (`-var`, `-var-file`, `TF_VAR_*`, tfvars, the default); otherwise it is unknown (4H10).
+    - `-state`, `-state-out`, `-backup` and a local backend's `path` bring their directory's tier (4H11).
+    - Terragrunt `remote_state` values, a local `terraform.source`, `--source` and `TG_SOURCE` are signals, and `--config` judges both directories (4H12, 4H26).
+    - Repository configs are found from the directory's real path (4H15).
+  - **Plan gate:** a planfile downloaded or named by an earlier step (`aws s3 cp`, `scp`, `rclone`, `7z x`, a script) is unverifiable (4H13); IAM trust policies, attachment ARNs, default security groups and `publicly_accessible` known only after apply are flagged (4H14).
+  - **MCP:** a command a server splits itself (`call_aws`, `call_kubectl`, …) is judged as the one argv it becomes, so a newline no longer splits it for the analyzer only (4M1).
+  - **Managed install:** the plan gate runs an engine only from `plan_gate.engines` or a root-owned `PATH` entry (4H1), and writing `terraform`, `tofu` or `terragrunt` into a `PATH` directory is tampering everywhere. The user config's `judge` section is ignored. The trust hint names the managed binary's path.
+  - **The log:** fields are redacted before they are cut, a private key cut off is redacted to the end, and one entry redacts at most 512 KB, so a huge command cannot push the hook past the host's timeout (4H3).
+
 - **Red-team round 2 fixes, part 1** (`review/v0.6.0/2026-11-03-red-team-round-2.md`):
   - **Default-deny near guard files.** A shell command that names a guard file, or a guarded directory, is tampering unless the program only reads. This replaces recognizing each writer: `sort -o`, `yq -i`, `awk -i inplace`, `busybox`, `openssl -out`, `tar -C … -x`, `git clean` and git plumbing that name a guard file are all blocked. Unresolved words count when their literal text or their glob names one (`${HOME:-x}/.claude/settings.json`, `rm ~/.claude/setting*.json`).
   - **Redirections** on compound commands (`{ …; } > f`), bare redirections and `exec` redirections are checked.

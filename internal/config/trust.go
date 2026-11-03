@@ -39,6 +39,11 @@ func TrustPath() string {
 // TrustCommand is what a person runs to trust a config.
 func TrustCommand() string {
 	if Managed() {
+		// The managed binary by its path: the applygate first on the
+		// agent's PATH may be one it planted (R6-4).
+		if b := ManagedBinary(); b != "" {
+			return "sudo " + b + " trust"
+		}
 		return "sudo applygate trust"
 	}
 	return "applygate trust"

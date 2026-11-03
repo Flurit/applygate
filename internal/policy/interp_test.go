@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Flurit/applygate/internal/classify"
 	"github.com/Flurit/applygate/internal/config"
 )
 
@@ -39,8 +40,18 @@ func TestFileOnlyEditAllowedWithNoteAndNonProdIsStandard(t *testing.T) {
 	prod := filepath.Join(dir, "envs", "prod")
 	nonprod := filepath.Join(dir, "non-prod", "us-east-1", "qa")
 
+	// Under strict shapes (the default) an interpreter body in a protected
+	// tier asks, file edit or not.
+	ev := Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: edit, Cwd: prod, CanAsk: true, DirKnown: true}
+	if d := Decide(ev, cfg, deps); d.Verdict != Ask || len(d.Actions) == 0 || d.Actions[0].Class != classify.ComplexShape {
+		t.Fatalf("strict shapes: file-only edit in prod: verdict %s, actions %+v", d.Verdict, d.Actions)
+	}
+	// The file-only rule itself, with strict shapes turned off.
+	off := false
+	cfg.StrictShapes = &off
+
 	// File-only edit: allowed in the protected tier, with a note that says why.
-	d := Decide(Event{Agent: "claude", Tool: "Bash", Kind: KindShell, Command: edit, Cwd: prod, CanAsk: true, DirKnown: true}, cfg, deps)
+	d := Decide(ev, cfg, deps)
 	if d.Verdict != Allow || len(d.Actions) != 0 {
 		t.Fatalf("file-only edit in prod: verdict %s, actions %+v", d.Verdict, d.Actions)
 	}

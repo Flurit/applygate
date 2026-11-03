@@ -479,3 +479,25 @@ func TestNonCanonicalActions(t *testing.T) {
 		}
 	}
 }
+
+// Every attribute the exposure rules read is flagged when the plan knows it
+// only after apply (4H14).
+func TestUnknownWatchedTypes(t *testing.T) {
+	for typ, attr := range map[string]string{
+		"aws_iam_role":                   "assume_role_policy",
+		"aws_iam_role_policy_attachment": "policy_arn",
+		"aws_default_security_group":     "ingress",
+		"aws_db_instance":                "publicly_accessible",
+	} {
+		list := []map[string]any{{"address": typ + ".x", "mode": "managed", "type": typ, "name": "x",
+			"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{}, "after_unknown": map[string]any{attr: true}}}}
+		b, _ := json.Marshal(map[string]any{"format_version": "1.2", "resource_changes": list})
+		res, err := Evaluate(Input{MaxDestroy: -1, PlanJSON: b}, DefaultRules())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if f := finding(res, "unknown-watched"); f == nil {
+			t.Errorf("%s.%s unknown: not flagged (%+v)", typ, attr, res.Findings)
+		}
+	}
+}

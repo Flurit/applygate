@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/Flurit/applygate/internal/classify"
 	"github.com/Flurit/applygate/internal/decisionlog"
@@ -368,25 +367,15 @@ func isMCPTool(name string) bool {
 const maxMCPArgs = 4096
 
 // mcpArguments is an MCP call's tool_input as compact JSON for the log,
-// capped at maxMCPArgs bytes. The decision log redacts likely secrets in it
-// like in any command.
+// redacted and capped at maxMCPArgs bytes, with bounded work however large
+// the input (4H3).
 func mcpArguments(raw json.RawMessage) string {
 	var buf bytes.Buffer
 	if json.Compact(&buf, raw) != nil {
 		buf.Reset()
 		buf.Write(raw)
 	}
-	// Redact before cutting: a cut through a private key would leave its
-	// body without the END line the redaction looks for.
-	s := decisionlog.Redact(buf.String())
-	if len(s) > maxMCPArgs {
-		cut := maxMCPArgs
-		for cut > 0 && !utf8.RuneStart(s[cut]) {
-			cut--
-		}
-		s = s[:cut] + fmt.Sprintf(" …(%d bytes, truncated)", len(s))
-	}
-	return s
+	return decisionlog.RedactCut(buf.String(), maxMCPArgs)
 }
 
 // workDir returns the directory a Codex shell command runs in: the first of

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -68,6 +69,7 @@ var Table = map[classify.Class]map[config.Tier]Verdict{
 	classify.Dynamic:          {config.Protected: Ask, config.Standard: Ask, config.Disposable: Allow},
 	// Not in the spec table; chosen here and documented in docs/policy.md.
 	classify.UnknownWrapper:   {config.Protected: Ask, config.Standard: Allow, config.Disposable: Allow},
+	classify.ComplexShape:     {config.Protected: Ask, config.Standard: Allow, config.Disposable: Allow},
 	classify.Mutating:         {config.Protected: Ask, config.Standard: Allow, config.Disposable: Allow},
 	classify.CloudWrite:       {config.Protected: Ask, config.Standard: Allow, config.Disposable: Allow},
 	classify.CredentialAccess: {config.Protected: Ask, config.Standard: Ask, config.Disposable: Ask},
@@ -338,6 +340,9 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 		res := shell.Analyze(ev.Command, ShellOptions(cfg, copt, ev.Cwd, deps.Env, deps.ReadFile))
 		actions = classify.Invocations(res, copt)
 		notes = res.Notes
+		if cfg.StrictShapesOn() {
+			actions = append(actions, shapeActions(ev, res)...)
+		}
 		// apply_patch run from the shell (Codex puts it on PATH) edits the
 		// files its patch names, like the apply_patch tool.
 		if strings.Contains(ev.Command, "apply_patch") || strings.Contains(ev.Command, "applypatch") {
@@ -356,13 +361,13 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 	}
 
 	d := Decision{Verdict: Allow, Mode: cfg.Mode, Notes: notes}
-	selected := map[string]string{}     // dir -> workspace selected earlier in this command
-	backendCfg := map[string][]string{} // dir -> -backend-config of an earlier init in this command
+	selected := map[string]string{}            // dir -> workspace selected earlier in this command
+	backendCfg := map[string]classify.Action{} // dir -> an earlier init in this command with -backend-config
 	for _, a := range actions {
 		if len(a.BackendConfig) > 0 {
-			backendCfg[a.Dir] = a.BackendConfig
-		} else if bc, ok := backendCfg[a.Dir]; ok && isTerraform(a.Engine) {
-			a.BackendConfig = bc
+			backendCfg[a.Dir] = a
+		} else if init, ok := backendCfg[a.Dir]; ok && isTerraform(a.Engine) {
+			a.BackendConfig, a.BackendConfigWritten = init.BackendConfig, init.BackendConfigWritten
 		}
 		if ws, ok := selected[a.Dir]; ok && ws == classify.UnknownWorkspace && a.Env["TF_WORKSPACE"] == "" {
 			a.WorkspaceUnknown = true
@@ -471,17 +476,21 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		}
 		recorded = preflight.InitBackendEnv(a.Dir, env)
 		declared = preflight.DeclaredBackend(a.Dir)
-		sig.ProviderProfiles, sig.ProviderRoles = preflight.ProviderAWS(a.Dir)
+		sig.ProviderProfiles, sig.ProviderRoles, sig.ProviderUnknown = preflight.ProviderAWS(a.Dir, preflight.Vars{Values: a.Vars, Files: a.VarFiles, Env: env, Unknown: a.VarsUnknown})
 		if len(a.BackendConfig) > 0 {
 			// An init in this command re-points the directory: judge this
 			// command against the backend it will use, not the old one.
 			sig.BackendConfig = strings.Join(a.BackendConfig, " ")
 			target, err := preflight.BackendFromConfig(a.Dir, declared, recorded, a.BackendConfig, deps.ReadFile)
+			if err == nil && a.BackendConfigWritten {
+				err = errors.New("an earlier step of this command writes it")
+			}
 			// The init itself changes no state; an unknown target only matters
 			// for commands that read or write state after it.
 			if err != nil && a.Class != classify.ReadOnly {
 				r.Findings = append(r.Findings, preflight.Finding{Rule: "backend-config-unreadable", Severity: preflight.High,
 					Message: "the -backend-config given to init cannot be read, so the backend this command uses is unknown: " + err.Error()})
+				sig.BackendUnknown = "the -backend-config given to init cannot be read (" + err.Error() + ")"
 			}
 			recorded = target
 		}
@@ -494,6 +503,18 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		}
 		if be != nil && be.Unreadable != "" {
 			sig.BackendUnknown = be.Unreadable
+		}
+		for _, f := range a.StateFiles {
+			sig.StateDirs = append(sig.StateDirs, filepath.Dir(f))
+		}
+		if be != nil && be.Type == "local" && be.Config["path"] != "" {
+			sig.StateDirs = append(sig.StateDirs, filepath.Dir(shell.PhysicalJoin(a.Dir, be.Config["path"])))
+		}
+		if a.StateUnknown {
+			sig.BackendUnknown = "a -state path cannot be resolved statically"
+		}
+		if a.Engine == "terragrunt" {
+			terragruntSignals(&sig, a, be)
 		}
 		if be != nil {
 			r.Backend = be.URL()
@@ -546,7 +567,11 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 			why = "the analysis of this command stopped early, so what it did not see may run in any directory"
 		}
 		res = cfg.ResolveUnder(rootOf(cfg, ev), sig, why)
-	case dirKnown || a.Dir == "":
+	case dirKnown || a.Dir == "" || a.Class == classify.ComplexShape:
+		// Strict shapes is judged where the command is known to run: on a
+		// host that does not report the directory, at the session
+		// directory. The command's own actions keep the unknown-directory
+		// rule.
 		res = cfg.Resolve(sig)
 	case cfg.UnknownDirMostProtected():
 		res = cfg.ResolveUnknownDir(ev.Agent, a.Dir, sig)
@@ -661,6 +686,10 @@ func terraformDir(dir string) bool {
 // otherRepo reports whether dir is under a repository config the session's
 // config did not read.
 func otherRepo(cfg *config.Config, dir string) bool {
+	if dir == cfg.LoadedFor {
+		// Load looked up this directory's configs: none is unread.
+		return false
+	}
 	read := map[string]bool{}
 	for _, p := range append(append([]string(nil), cfg.Sources...), cfg.Untrusted...) {
 		read[p] = true
@@ -693,7 +722,7 @@ func SavedPlanVerdict(res *plangate.Result, t config.Tier) Verdict {
 // declared one.
 func DirSignals(dir string, env map[string]string) (config.Signals, *preflight.Backend) {
 	sig := config.Signals{Dir: dir, Workspace: preflight.Workspace(dir, env)}
-	sig.ProviderProfiles, sig.ProviderRoles = preflight.ProviderAWS(dir)
+	sig.ProviderProfiles, sig.ProviderRoles, sig.ProviderUnknown = preflight.ProviderAWS(dir, preflight.Vars{Env: env})
 	be := preflight.InitBackendEnv(dir, env)
 	if be == nil {
 		be = preflight.DeclaredBackend(dir)
@@ -711,6 +740,38 @@ func DirSignals(dir string, env map[string]string) (config.Signals, *preflight.B
 		sig.AWSProfile = p
 	}
 	return sig, be
+}
+
+// terragruntSignals adds what the unit's terragrunt.hcl and --source say:
+// remote_state values as name hints, and a local source's directory.
+func terragruntSignals(sig *config.Signals, a classify.Action, be *preflight.Backend) {
+	tg := preflight.ReadTerragrunt(a.Dir)
+	source := a.Source
+	if tg != nil {
+		vals := map[string]string{}
+		if be != nil {
+			maps.Copy(vals, be.Config)
+		}
+		for k, v := range tg.Backend {
+			if vals[k] == "" {
+				vals[k] = v
+			}
+		}
+		sig.BackendValues = vals
+		if source == "" {
+			source = tg.Source
+		}
+	}
+	if a.SourceUnknown {
+		sig.BackendUnknown = "the terragrunt --source cannot be resolved statically"
+	}
+	// A local path: not a URL, a go-getter forced source (git::, s3::) or a
+	// registry address (tfr:).
+	if source != "" && !strings.Contains(source, "://") && !strings.Contains(source, "::") && !strings.HasPrefix(source, "tfr:") && !strings.HasPrefix(source, "git@") {
+		p, _, _ := strings.Cut(source, "?")
+		p = strings.Replace(p, "//", "/", 1)
+		sig.SourceDirs = append(sig.SourceDirs, shell.PhysicalJoin(a.Dir, p))
+	}
 }
 
 // awsProfileEnv is the profile the AWS CLI and SDKs pick from the
@@ -927,6 +988,8 @@ func nextStep(c classify.Class, engine string) string {
 		return "Write the command out literally, without eval, variables for subcommands, encoded text, or piping generated or fetched text into a shell, so it can be checked."
 	case classify.UnknownWrapper:
 		return "Run the underlying commands directly so they can be checked, or ask the user to run this wrapper."
+	case classify.ComplexShape:
+		return "In a protected environment only plain commands run without asking: a list or pipeline of known programs, without functions, loops, substitutions or other shells. Split the command into plain steps, or ask the user."
 	case classify.CredentialAccess:
 		return "Do not read credentials. Use the configured profile through the CLI instead, and ask the user if access is really needed."
 	case classify.Mutating, classify.CloudWrite:
@@ -1030,4 +1093,28 @@ func Run(timeout time.Duration, f func(context.Context) Decision) (d Decision, e
 
 func isTerraform(engine string) bool {
 	return engine == "terraform" || engine == "tofu" || engine == "terragrunt"
+}
+
+// shapeActions are the strict-shapes actions of a shell command that is not
+// plain: one per directory its programs are known to run in, each judged at
+// that directory's tier: ask in protected, allow elsewhere. A part the
+// analysis lost is judged by the command's own actions.
+func shapeActions(ev Event, res *shell.Result) []classify.Action {
+	ok, why := shell.PlainShape(ev.Command, res)
+	if ok {
+		return nil
+	}
+	dirs := map[string]bool{ev.Cwd: true}
+	for _, inv := range res.Invocations {
+		if inv.Dir != "" {
+			dirs[inv.Dir] = true
+		}
+	}
+	var out []classify.Action
+	for d := range dirs {
+		out = append(out, classify.Action{Class: classify.ComplexShape, Engine: "shell", Command: ev.Command, Dir: d,
+			Why: "strict shapes: the command is not a plain list or pipeline of known programs (" + why + ")"})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Dir < out[j].Dir })
+	return out
 }

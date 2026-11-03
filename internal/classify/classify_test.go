@@ -1,6 +1,8 @@
 package classify
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Flurit/applygate/internal/shell"
@@ -97,6 +99,61 @@ func TestAnyDir(t *testing.T) {
 		}
 		if anyDir != want {
 			t.Errorf("%q: AnyDir %v, want %v", cmd, anyDir, want)
+		}
+	}
+}
+
+// A .. after a symlink is resolved where the link leads, for -chdir, cd -P
+// and a plan written with -out (4T1, 4T2).
+func TestDotDotAfterSymlink(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"envs/dev", "envs/prod/modules"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("../prod/modules", filepath.Join(root, "envs/dev/m")); err != nil {
+		t.Fatal(err)
+	}
+	dev, prod := filepath.Join(root, "envs/dev"), filepath.Join(root, "envs/prod")
+	for cmd, want := range map[string]string{
+		"terraform -chdir=m/.. destroy":     prod,
+		"cd -P m/.. && terraform destroy":   prod,
+		"cd m/.. && terraform destroy":      "", // cd or cd -P: not known
+		"cd ../dev/. && terraform destroy":  dev,
+		"terraform -chdir=../dev/m/.. plan": prod,
+	} {
+		acts := classify(t, cmd, dev, nil)
+		if len(acts) == 0 || acts[len(acts)-1].Dir != want {
+			t.Errorf("%q: %+v, want dir %q", cmd, acts, want)
+		}
+	}
+	acts := classify(t, "terraform plan -destroy -out=../dev/m/../tfplan && terraform apply tfplan", prod, nil)
+	if a := acts[len(acts)-1]; !a.PlanWritten {
+		t.Errorf("plan through a symlinked -out not seen as written: %+v", a)
+	}
+}
+
+// A planfile replaced by a program applygate does not model is not the plan
+// that will be applied (4H13).
+func TestPlanReplacedEarlier(t *testing.T) {
+	for cmd, want := range map[string]bool{
+		"aws s3 cp s3://b/tfplan tfplan && terraform apply tfplan": true,
+		"scp host:tfplan . && terraform apply tfplan":              true,
+		"rclone copyto r:tfplan tfplan && terraform apply tfplan":  true,
+		"7z x plan.7z && terraform apply tfplan":                   true,
+		"python3 fetch.py --out=tfplan && terraform apply tfplan":  true,
+		"sha256sum tfplan && terraform apply tfplan":               false,
+		"terraform show tfplan && terraform apply tfplan":          false,
+		"tflint . && terraform apply tfplan":                       false,
+		"aws s3 cp tfplan s3://b/tfplan && terraform apply tfplan": false,
+	} {
+		acts := classify(t, cmd, "/r/envs/prod", nil)
+		if got := acts[len(acts)-1].PlanWritten; got != want {
+			t.Errorf("%q: PlanWritten %v, want %v", cmd, got, want)
 		}
 	}
 }

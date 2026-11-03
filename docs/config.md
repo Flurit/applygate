@@ -18,9 +18,10 @@ applygate reads these config files. Unknown keys are rejected.
   - `plan_gate.scope`, a larger `plan_gate.max_destroy`, `plan_gate.run_show: false`;
   - preflight switches set to `false`;
   - `wrappers` over a shell, engine or interpreter;
-  - `approvals: true`, `unknown_dir: session_root`, `log_path`, the network checks and the model judge.
+  - `approvals: true`, `unknown_dir: session_root`, `log_path`, the network checks and the model judge;
+  - `strict_shapes: false` and `plan_gate.engines`.
 
-  In a repository config they are ignored, and `doctor` says which.
+  In a repository config they are ignored, and `doctor` says which. Under a managed install the same holds for the user config, and its `judge` and `plan_gate.engines` are ignored whatever they say.
 - **Path patterns.** A repository config's paths, including `**` patterns, are relative to its own directory. The user config's `**` patterns match anywhere.
 
 ```yaml
@@ -33,6 +34,7 @@ name_hints: true         # treat prod/production/prd/live as a whole word in nam
 unknown_dir: most_protected   # most_protected | session_root: how a command is judged when the host does not report its directory (Codex 0.165.0); a repository config may set most_protected but not session_root
 approvals: false         # user config only: on agents that cannot show an ask prompt, let a person allow one asked call with `applygate approve ID` (docs/policy.md step 9). Off by default: on one machine the agent can reach any terminal the person can, so turning this on trusts that no agent runs `applygate approve` in a way applygate does not recognise
 log_path: ~/.local/state/applygate/decisions.jsonl   # user config only
+strict_shapes: true      # in a protected environment, ask about a shell command that is not a plain list or pipeline of known programs (docs/policy.md step 3); false only from the user config
 aliases: {tf: terraform} # user config only
 
 environments:            # any matching signal applies; the most protected match wins
@@ -53,6 +55,7 @@ plan_gate:
   scope: ["module.app.*"]       # optional: changes outside are a high finding
   run_show: true                # run "<engine> show -json <planfile>" for apply <planfile>
   show_timeout: 20s
+  engines: {}                   # user or system config only: absolute paths of the terraform, tofu and terragrunt the hook runs; without one it looks the name up on PATH (docs/managed.md)
 
 preflight:
   stale_state: true

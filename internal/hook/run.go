@@ -94,24 +94,32 @@ func EnvMap() map[string]string {
 // Terragrunt cache directory that holds it. The subprocess is cancelled
 // when parent is done (the internal deadline) or after timeout, whichever
 // comes first.
-func ShowPlan(parent context.Context, timeout time.Duration) func(engine, dir, planfile string) ([]byte, error) {
+func ShowPlan(parent context.Context, timeout time.Duration, engineBin func(string) (string, error)) func(engine, dir, planfile string) ([]byte, error) {
 	return func(engine, dir, planfile string) ([]byte, error) {
-		bin := engine
-		switch bin {
+		name := engine
+		switch name {
 		case "", "terraform":
-			bin = "terraform"
+			name = "terraform"
 		case "terragrunt":
-			bin = "terraform"
-			if p := os.Getenv("TG_TF_PATH"); p != "" {
-				bin = p
-			} else if p := os.Getenv("TERRAGRUNT_TFPATH"); p != "" {
-				bin = p
-			}
+			name = "terraform"
 			d, err := terragruntCacheDir(dir, planfile)
 			if err != nil {
 				return nil, err
 			}
 			dir = d
+		}
+		bin, err := engineBin(name)
+		if engine == "terragrunt" && err == nil {
+			// Terragrunt runs the binary TG_TF_PATH names; it is not
+			// trusted under a managed install.
+			if p := os.Getenv("TG_TF_PATH"); p != "" {
+				bin, err = engineBin(p)
+			} else if p := os.Getenv("TERRAGRUNT_TFPATH"); p != "" {
+				bin, err = engineBin(p)
+			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%s show not run: %v", name, err)
 		}
 		ctx, cancel := context.WithTimeout(parent, timeout)
 		defer cancel()
@@ -192,7 +200,7 @@ func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
 	d := policy.Deps{Env: opt.Env, PlanJSON: opt.PlanJSON,
 		LoadConfig: func(dir string) (*config.Config, error) { return config.Load(opt.UserConfig, dir) }}
 	if d.PlanJSON == nil && cfg.RunShow() {
-		d.PlanJSON = ShowPlan(ctx, cfg.ShowTimeout())
+		d.PlanJSON = ShowPlan(ctx, cfg.ShowTimeout(), cfg.EngineBinary)
 	}
 	if !opt.NoGit {
 		// One git check per directory: a command with hundreds of destroys
@@ -215,7 +223,15 @@ func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
 	}
 	if cfg.Preflight.LiveState {
 		d.StatePull = func(engine, dir string) ([]byte, error) {
-			return preflight.PullState(ctx, engine, dir, cfg.ShowTimeout())
+			name := engine
+			if name == "" || name == "terragrunt" {
+				name = "terraform"
+			}
+			bin, err := cfg.EngineBinary(name)
+			if err != nil {
+				return nil, err
+			}
+			return preflight.PullState(ctx, bin, dir, cfg.ShowTimeout())
 		}
 	}
 	return d

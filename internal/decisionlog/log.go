@@ -77,6 +77,8 @@ var secretPatterns = []redaction{
 	// Private keys first: the name=value pattern would otherwise eat the
 	// -----BEGIN line and leave the key body.
 	{regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY[A-Z ]*-----.*?-----END [A-Z ]*PRIVATE KEY[A-Z ]*-----`), false},
+	// A key whose END was cut off: everything after its BEGIN.
+	{regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY[A-Z ]*-----.*`), false},
 	// Token formats.
 	{regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`), false},
 	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`), false},
@@ -145,22 +147,61 @@ func Redact(s string) string {
 	return s
 }
 
-// maxField caps a text field of a log entry, before redaction: redacting
-// megabytes of command text would take seconds the hook does not have, and
-// one call must not fill the log.
-const maxField = 64 << 10
+// maxField caps a text field of a log entry, and maxRedact the text one
+// entry redacts in all: redacting megabytes of command text would take
+// seconds the hook does not have (4H3), and one call must not fill the log.
+const (
+	maxField  = 64 << 10
+	maxRedact = 512 << 10
+)
 
-// capField cuts s to maxField bytes at a rune boundary, saying how much was
-// left out.
-func capField(s string) string {
-	if len(s) <= maxField {
+// RedactCut redacts s and cuts it to max bytes at a rune boundary, saying
+// how much was left out. The redaction runs before the cut, so a cut cannot
+// split a secret out of the pattern that finds it, on at most 2*max bytes,
+// so its work is bounded; a private key cut there is redacted to the end.
+func RedactCut(s string, max int) string {
+	n := len(s)
+	s = Redact(cutRunes(s, 2*max))
+	if n <= max && len(s) <= max {
 		return s
 	}
-	cut := maxField
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
+	return cutRunes(s, max) + fmt.Sprintf(" …(%d bytes, cut for the log)", n)
+}
+
+func cutRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
 	}
-	return s[:cut] + fmt.Sprintf(" …(%d bytes, cut for the log)", len(s))
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// redactor redacts an entry's fields within maxRedact bytes in all; the
+// same text is redacted once. A field past the budget is not logged.
+type redactor struct {
+	left int
+	done map[string]string
+}
+
+func (r *redactor) field(s string) string {
+	if s == "" {
+		return s
+	}
+	if out, ok := r.done[s]; ok {
+		return out
+	}
+	cost := min(len(s), 2*maxField)
+	var out string
+	if cost > r.left {
+		out = fmt.Sprintf("[%d bytes, not logged: the entry is over the log's redaction budget]", len(s))
+	} else {
+		r.left -= cost
+		out = RedactCut(s, maxField)
+	}
+	r.done[s] = out
+	return out
 }
 
 func redactEntry(e *Entry) {
@@ -173,36 +214,37 @@ func redactEntry(e *Entry) {
 			e.Actions[i].Findings[j].Evidence = append([]string(nil), e.Actions[i].Findings[j].Evidence...)
 		}
 	}
-	e.Command = Redact(capField(e.Command))
+	r := &redactor{left: maxRedact, done: map[string]string{}}
+	e.Command = r.field(e.Command)
+	e.Error = r.field(e.Error)
 	for i := range e.Actions {
-		e.Actions[i].Command = Redact(capField(e.Actions[i].Command))
-		e.Actions[i].Why = Redact(capField(e.Actions[i].Why))
+		e.Actions[i].Command = r.field(e.Actions[i].Command)
+		e.Actions[i].Why = r.field(e.Actions[i].Why)
 		for j := range e.Actions[i].Via {
-			e.Actions[i].Via[j] = Redact(capField(e.Actions[i].Via[j]))
+			e.Actions[i].Via[j] = r.field(e.Actions[i].Via[j])
 		}
 		for j := range e.Actions[i].Findings {
 			f := &e.Actions[i].Findings[j]
-			f.Message = Redact(capField(f.Message))
+			f.Message = r.field(f.Message)
 			for k := range f.Evidence {
-				f.Evidence[k] = Redact(capField(f.Evidence[k]))
+				f.Evidence[k] = r.field(f.Evidence[k])
 			}
 		}
 	}
-	e.Error = Redact(capField(e.Error))
 	// Notes quote commands too (the MCP note holds the translated one).
 	e.Notes = append([]string(nil), e.Notes...)
 	for i := range e.Notes {
-		e.Notes[i] = Redact(capField(e.Notes[i]))
+		e.Notes[i] = r.field(e.Notes[i])
 	}
 	for i := range e.Actions {
 		e.Actions[i].Matched = append([]string(nil), e.Actions[i].Matched...)
 		for j := range e.Actions[i].Matched {
-			e.Actions[i].Matched[j] = Redact(capField(e.Actions[i].Matched[j]))
+			e.Actions[i].Matched[j] = r.field(e.Actions[i].Matched[j])
 		}
 	}
 	if e.Judge != nil {
 		j := *e.Judge
-		j.Reason, j.Error = Redact(capField(j.Reason)), Redact(capField(j.Error))
+		j.Reason, j.Error = r.field(j.Reason), r.field(j.Error)
 		e.Judge = &j
 	}
 }

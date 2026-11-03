@@ -48,9 +48,19 @@ What each host can do with the hook, as verified live, is the generated table in
 The v0.6.0 pre-release review ([review/v0.6.0](../review/v0.6.0)) left these open, by decision or because they need a live test. The next red-team round keeps this list current.
 
 - **Tier signals not read (round 2, R2-3):**
-  - Terragrunt `dependency` and `include` blocks that point outside the unit; only `--config`, `TG_CONFIG` and the working-directory options move the unit.
+  - Terragrunt `dependency` and `include` blocks that point outside the unit, and a remote `terraform.source` (its module's own backend block); the unit's `remote_state`, a local source, `--source`, `TG_SOURCE`, `--config` and the working-directory options are read.
+  - Provider profiles and roles set in modules, or through anything other than a literal or a bare `var.NAME`; those are unknown, so protected.
   - The backend recorded inside a binary planfile. A plan file kept in another Terraform directory brings that directory's tier, but a plan copied elsewhere carries only its workspace.
   - An S3 lifecycle rule that expires objects is not a finding, since it is often deliberate.
+- **Self-protection without a managed install is best-effort** ([threat-model.md](threat-model.md#self-protection)). Red-team round 4 found ten routes past it in one pass; they are not fixed one by one, and the managed install is the documented guarantee.
+- **Costs of the round-4 fixes:**
+  - Strict shapes ask about 18% of real agent calls in a protected directory (29 of the agent trial's 162): loops, `python3` edits, `export`, `xargs`, `timeout`, `${x:-…}`. Turn it off with `strict_shapes: false` in the user config if you accept the shell constructs it covers.
+  - Writing `terraform`, `tofu` or `terragrunt` into a `PATH` directory (`~/.local/bin`, `/usr/local/bin`, …) is blocked as tampering, so an agent cannot install an engine there; a person does.
+  - Under a managed install, a Homebrew or user-installed engine makes every saved plan unverifiable until the system config names a root-owned one in `plan_gate.engines`.
+  - A `-backend-config` file Terraform would reject (`bucket=x` unquoted) makes the backend unknown, and so protected; so does a provider profile held in a variable with no value applygate can find.
+  - A `cd` whose path goes through a symlink and then `..` is unknown unless it uses `-P`.
+  - An earlier step that names the planfile as an argument (other than a plain reader such as `cat` or `sha256sum`) makes the plan unverifiable.
+  - A decision-log entry redacts at most 512 KB of text; fields past that are recorded by size only.
 - **Costs of the round-3 fixes:**
   - A `.applygate.yaml` that is a symlink is never read (it cannot be trusted), so a repository that shares its config by a link is judged protected until the link is replaced by the file.
   - Under a managed install, loosening settings in the user config are ignored; they belong in the system config.
@@ -67,14 +77,13 @@ The v0.6.0 pre-release review ([review/v0.6.0](../review/v0.6.0)) left these ope
 - **No integrity record at hook start.** The fix plan proposed recording a hash of the hook entries and user config at install and checking it on every call. It is not built: an agent that can write the files can rewrite the record too, and a hash of a whole settings file would block on every legitimate settings change. A managed install is the answer instead.
 - **Plugin pin after an upgrade.** The Claude Code plugin blocks every call once the pinned binary changes, an upgrade included, until a person removes `pinned-binary` from the plugin's data directory.
 - **Code in a running REPL.** Input that an MCP shell server types into a running process is judged as a shell command, whatever the process is.
-- **The plan gate's own trust:** the `terraform` binary on the hook's `PATH`, a lock file committed with a replaced provider's hash, and the opt-in `preflight.live_state` pull, which is not provider-checked.
+- **The plan gate's own trust:** without a managed install, a `terraform` the agent puts on the hook's `PATH` by a route the hook does not see (writing one into a `PATH` directory is blocked); a lock file committed with a replaced provider's hash; and the opt-in `preflight.live_state` pull, which is not provider-checked. Under a managed install the engine must be root's alone ([managed.md](managed.md)).
 - **Cursor's allow.** Under `failClosed`, applygate must print a permission for every call, so a call it does not judge gets `{"permission":"allow"}`. Whether that skips Cursor's own approval prompt is not documented and has not been tested live.
 - **Untested Claude Code paths:**
   - the `*` matcher with `Monitor` and `PowerShell` calls, which is tested only with replayed events;
   - the prompt in `acceptEdits`, `plan` and `auto` modes, where an ask is enforced as a block until tested.
 - **Hosts other than Claude Code and Codex** have not been run inside the host ([hosts.md](hosts.md)).
 - **The model judge's accuracy** was measured before this release's filter changes and has not been measured again.
-- **Strict shapes** (allowing only plain lists and pipelines of known programs in protected tiers) was measured and not shipped: it would ask on 16% to 30% of real agent calls there ([review/v0.6.0/2026-11-03-strict-shapes.md](../review/v0.6.0/2026-11-03-strict-shapes.md)).
 - **One-time approvals** have no operating-system presence check, which is why they are off by default.
 - **Homebrew** (`Flurit/tap`) checks the archive's sha256 only, not the cosign signature; `install.sh` and the GitHub Action verify the signature ([install.md](install.md#verify-a-download)).
 

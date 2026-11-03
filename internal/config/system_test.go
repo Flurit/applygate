@@ -121,7 +121,7 @@ func TestManagedTrustStore(t *testing.T) {
 	if cfg, _ := Load("", repo); len(cfg.Untrusted) != 1 {
 		t.Fatalf("the user trust store counted under a managed install")
 	}
-	if TrustPath() != SystemTrustPath() || TrustCommand() != "sudo applygate trust" {
+	if TrustPath() != SystemTrustPath() || TrustCommand() != "sudo "+ManagedBinary()+" trust" {
 		t.Fatalf("trust path %s", TrustPath())
 	}
 	if err := Trust([]string{p}); err != nil {
@@ -148,5 +148,48 @@ func TestRepoUserOnlySettingsNoted(t *testing.T) {
 		if !strings.Contains(notes, k) {
 			t.Errorf("no note for %s:\n%s", k, notes)
 		}
+	}
+}
+
+// Under a managed install the engine the plan gate runs must be root's
+// alone; plan_gate.engines comes from the system config only (4H1).
+func TestEngineBinaryManaged(t *testing.T) {
+	bin := t.TempDir()
+	tf := filepath.Join(bin, "terraform")
+	os.WriteFile(tf, []byte("#!/bin/sh\n"), 0o755)
+	t.Setenv("PATH", bin)
+	if p, err := Default().EngineBinary("terraform"); err != nil || p != tf {
+		t.Fatalf("unmanaged: %q %v", p, err)
+	}
+	managedDirs(t, true)
+	os.WriteFile(SystemPath(), []byte("mode: enforce\n"), 0o644)
+	if _, err := Default().EngineBinary("terraform"); err == nil || !strings.Contains(err.Error(), "root's alone") {
+		t.Fatalf("managed, user-owned engine: %v", err)
+	}
+	// The user config cannot name the engine under a managed install.
+	user := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(user, []byte("plan_gate:\n  engines:\n    terraform: /usr/bin/true\n"), 0o644)
+	cfg := Default()
+	if err := merge(cfg, user, layerUserManaged); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.PlanGate.Engines) != 0 {
+		t.Fatalf("managed user config set engines: %v", cfg.PlanGate.Engines)
+	}
+}
+
+// Under a managed install the user config cannot turn the system's judge
+// off (R5-5).
+func TestManagedUserCannotDisableJudge(t *testing.T) {
+	managedDirs(t, false)
+	os.WriteFile(SystemPath(), []byte("version: 1\njudge:\n  enabled: true\n  backend: command\n  command: [\"true\"]\n"), 0o644)
+	user := filepath.Join(t.TempDir(), "config.yaml")
+	os.WriteFile(user, []byte("version: 1\njudge:\n  enabled: false\n"), 0o600)
+	cfg, err := Load(user, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.JudgeOn() {
+		t.Fatal("the managed user config turned the system judge off")
 	}
 }

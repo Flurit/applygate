@@ -909,11 +909,13 @@ func (a *analyzer) param(x *syntax.ParamExp, st *state) (string, bool) {
 	return "", false
 }
 
+// abs is where p names from the current directory, as the kernel resolves
+// it (see PhysicalJoin).
 func (a *analyzer) abs(st *state, p string) string {
 	if filepath.IsAbs(p) || st.dir == "" {
-		return filepath.Clean(p)
+		return PhysicalJoin("", p)
 	}
-	return filepath.Join(st.dir, p)
+	return PhysicalJoin(st.dir, p)
 }
 
 // limitWriter aborts after max bytes so printing a huge node (e.g. the whole

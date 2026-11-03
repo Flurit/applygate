@@ -1,6 +1,6 @@
 # Managed install
 
-Without a managed install, applygate's files belong to the user the agent runs as. The hook blocks the routes it sees, but an agent with that user's shell can, in the end, change anything that user can change. A managed install moves the guard out of the agent's reach: root owns every part of it, so the agent's user cannot change it at all.
+Without a managed install, applygate's files belong to the user the agent runs as. The hook blocks the routes it sees, but an agent with that user's shell can, in the end, change anything that user can change: that self-protection is best-effort. A managed install moves the guard out of the agent's reach: root owns every part of it, so the agent's user cannot change it at all. It is the only setup whose self-protection applygate documents as a guarantee ([threat-model.md](threat-model.md#self-protection)).
 
 ```sh
 sudo applygate install --managed            # Claude Code managed hooks next to the user's own
@@ -31,6 +31,16 @@ It is supported on macOS and Linux. Windows is not supported yet, because applyg
 - **Repository configs need trusting again,** with `sudo applygate trust` in each repository. Configs trusted before the install are not carried over, because the user's store is one the agent's user could have written.
 - **Every change to a repository config** needs `sudo applygate trust` before it takes effect. Until then every directory it covers is protected.
 - **The system config** is edited with `sudo`. A system config that root does not own, or that others can write, is not read, and every directory is protected until it is fixed; `doctor` says why.
+- **The judge is the system config's.** A `judge:` section in your user config is ignored; one in the system config cannot be turned off from the user config.
+- **The plan gate runs a root-owned engine only.** To read a saved plan the hook runs `terraform show -json` (or `tofu`). Under a managed install that binary, after symlinks, and its directory must be owned and writable by root only; a Homebrew or `~/.local/bin` install is neither, so the saved plan is unverifiable until you name a root-owned copy in the system config:
+
+  ```yaml
+  plan_gate:
+    engines:
+      terraform: /usr/local/libexec/applygate/terraform
+  ```
+
+  `TG_TF_PATH` is held to the same rule. `plan_gate.engines` in the user config is ignored under a managed install.
 - **Upgrading:** run `sudo applygate install --managed` from the new binary. It replaces the managed binary and keeps the system config and trust store.
 
 ## Removing it
@@ -43,6 +53,8 @@ sudo applygate uninstall --managed --purge   # also removes /etc/applygate
 Without `--purge`, `/etc/applygate` stays: the system config keeps overriding your user config (which may then still only tighten), and repository configs are still judged by its trust store. Remove applygate's hook from Codex's `requirements.toml` yourself.
 
 ## What it does not cover
+
+- **The state directory.** The decision log (`~/.local/state/applygate/`) belongs to the agent's user, so an agent that gets around the hook could rewrite it; treat it as a record, not evidence. Approvals live there too, which is why the install turns them off.
 
 - **A user with `sudo`.** If the agent's user can run `sudo` without a password, the agent can too. The hook blocks commands that name the managed files, `sudo` ones included, but that check is the same default-deny the unmanaged install relies on. Give agents a user that cannot `sudo`, or one whose `sudo` asks for a password.
 - **Hosts other than Claude Code and Codex.** Their hooks stay in user files.

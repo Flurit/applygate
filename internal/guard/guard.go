@@ -279,17 +279,26 @@ func matchSegs(pp, ps []string) bool {
 
 // Executable returns the running binary's canonical path and the
 // applygate and seatbelt binaries next to it, which a hook entry may name.
+// The path is resolved once per process: every invocation asks.
 func Executable() []string {
-	exe, err := os.Executable()
-	if err != nil {
+	exe := executable()
+	if exe == "" {
 		return nil
-	}
-	if r, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = r
 	}
 	dir := filepath.Dir(exe)
 	return []string{exe, filepath.Join(dir, "applygate"), filepath.Join(dir, "seatbelt")}
 }
+
+var executable = sync.OnceValue(func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if r, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = r
+	}
+	return exe
+})
 
 // shellGlob matches an absolute path the way the shell expands a glob: one
 // segment per segment, and a segment starting with "." only when the
