@@ -96,3 +96,18 @@ func TestReview2T14PlanCheckRejectsUnknownTier(t *testing.T) {
 	rc := cmdPlanCheck([]string{"--tier", "prod", "../../harness/pack/plans/s5_replace_db.json"}, &out, &errb)
 	reviewgap.Check(t, "2T14", rc == 2, "plan-check --tier prod exited %d: %s", rc, out.String())
 }
+
+// plan-check resolves the tier from the backend and workspace too, as the
+// hook does (finding 2T13).
+func TestReview2T13PlanCheckReadsTheBackend(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte("version: 1\nstrict: false\nenvironments:\n  - {name: dev, tier: disposable, match: {paths: [\"dev/**\"]}}\n"), 0o644)
+	dev := filepath.Join(root, "dev")
+	os.MkdirAll(dev, 0o755)
+	os.WriteFile(filepath.Join(dev, "backend.tf"), []byte("terraform {\n  backend \"s3\" {\n    bucket = \"acme-prod-tfstate\"\n    key    = \"app/terraform.tfstate\"\n  }\n}\n"), 0o644)
+	var out, errb bytes.Buffer
+	rc := cmdPlanCheck([]string{"--cwd", dev, "../../harness/pack/plans/replace_stateless.json"}, &out, &errb)
+	if rc != 3 || !strings.Contains(out.String(), "tier protected") {
+		t.Fatalf("plan-check judged a prod backend in a dev path at rc %d: %s%s", rc, out.String(), errb.String())
+	}
+}

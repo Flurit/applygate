@@ -884,6 +884,15 @@ type Signals struct {
 	// recorded backend or from -backend-config). The keys in
 	// BackendHintKeys get the same name hints as the backend URL.
 	BackendValues map[string]string
+	// BackendUnknown says why the backend's configuration could not be
+	// read; the state it points at may be any environment's.
+	BackendUnknown string
+	// ProviderProfiles and ProviderRoles are the profiles and role ARNs the
+	// configuration's aws provider blocks name; each is a possible target.
+	ProviderProfiles []string
+	ProviderRoles    []string
+	// WorkspaceUnknown says why the selected workspace is not known.
+	WorkspaceUnknown string
 }
 
 // BackendHintKeys are the backend settings whose values can name an
@@ -968,6 +977,7 @@ func (c *Config) Resolve(s Signals) Resolution {
 			}
 		}
 	}
+	pathMatched := make([]bool, len(dirs))
 	for _, e := range c.Environments {
 		m := e.Match
 		for _, p := range m.Paths {
@@ -975,18 +985,23 @@ func (c *Config) Resolve(s Signals) Resolution {
 			if filepath.IsAbs(p) {
 				pats = append(pats, guard.CanonicalGlob(p))
 			}
-		match:
-			for _, d := range dirs {
+			why := ""
+			for i, d := range dirs {
 				for _, q := range pats {
 					if classify.MatchGlob(q, d) || classify.MatchGlob(strings.TrimSuffix(q, "/**"), d) {
-						why := "path " + p
-						if d != dirs[0] {
-							why += " (" + s.Dir + " resolves to " + d + ")"
+						pathMatched[i] = true
+						if why == "" {
+							why = "path " + p
+							if d != dirs[0] {
+								why += " (" + s.Dir + " resolves to " + d + ")"
+							}
 						}
-						consider(e.Name, e.Tier, why)
-						break match
+						break
 					}
 				}
+			}
+			if why != "" {
+				consider(e.Name, e.Tier, why)
 			}
 		}
 		for _, w := range m.Workspaces {
@@ -1004,9 +1019,21 @@ func (c *Config) Resolve(s Signals) Resolution {
 				consider(e.Name, e.Tier, "AWS profile "+s.AWSProfile)
 			}
 		}
+		for _, p := range m.AWSProfiles {
+			for _, pp := range s.ProviderProfiles {
+				if globEq(p, pp) {
+					consider(e.Name, e.Tier, "provider profile "+pp)
+				}
+			}
+		}
 		for _, a := range m.AWSAccounts {
 			if s.AWSAccount != "" && a == s.AWSAccount {
 				consider(e.Name, e.Tier, "AWS account "+s.AWSAccount)
+			}
+			for _, r := range s.ProviderRoles {
+				if strings.Contains(r, ":"+a+":") {
+					consider(e.Name, e.Tier, "provider role "+r)
+				}
 			}
 		}
 		for _, k := range m.KubeContexts {
@@ -1027,6 +1054,23 @@ func (c *Config) Resolve(s Signals) Resolution {
 				}
 			}
 		}
+	}
+	// A link into a directory no environment matches: the target gets the
+	// rule for an unmatched directory, as it would if named directly.
+	if len(dirs) > 1 && pathMatched[0] && !pathMatched[1] {
+		if c.IsStrict() {
+			consider("unknown", Protected, s.Dir+" resolves to "+dirs[1]+", which no environment matches; strict mode treats it as protected")
+		} else if t := c.DefaultTier; t != "" {
+			consider("unknown", t, s.Dir+" resolves to "+dirs[1]+", which no environment matches; using default_tier "+string(t))
+		} else {
+			consider("unknown", Standard, s.Dir+" resolves to "+dirs[1]+", which no environment matches; using default_tier standard")
+		}
+	}
+	if s.WorkspaceUnknown != "" {
+		consider("unknown workspace", Protected, s.WorkspaceUnknown+", so the state it selects is unknown and judged as protected")
+	}
+	if s.BackendUnknown != "" {
+		consider("unknown backend", Protected, s.BackendUnknown+", so the state it points at is unknown and judged as protected")
 	}
 	if c.UseNameHints() {
 		relOf := func(d string) string {
@@ -1049,6 +1093,12 @@ func (c *Config) Resolve(s Signals) Resolution {
 		}
 		hints := []struct{ what, v string }{{"path", rel}, {"resolved path", canonRel}, {"workspace", s.Workspace}, {"backend", s.Backend}, {"AWS profile", s.AWSProfile}, {"backend config", s.BackendConfig},
 			{"kube context", s.KubeContext}, {"GCP project", s.GCPProject}, {"Azure subscription", s.AzureSubscription}}
+		for _, v := range s.ProviderProfiles {
+			hints = append(hints, struct{ what, v string }{"provider profile", v})
+		}
+		for _, v := range s.ProviderRoles {
+			hints = append(hints, struct{ what, v string }{"provider role", v})
+		}
 		for _, k := range BackendHintKeys {
 			// Values already in the backend URL were checked above.
 			if v := s.BackendValues[k]; v != "" && !strings.Contains(s.Backend, v) {

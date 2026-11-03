@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"bytes"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -203,7 +204,12 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			a.problem(st, via, joinWords(args), "trap with a command that cannot be resolved statically")
 			return
 		}
-		a.source(r[0].Text, st, append(via, "trap"), depth+1)
+		// The handler fires later, after any cd, so its directory is
+		// unknown: it is judged at the most protected tier under the root.
+		// It runs on a copy, since a handler's own assignments happen then.
+		t := st.clone()
+		t.dir = ""
+		a.source(r[0].Text, t, append(via, "trap"), depth+1)
 		return
 	case "shift":
 		n := 1
@@ -642,6 +648,29 @@ func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string,
 	}
 }
 
+// systemBinary reports whether p is under a directory the agent's user does
+// not normally write.
+func systemBinary(p string) bool {
+	for _, d := range []string{"/bin/", "/sbin/", "/usr/", "/opt/homebrew/", "/System/", "/Library/", "/nix/store/", "/snap/"} {
+		if strings.HasPrefix(p, d) {
+			return true
+		}
+	}
+	return false
+}
+
+// isBinary reports whether a file is a compiled executable rather than
+// text: an ELF, Mach-O or PE header, or a NUL byte near the start.
+func isBinary(b []byte) bool {
+	head := b[:min(len(b), 1024)]
+	for _, magic := range [][]byte{{0x7f, 'E', 'L', 'F'}, {0xcf, 0xfa, 0xed, 0xfe}, {0xce, 0xfa, 0xed, 0xfe}, {0xca, 0xfe, 0xba, 0xbe}, {'M', 'Z'}} {
+		if bytes.HasPrefix(head, magic) {
+			return true
+		}
+	}
+	return bytes.IndexByte(head, 0) >= 0
+}
+
 var shebangShell = regexp.MustCompile(`^#!\s*(\S*/)?(env\s+)?(ba|z|da|k|mk|a)?sh\b`)
 
 func (a *analyzer) script(name string, rest []Word, cmdSt, st *state, via []string, depth int) bool {
@@ -653,6 +682,18 @@ func (a *analyzer) script(name string, rest []Word, cmdSt, st *state, via []stri
 		return false
 	}
 	if err != nil {
+		return false
+	}
+	if isBinary(b) {
+		// A compiled program (/bin/rm), not a script: it is judged by its
+		// name and arguments. One outside the system directories that
+		// mentions an infrastructure tool (a program the agent built)
+		// cannot be analyzed.
+		if !systemBinary(a.abs(st, name)) {
+			if m := Mentions(string(b)); len(m) > 0 {
+				a.problem(st, via, name, "compiled program mentions "+strings.Join(m, ", ")+"; it cannot be analyzed")
+			}
+		}
 		return false
 	}
 	src := string(b)
@@ -1559,6 +1600,30 @@ func (a *analyzer) git(rest []Word, cmdSt, st *state, via []string, depth int) {
 			run(Word{Text: v.text, Resolved: v.ok, Prefix: v.text}, "git "+k)
 		}
 	}
+	// GIT_CONFIG_COUNT with GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n are
+	// -c pairs; GIT_CONFIG_PARAMETERS and other config files may hold any.
+	envVal := func(k string) (value, bool) {
+		v, ok := cmdSt.vars[k]
+		return v, ok && cmdSt.exported[k]
+	}
+	for k := range cmdSt.vars {
+		n, ok := strings.CutPrefix(k, "GIT_CONFIG_KEY_")
+		if !ok || !cmdSt.exported[k] {
+			continue
+		}
+		key, val := cmdSt.vars[k], value{}
+		if v, ok := envVal("GIT_CONFIG_VALUE_" + n); ok {
+			val = v
+		}
+		if !key.ok || gitExecKey(strings.ToLower(key.text)) || strings.HasPrefix(strings.ToLower(key.text), "alias.") {
+			run(Word{Text: val.text, Resolved: val.ok && key.ok, Prefix: val.text}, "git "+k)
+		}
+	}
+	for _, k := range []string{"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG"} {
+		if v, ok := envVal(k); ok && !(v.ok && (v.text == "" || v.text == "/dev/null")) {
+			a.problem(st, via, "git "+joinWords(rest), k+" gives git configuration applygate cannot read, which may run programs")
+		}
+	}
 	aliases := map[string]Word{}
 	i := 0
 	for i < len(rest) {
@@ -1575,8 +1640,7 @@ func (a *analyzer) git(rest []Word, cmdSt, st *state, via []string, depth int) {
 			switch {
 			case strings.HasPrefix(k, "alias."):
 				aliases[strings.TrimPrefix(k, "alias.")] = val
-			case gitExecKeys[k] || strings.HasPrefix(k, "pager.") || strings.HasSuffix(k, ".textconv") ||
-				strings.HasPrefix(k, "filter.") || strings.HasSuffix(k, ".command") || strings.HasSuffix(k, ".cmd"):
+			case gitExecKey(k):
 				run(val, "git -c "+k)
 			}
 			i += 2
@@ -1618,11 +1682,16 @@ func (a *analyzer) git(rest []Word, cmdSt, st *state, via []string, depth int) {
 			a.call(args[1:], nil, child, child, append(via, "git bisect run"), depth+1, stdin{})
 		}
 	case "rebase":
-		for j, w := range args {
-			if (w.Text == "-x" || w.Text == "--exec") && j+1 < len(args) {
-				run(args[j+1], "git rebase --exec")
-			} else if v, ok := strings.CutPrefix(w.Text, "--exec="); ok {
-				run(Word{Text: v, Resolved: w.Resolved, Prefix: v}, "git rebase --exec")
+		gitCmdOpt(args, "-x", "--exec", run, "git rebase --exec")
+	case "difftool", "mergetool":
+		gitCmdOpt(args, "-x", "--extcmd", run, "git "+sub+" --extcmd")
+	case "grep":
+		// -O and --open-files-in-pager take their pager only glued on.
+		for _, w := range args {
+			if v, ok := strings.CutPrefix(w.Text, "-O"); ok && v != "" {
+				run(Word{Text: v, Resolved: w.Resolved, Prefix: strings.TrimPrefix(w.Prefix, "-O")}, "git grep -O")
+			} else if v, ok := strings.CutPrefix(w.Text, "--open-files-in-pager="); ok {
+				run(Word{Text: v, Resolved: w.Resolved, Prefix: strings.TrimPrefix(w.Prefix, "--open-files-in-pager=")}, "git grep -O")
 			}
 		}
 	case "submodule":
@@ -1633,6 +1702,29 @@ func (a *analyzer) git(rest []Word, cmdSt, st *state, via []string, depth int) {
 				}
 				break
 			}
+		}
+	}
+}
+
+// gitExecKey reports whether a git config key's value is a command.
+func gitExecKey(k string) bool {
+	return gitExecKeys[k] || strings.HasPrefix(k, "pager.") || strings.HasSuffix(k, ".textconv") ||
+		strings.HasPrefix(k, "filter.") || strings.HasSuffix(k, ".command") || strings.HasSuffix(k, ".cmd")
+}
+
+// gitCmdOpt runs the value of an option that takes a command: separate
+// (-x cmd, --exec cmd), with = (--exec=cmd) or glued to the short form
+// (-xcmd).
+func gitCmdOpt(args []Word, short, long string, run func(Word, string), label string) {
+	for j, w := range args {
+		switch {
+		case (w.Text == short || w.Text == long) && j+1 < len(args):
+			run(args[j+1], label)
+		case strings.HasPrefix(w.Text, long+"="):
+			v := strings.TrimPrefix(w.Text, long+"=")
+			run(Word{Text: v, Resolved: w.Resolved, Prefix: strings.TrimPrefix(w.Prefix, long+"=")}, label)
+		case strings.HasPrefix(w.Text, short) && len(w.Text) > len(short) && !strings.HasPrefix(w.Text, "--"):
+			run(Word{Text: w.Text[len(short):], Resolved: w.Resolved, Prefix: strings.TrimPrefix(w.Prefix, short)}, label)
 		}
 	}
 }

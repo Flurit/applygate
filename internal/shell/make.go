@@ -30,6 +30,11 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 		} else if dir != "" {
 			dir = filepath.Join(dir, d)
 		}
+		if dir != "" && a.writtenAt(dir, true) != "" {
+			// An earlier step linked, moved or extracted something here:
+			// it may be a symlink to anywhere.
+			dir = ""
+		}
 	}
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
@@ -86,6 +91,12 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 		}
 	}
 	if dir == "" {
+		if cmdSt.dir != "" {
+			// -C into a directory that cannot be followed: the recipes run
+			// somewhere unknown, in a makefile that cannot be read.
+			a.unbounded(st, via, joinWords(args), "make -C into a directory that cannot be followed")
+			return true
+		}
 		return false
 	}
 	var src []byte
@@ -165,6 +176,23 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 		for _, p := range r.prereqs {
 			visit(mf.expand(p), d+1)
 		}
+		if mf.oneshell {
+			// One shell runs the whole recipe, so a cd carries across lines.
+			var lines []string
+			marked := false
+			for _, line := range r.recipe {
+				prefix := line[:len(line)-len(strings.TrimLeft(line, "@-+ \t"))]
+				marked = marked || strings.Contains(prefix, "+") || strings.Contains(line, "$(MAKE)") || strings.Contains(line, "${MAKE}")
+				lines = append(lines, mf.expand(strings.TrimLeft(line, "@-+ \t")))
+			}
+			if dry && !marked {
+				return
+			}
+			child := cmdSt.childState()
+			child.dir = dir
+			a.source(strings.Join(lines, "\n"), child, append(via, "make "+t), depth+1)
+			return
+		}
 		for _, line := range r.recipe {
 			prefix := line[:len(line)-len(strings.TrimLeft(line, "@-+ \t"))]
 			if dry && !strings.Contains(prefix, "+") && !strings.Contains(line, "$(MAKE)") && !strings.Contains(line, "${MAKE}") {
@@ -189,9 +217,10 @@ type makeRule struct {
 }
 
 type makefile struct {
-	vars  map[string]string
-	rules map[string]*makeRule
-	first string
+	vars     map[string]string
+	rules    map[string]*makeRule
+	first    string
+	oneshell bool // .ONESHELL: each recipe runs in one shell
 }
 
 var (
@@ -229,6 +258,9 @@ func parseMakefile(src string) *makefile {
 			cur = nil
 			deps, inline, _ := strings.Cut(m[2], ";")
 			for _, t := range strings.Fields(m[1]) {
+				if t == ".ONESHELL" {
+					mf.oneshell = true
+				}
 				if strings.HasPrefix(t, ".") {
 					continue
 				}

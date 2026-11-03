@@ -12,6 +12,30 @@
   - **Limits:** nesting deeper than 2,000 levels is unresolved instead of crashing the process, and gzip output over the 256 KB cap is unknown instead of cut.
   - **`COPILOT_HOME`'s hook file** is a guard path.
 
+- **Red-team round 2 fixes, part 3** (the analyzer and tiers):
+  - **Analyzer:**
+    - a `trap` handler is judged at the most protected tier under the root, since it fires after any `cd`;
+    - an `aws` or `helm` option applygate does not know, before the command path, is read both ways (taking a value and not), and the stricter reading wins;
+    - `aws s3 cp` counts as an upload whenever an `s3://` path follows the source;
+    - git's `grep -O<pager>`, a glued `rebase -x<cmd>`, `difftool`/`mergetool -x`, and `GIT_CONFIG_COUNT`/`KEY`/`VALUE` pairs are analyzed, and `GIT_CONFIG_PARAMETERS` or another config file is unresolved;
+    - `.ONESHELL` recipes run as one script;
+    - `make -C` into a directory linked earlier in the command is judged anywhere under the root;
+    - PowerShell tool bodies are analyzed as PowerShell, not bash;
+    - a compiled program run by path (`/bin/rm`) is judged by its name, not parsed as a script.
+  - **Tiers:**
+    - the declared backend is read from `.tf.json`, override files and unquoted labels, with `cloud`/`remote` workspace names, and a computed backend is unknown, so protected;
+    - a symlink into a directory no environment matches gets the strict rule;
+    - a plan file in another Terraform directory brings that directory's tier;
+    - `-out` is followed through `-chdir`, `TF_CLI_ARGS_plan` and case folding;
+    - `-invoke` takes a value, and plans with action invocations get a `plan-actions` finding;
+    - Terragrunt `--config` and `TG_CONFIG` move the unit;
+    - `aws` provider profiles and role ARNs, `AWS_DEFAULT_PROFILE` and `HELM_KUBECONTEXT` are signals;
+    - `kubectl config use-context`, `gcloud config set project` and `az account set` retarget later calls in the same command;
+    - a `cd` into another repository is judged by its config too;
+    - an unresolved `workspace select` is an unknown workspace.
+  - **`plan-check`** resolves the tier from the workspace and backend, judges a replace like a destroy, rejects an unknown `--tier`, and refuses state JSON.
+  - **Exposure rules:** `NotAction`, a principal list with `*`, an empty `Condition`, split CIDRs, default security groups, a role's managed and inline policies, an any-principal trust policy, `publicly_accessible` databases and AllUsers ACL grants.
+
 - **Red-team round 2 fixes, part 2:**
   - **Repository configs must be trusted.** A `.applygate.yaml` is read only when a person approved its exact content with `applygate trust`; a new or changed one is not read and every directory is protected. This closes every route that rewrites or plants a config (checkout, extraction, clone, a nested `wrappers:` list) in one place. `init` trusts the config it writes, and `doctor` lists untrusted ones.
   - **Managed install:** `sudo applygate install --managed` puts a root-owned binary in `/usr/local/libexec/applygate`, a system config in `/etc/applygate` that wins over the user config, a system trust store, and the hook in Claude Code's managed settings with bypass mode off (`--exclusive` adds `allowManagedHooksOnly`). It prints a Codex `requirements.toml` snippet. The Claude Code and Codex keys are from their docs and not tested live. macOS and Linux only. `uninstall --managed [--purge]` removes it.

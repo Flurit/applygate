@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 
@@ -60,9 +61,13 @@ type Action struct {
 	// line run against the backend they describe, not the one recorded by
 	// the previous init.
 	BackendConfig []string
-	// SelectWorkspace is set by "workspace select|new NAME"; later commands
+	// SelectWorkspace is set by "workspace select|new NAME" (UnknownWorkspace
+	// when NAME cannot be resolved); later commands
 	// in the same directory run in that workspace.
 	SelectWorkspace string
+	// WorkspaceUnknown is set on a command after a workspace select whose
+	// name cannot be resolved.
+	WorkspaceUnknown bool `json:"-"`
 	// TouchesState marks commands that read or write Terraform state, so
 	// stale-state and backend checks apply.
 	TouchesState bool
@@ -117,12 +122,19 @@ func Invocations(res *shell.Result, opt Options) []Action {
 	// a planfile or reads .terraform is judged on what will be there, not on
 	// what is there now.
 	var written []string
+	// retarget holds the cluster, project or subscription an earlier step
+	// selected (kubectl config use-context, gcloud config set project, az
+	// account set): later calls that name none target it.
+	retarget := map[string]string{}
 	for _, inv := range res.Invocations {
 		acts := invocation(inv, opt)
 		for i := range acts {
 			a := &acts[i]
+			if t, ok := retarget[a.Engine]; ok && a.Target == "" {
+				a.Target = t
+			}
 			if a.PlanFile != "" && a.Dir != "" {
-				a.PlanWritten = writtenAt(written, absPath(a.Dir, a.PlanFile, opt.Home))
+				a.PlanWritten = slices.Contains(written, writtenUnknown) || writtenAt(written, absPath(a.Dir, a.PlanFile, opt.Home))
 			}
 			if a.Engine == "terraform" || a.Engine == "tofu" || a.Engine == "terragrunt" {
 				dataDir := ".terraform"
@@ -136,6 +148,11 @@ func Invocations(res *shell.Result, opt Options) []Action {
 		}
 		out = append(out, acts...)
 		written = append(written, stepWrites(inv, opt)...)
+		if engines, t, ok := selects(inv); ok {
+			for _, e := range engines {
+				retarget[e] = t
+			}
+		}
 	}
 	for _, p := range res.Problems {
 		a := Action{Class: Dynamic, Command: p.Text, Why: p.Reason, Dir: p.Dir, Via: p.Via, AnyDir: p.AnyDir}
@@ -499,13 +516,48 @@ func stepWrites(inv shell.Invocation, opt Options) []string {
 	name := shell.ProgName(inv.Args[0].Text)
 	args := inv.Args[1:]
 	if _, ok := engines[name]; ok {
-		for i, w := range args {
-			t := w.Text
-			if v, ok := strings.CutPrefix(t, "-out="); ok {
-				out = append(out, absPath(inv.Dir, v, opt.Home))
-			} else if t == "-out" && i+1 < len(args) {
-				out = append(out, absPath(inv.Dir, args[i+1].Text, opt.Home))
+		// -out is relative to -chdir, and TF_CLI_ARGS and
+		// TF_CLI_ARGS_<subcommand> add options after the subcommand.
+		dir, rest := inv.Dir, args
+		for len(rest) > 0 && strings.HasPrefix(rest[0].Text, "-") {
+			t := strings.TrimLeft(rest[0].Text, "-")
+			switch v, ok := strings.CutPrefix(t, "chdir="); {
+			case ok && rest[0].Resolved:
+				dir = absPath(dir, v, opt.Home)
+			case ok:
+				dir = ""
+			case t == "chdir" && len(rest) > 1:
+				dir = absPath(dir, rest[1].Text, opt.Home)
+				if !rest[1].Resolved {
+					dir = ""
+				}
+				rest = rest[1:]
 			}
+			rest = rest[1:]
+		}
+		sub := ""
+		if len(rest) > 0 {
+			sub, rest = rest[0].Text, rest[1:]
+		}
+		words := append(append([]shell.Word(nil), rest...), cliArgs(inv.Env, sub)...)
+		for i, w := range words {
+			t, v := w.Text, ""
+			switch {
+			case strings.HasPrefix(t, "-out="):
+				v = strings.TrimPrefix(t, "-out=")
+			case t == "-out" && i+1 < len(words):
+				w, v = words[i+1], words[i+1].Text
+			case !w.Resolved && strings.Contains(t, "out"):
+				out = append(out, writtenUnknown)
+				continue
+			default:
+				continue
+			}
+			if !w.Resolved || dir == "" && !filepath.IsAbs(v) {
+				out = append(out, writtenUnknown)
+				continue
+			}
+			out = append(out, absPath(dir, v, opt.Home))
 		}
 		return out
 	}
@@ -526,11 +578,71 @@ func stepWrites(inv shell.Invocation, opt Options) []string {
 	return out
 }
 
+// UnknownWorkspace is the SelectWorkspace of a workspace select whose name
+// cannot be resolved.
+const UnknownWorkspace = "\x00unknown"
+
+// selects reports the target a step makes the CLI's default, and the
+// engines that then use it. An unresolved one is "?", which matches no
+// environment and so gets the rule for an unknown one.
+func selects(inv shell.Invocation) ([]string, string, bool) {
+	if len(inv.Args) == 0 || !inv.Args[0].Resolved {
+		return nil, "", false
+	}
+	pos := positional(inv.Args[1:])
+	val := func(i int) string {
+		n := 0
+		for _, w := range inv.Args[1:] {
+			if strings.HasPrefix(w.Text, "-") {
+				continue
+			}
+			if n == i {
+				if !w.Resolved {
+					return "?"
+				}
+				return w.Text
+			}
+			n++
+		}
+		return "?"
+	}
+	switch shell.ProgName(inv.Args[0].Text) {
+	case "kubectl":
+		if len(pos) >= 3 && pos[0] == "config" && pos[1] == "use-context" {
+			return []string{"kubectl", "helm"}, val(2), true
+		}
+	case "gcloud":
+		if len(pos) >= 4 && pos[0] == "config" && pos[1] == "set" && pos[2] == "project" {
+			return []string{"gcloud"}, val(3), true
+		}
+	case "az":
+		if len(pos) >= 2 && pos[0] == "account" && pos[1] == "set" {
+			if v := flagValue(inv.Args[1:], "--subscription"); v != "" {
+				return []string{"az"}, v, true
+			}
+			if v := flagValue(inv.Args[1:], "-s"); v != "" {
+				return []string{"az"}, v, true
+			}
+			return []string{"az"}, "?", true
+		}
+	}
+	return nil, "", false
+}
+
+// writtenUnknown stands for a planfile written where the analysis cannot
+// tell: an unresolved -out, or one relative to a lost -chdir.
+const writtenUnknown = "\x00unknown"
+
 // writtenAt reports whether p, or a directory holding it, is among written.
+// Names are compared as the file system does (case folded on macOS and
+// Windows).
 func writtenAt(written []string, p string) bool {
-	p = filepath.Clean(p)
+	p = guard.Fold(filepath.Clean(p))
 	for _, w := range written {
-		w = filepath.Clean(w)
+		if w == writtenUnknown {
+			continue
+		}
+		w = guard.Fold(filepath.Clean(w))
 		if w == p || strings.HasPrefix(p, w+string(filepath.Separator)) || strings.HasPrefix(w, p+string(filepath.Separator)) {
 			return true
 		}

@@ -209,7 +209,7 @@ func (c call) toEvent(agent string) (policy.Event, error) {
 		if strings.TrimSpace(cmd) == "" {
 			return ev, fmt.Errorf("malformed hook event: %s call without a command applygate can read", c.tool)
 		}
-		ev.Kind, ev.Command = policy.KindShell, cmd
+		ev.Kind, ev.Command = policy.KindShell, asShell(c.tool, cmd)
 	case writeTools[c.tool]:
 		raw, _ := json.Marshal(c.input)
 		ev.Kind, ev.Paths, ev.Content = policy.KindWrite, filePaths(c.tool, c.input), judge.WriteContent(raw)
@@ -221,10 +221,20 @@ func (c call) toEvent(agent string) (policy.Event, error) {
 		// PowerShell, a host's new shell tool) that carries a command runs
 		// it, so it is judged as a shell call.
 		if cmd := commandOf(c.input); strings.TrimSpace(cmd) != "" {
-			ev.Kind, ev.Command = policy.KindShell, cmd
+			ev.Kind, ev.Command = policy.KindShell, asShell(c.tool, cmd)
 		}
 	}
 	return ev, nil
+}
+
+// asShell is the shell command a tool's command amounts to. A PowerShell
+// tool's body is PowerShell, not POSIX shell, so it is analyzed as
+// pwsh -Command would run it: as code in another language.
+func asShell(tool, cmd string) string {
+	if strings.EqualFold(tool, "powershell") || strings.EqualFold(tool, "pwsh") {
+		return "pwsh -NoProfile -Command '" + strings.ReplaceAll(cmd, "'", `'\''`) + "'"
+	}
+	return cmd
 }
 
 // commandOf returns the shell command of a call: command (a string or an

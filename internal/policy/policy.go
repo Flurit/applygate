@@ -149,6 +149,10 @@ type Deps struct {
 	// disables the opt-in lineage and serial comparison.
 	StatePull func(engine, dir string) ([]byte, error)
 	Rules     *plangate.Rules
+	// LoadConfig loads the configuration for another directory, for a
+	// command that runs in a repository the session's config did not
+	// read; nil keeps the session's config.
+	LoadConfig func(dir string) (*config.Config, error)
 }
 
 // ActionResult is the decision for one classified action.
@@ -301,7 +305,9 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 		} else if bc, ok := backendCfg[a.Dir]; ok && isTerraform(a.Engine) {
 			a.BackendConfig = bc
 		}
-		if ws, ok := selected[a.Dir]; ok && a.Env["TF_WORKSPACE"] == "" {
+		if ws, ok := selected[a.Dir]; ok && ws == classify.UnknownWorkspace && a.Env["TF_WORKSPACE"] == "" {
+			a.WorkspaceUnknown = true
+		} else if ok && a.Env["TF_WORKSPACE"] == "" {
 			env := map[string]string{"TF_WORKSPACE": ws}
 			for k, v := range a.Env {
 				if v != "" {
@@ -401,8 +407,12 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	if tf && a.Dir != "" {
 		r.Workspace = preflight.Workspace(a.Dir, env)
 		sig.Workspace = r.Workspace
+		if a.WorkspaceUnknown {
+			sig.WorkspaceUnknown = "the workspace selected earlier in this command cannot be resolved"
+		}
 		recorded = preflight.InitBackendEnv(a.Dir, env)
 		declared = preflight.DeclaredBackend(a.Dir)
+		sig.ProviderProfiles, sig.ProviderRoles = preflight.ProviderAWS(a.Dir)
 		if len(a.BackendConfig) > 0 {
 			// An init in this command re-points the directory: judge this
 			// command against the backend it will use, not the old one.
@@ -423,18 +433,21 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 			// is unknown rather than the old declared one.
 			be = declared
 		}
+		if be != nil && be.Unreadable != "" {
+			sig.BackendUnknown = be.Unreadable
+		}
 		if be != nil {
 			r.Backend = be.URL()
 			sig.Backend = r.Backend
 			sig.BackendValues = be.Config
-			if p := be.Config["profile"]; p != "" && env["AWS_PROFILE"] == "" {
+			if p := be.Config["profile"]; p != "" && awsProfileEnv(env) == "" {
 				sig.AWSProfile = p
 			}
 		}
 	}
 	if a.Profile != "" {
 		sig.AWSProfile = a.Profile
-	} else if p := env["AWS_PROFILE"]; p != "" {
+	} else if p := awsProfileEnv(env); p != "" {
 		sig.AWSProfile = p
 	}
 	r.Profile = sig.AWSProfile
@@ -443,7 +456,10 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	// configuration selects.
 	switch a.Engine {
 	case "kubectl", "helm":
-		if sig.KubeContext = a.Target; sig.KubeContext == "" {
+		if sig.KubeContext = a.Target; sig.KubeContext == "" && a.Engine == "helm" {
+			sig.KubeContext = env["HELM_KUBECONTEXT"]
+		}
+		if sig.KubeContext == "" {
 			sig.KubeContext = preflight.KubeContext(env, deps.ReadFile)
 		}
 	case "gcloud":
@@ -480,6 +496,16 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		res.Matched = append([]string{fmt.Sprintf("command directory not reported by %s; judged at the session root %s (unknown_dir: session_root)", orHost(ev.Agent), a.Dir)}, res.Matched...)
 	}
 	r.Tier, r.Env, r.Matched = res.Tier, res.Env, res.Matched
+	if deps.LoadConfig != nil && a.Dir != "" && !a.AnyDir && otherRepo(cfg, a.Dir) {
+		// A cd or -chdir into another repository: its own config decides
+		// too, and the stricter tier wins.
+		if c2, err := deps.LoadConfig(a.Dir); err != nil {
+			r.Tier, r.Env = config.Protected, "unknown"
+			r.Matched = append(r.Matched, "the config of the repository "+a.Dir+" is in cannot be read ("+err.Error()+"); judged as protected")
+		} else if alt := c2.Resolve(sig); alt.Tier.Rank() > r.Tier.Rank() {
+			r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "by the config of the repository "+a.Dir+" is in")
+		}
+	}
 	if v, set := a.Env["TF_DATA_DIR"]; tf && set && v == "" && r.Tier.Rank() < config.Protected.Rank() {
 		// TF_DATA_DIR is exported with a value that cannot be resolved: the
 		// workspace and backend it records are unknown.
@@ -562,6 +588,81 @@ func lineageCheck(a classify.Action, be *preflight.Backend, stale preflight.Find
 	return preflight.LineageMismatch(a.Dir, states, remote)
 }
 
+// terraformDir reports whether dir holds Terraform configuration or working
+// data.
+func terraformDir(dir string) bool {
+	for _, pat := range []string{"*.tf", "*.tf.json", ".terraform", "terragrunt.hcl"} {
+		if m, _ := filepath.Glob(filepath.Join(dir, pat)); len(m) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// otherRepo reports whether dir is under a repository config the session's
+// config did not read.
+func otherRepo(cfg *config.Config, dir string) bool {
+	read := map[string]bool{}
+	for _, p := range append(append([]string(nil), cfg.Sources...), cfg.Untrusted...) {
+		read[p] = true
+	}
+	for _, p := range config.RepoConfigs(dir) {
+		if !read[p] {
+			return true
+		}
+	}
+	return false
+}
+
+// SavedPlanVerdict is the verdict applying a saved plan with this plan-gate
+// result gets in tier t, as planGate and the decision table judge it: a
+// replace counts as a destroy.
+func SavedPlanVerdict(res *plangate.Result, t config.Tier) Verdict {
+	class := classify.ApplySavedPlan
+	if len(res.Deletes)+len(res.Replaces) > 0 {
+		class = classify.Destroy
+	}
+	v := Table[class][t]
+	for _, f := range res.Findings {
+		v = Max(v, FindingVerdict(f.Severity, t))
+	}
+	return v
+}
+
+// DirSignals are the tier signals of a Terraform directory as the hook reads
+// them: the path, the selected workspace, and the recorded backend, else the
+// declared one.
+func DirSignals(dir string, env map[string]string) (config.Signals, *preflight.Backend) {
+	sig := config.Signals{Dir: dir, Workspace: preflight.Workspace(dir, env)}
+	sig.ProviderProfiles, sig.ProviderRoles = preflight.ProviderAWS(dir)
+	be := preflight.InitBackendEnv(dir, env)
+	if be == nil {
+		be = preflight.DeclaredBackend(dir)
+	}
+	if be != nil {
+		if be.Unreadable != "" {
+			sig.BackendUnknown = be.Unreadable
+		}
+		sig.Backend, sig.BackendValues = be.URL(), be.Config
+		if p := be.Config["profile"]; p != "" && awsProfileEnv(env) == "" {
+			sig.AWSProfile = p
+		}
+	}
+	if p := awsProfileEnv(env); p != "" {
+		sig.AWSProfile = p
+	}
+	return sig, be
+}
+
+// awsProfileEnv is the profile the AWS CLI and SDKs pick from the
+// environment: AWS_PROFILE, else AWS_DEFAULT_PROFILE.
+func awsProfileEnv(env map[string]string) string {
+	if p := env["AWS_PROFILE"]; p != "" {
+		return p
+	}
+	return env["AWS_DEFAULT_PROFILE"]
+}
+
 // planGate runs the saved-plan checks and returns the effective class
 // (Destroy when the plan deletes resources).
 func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps, recorded, declared *preflight.Backend) classify.Class {
@@ -596,6 +697,16 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 		alt := cfg.Resolve(config.Signals{Dir: a.Dir, Workspace: ws, Backend: r.Backend, AWSProfile: r.Profile})
 		if alt.Tier.Rank() > r.Tier.Rank() {
 			r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "plan workspace "+ws)
+		}
+	}
+	// A plan saved in another directory was made against that directory's
+	// state: its tier joins the command's.
+	// Only a Terraform working directory says where a plan was made: a plan
+	// file kept in /tmp says nothing.
+	if pd := filepath.Dir(planPath); a.Dir != "" && filepath.IsAbs(pd) && filepath.Clean(pd) != filepath.Clean(a.Dir) && terraformDir(pd) {
+		sig, _ := DirSignals(pd, deps.Env)
+		if alt := cfg.Resolve(sig); alt.Tier.Rank() > r.Tier.Rank() {
+			r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "the saved plan is in "+pd)
 		}
 	}
 	for _, f := range r.Findings {
@@ -691,6 +802,9 @@ func findPlanfile(root, rel string) (matches []string, truncated bool) {
 				return filepath.SkipDir
 			}
 			if r, err := filepath.Rel(root, p); err == nil && strings.Count(r, string(filepath.Separator)) >= planSearchMaxDepth {
+				// Deeper directories are not searched, so a copy there would
+				// be missed.
+				truncated = true
 				return filepath.SkipDir
 			}
 		}

@@ -411,3 +411,58 @@ func finding(r *Result, rule string) *preflight.Finding {
 	}
 	return nil
 }
+
+// State JSON is not a plan: judging it as an empty one allowed anything
+// (finding 2T21).
+func TestStateJSONIsNotAPlan(t *testing.T) {
+	state := []byte(`{"format_version":"1.0","terraform_version":"1.9.0","values":{"root_module":{"resources":[]}}}`)
+	if _, err := Evaluate(Input{PlanJSON: state}, DefaultRules()); err == nil {
+		t.Fatal("state JSON was evaluated as a plan")
+	}
+}
+
+// Action invocations run provider operations the resource changes do not
+// describe (finding 2T5).
+func TestPlanActions(t *testing.T) {
+	plan := []byte(`{"format_version":"1.2","planned_values":{},"resource_changes":[],"action_invocations":[{"address":"action.aws_lambda_invoke.wipe"}]}`)
+	res, err := Evaluate(Input{PlanJSON: plan}, DefaultRules())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].Rule != "plan-actions" || res.Findings[0].Severity != preflight.High {
+		t.Fatalf("findings %+v", res.Findings)
+	}
+}
+
+// Equivalent forms of an exposure are exposures too (findings 2T16, 2T19).
+func TestExposureEquivalents(t *testing.T) {
+	create := []string{"create"}
+	cases := []struct {
+		name    string
+		rc      rc
+		exposed bool
+	}{
+		{"NotAction", rc{"aws_iam_policy.p", "aws_iam_policy", create, nil, map[string]any{"policy": `{"Statement":[{"Effect":"Allow","NotAction":"iam:DeleteRole","Resource":"*"}]}`}}, true},
+		{"principal list", rc{"aws_s3_bucket_policy.p", "aws_s3_bucket_policy", create, nil, map[string]any{"policy": `{"Statement":[{"Effect":"Allow","Principal":{"AWS":["arn:aws:iam::1:root","*"]},"Action":"s3:GetObject"}]}`}}, true},
+		{"empty condition", rc{"aws_s3_bucket_policy.p", "aws_s3_bucket_policy", create, nil, map[string]any{"policy": `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Condition":{}}]}`}}, true},
+		{"real condition", rc{"aws_s3_bucket_policy.p", "aws_s3_bucket_policy", create, nil, map[string]any{"policy": `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Condition":{"StringEquals":{"aws:SourceVpce":"vpce-1"}}}]}`}}, false},
+		{"split CIDR", rc{"aws_security_group_rule.r", "aws_security_group_rule", create, nil, map[string]any{"type": "ingress", "cidr_blocks": []any{"0.0.0.0/1", "128.0.0.0/1"}, "from_port": 22.0, "to_port": 22.0, "protocol": "tcp"}}, true},
+		{"office CIDR", rc{"aws_security_group_rule.r", "aws_security_group_rule", create, nil, map[string]any{"type": "ingress", "cidr_blocks": []any{"203.0.113.0/24"}, "from_port": 22.0, "to_port": 22.0, "protocol": "tcp"}}, false},
+		{"default security group", rc{"aws_default_security_group.d", "aws_default_security_group", create, nil, map[string]any{"ingress": []any{map[string]any{"cidr_blocks": []any{"0.0.0.0/0"}, "from_port": 0.0, "to_port": 0.0, "protocol": "-1"}}}}, true},
+		{"role managed policy", rc{"aws_iam_role.r", "aws_iam_role", create, nil, map[string]any{"managed_policy_arns": []any{"arn:aws:iam::aws:policy/AdministratorAccess"}}}, true},
+		{"role trust any principal", rc{"aws_iam_role.r", "aws_iam_role", create, nil, map[string]any{"assume_role_policy": `{"Statement":[{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"sts:AssumeRole"}]}`}}, true},
+		{"publicly accessible", rc{"aws_db_instance.db", "aws_db_instance", []string{"update"}, map[string]any{"publicly_accessible": false}, map[string]any{"publicly_accessible": true}}, true},
+		{"AllUsers grant", rc{"aws_s3_bucket_acl.a", "aws_s3_bucket_acl", create, nil, map[string]any{"access_control_policy": []any{map[string]any{"grant": []any{map[string]any{"grantee": []any{map[string]any{"uri": "http://acs.amazonaws.com/groups/global/AllUsers"}}}}}}}}, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r, err := Evaluate(Input{PlanJSON: planJSON(c.rc), MaxDestroy: -1}, DefaultRules())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, got := rules(t, r)["exposure"]; got != c.exposed {
+				t.Fatalf("exposure %v, want %v: %+v", got, c.exposed, r.Findings)
+			}
+		})
+	}
+}

@@ -16,7 +16,11 @@ internet exposure, IAM wildcards, changes to the state backend, destroys above
 does not judge: the workspace recorded in the binary planfile (Terraform 1.15
 and later refuse that mismatch themselves) and local state freshness, which
 are preflight checks in the hook path. Rules and tiers come from the
-repository's `.applygate.yaml` as everywhere else; pass `--tier` to override.
+repository's `.applygate.yaml` as everywhere else, and the tier from the same
+signals the hook reads: the path, the selected workspace and the backend. A
+replace is judged like a destroy, as in the hook. Pass `--tier protected`,
+`standard` or `disposable` to override; any other value is an error (exit 2),
+and so is JSON that is not a plan, such as state JSON.
 
 ## GitHub Actions
 
