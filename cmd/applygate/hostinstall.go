@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/Flurit/applygate/internal/hook"
@@ -350,12 +353,17 @@ func hookEntry(verb, agent, scope string, stdout, stderr io.Writer) int {
 			return 0
 		}
 	}
-	b, _ := json.MarshalIndent(doc, "", "  ")
+	orig, _ := os.ReadFile(path)
+	b, err := spliceJSON(orig, doc)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
+	if err := writeAtomic(path, b, 0o644); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
@@ -416,4 +424,122 @@ func scriptEntry(verb string, spec installSpec, path string, stdout, stderr io.W
 		fmt.Fprintln(stdout, n)
 	}
 	return 0
+}
+
+// spliceJSON writes doc back in the layout of orig: the top-level keys keep
+// their order and every value applygate did not change keeps its bytes, so
+// another tool's settings come back as they were. New keys go at the end.
+// Without an original, doc is written with two-space indentation.
+func spliceJSON(orig []byte, doc map[string]any) ([]byte, error) {
+	type kv struct {
+		key string
+		raw json.RawMessage
+	}
+	var keys []kv
+	indent := "  "
+	if len(bytes.TrimSpace(orig)) > 0 {
+		dec := json.NewDecoder(bytes.NewReader(orig))
+		if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+			return nil, fmt.Errorf("settings file is not a JSON object")
+		}
+		for dec.More() {
+			t, err := dec.Token()
+			if err != nil {
+				return nil, err
+			}
+			var raw json.RawMessage
+			if err := dec.Decode(&raw); err != nil {
+				return nil, err
+			}
+			keys = append(keys, kv{t.(string), raw})
+		}
+		if m := regexp.MustCompile(`\{\s*?\n([ \t]+)"`).FindSubmatch(orig); m != nil {
+			indent = string(m[1])
+		}
+	}
+	seen := map[string]bool{}
+	var out bytes.Buffer
+	out.WriteString("{")
+	n := 0
+	emit := func(k string, raw []byte) {
+		if n > 0 {
+			out.WriteString(",")
+		}
+		n++
+		kb, _ := json.Marshal(k)
+		out.WriteString("\n" + indent)
+		out.Write(kb)
+		out.WriteString(": ")
+		out.Write(raw)
+	}
+	value := func(k string) []byte {
+		b, _ := json.MarshalIndent(doc[k], indent, indent)
+		return b
+	}
+	for _, e := range keys {
+		seen[e.key] = true
+		v, kept := doc[e.key]
+		if !kept {
+			continue
+		}
+		var old any
+		if json.Unmarshal(e.raw, &old) == nil && reflect.DeepEqual(old, normalize(v)) {
+			emit(e.key, e.raw)
+		} else {
+			emit(e.key, value(e.key))
+		}
+	}
+	var added []string
+	for k := range doc {
+		if !seen[k] {
+			added = append(added, k)
+		}
+	}
+	sort.Strings(added)
+	for _, k := range added {
+		emit(k, value(k))
+	}
+	if n > 0 {
+		out.WriteString("\n")
+	}
+	out.WriteString("}\n")
+	return out.Bytes(), nil
+}
+
+// normalize round-trips v through JSON so it compares equal to a decoded
+// value (ints become float64).
+func normalize(v any) any {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var out any
+	_ = json.Unmarshal(b, &out)
+	return out
+}
+
+// writeAtomic replaces path with b through a temporary file in the same
+// directory, keeping the old file's permissions, so a reader never sees a
+// half-written settings file.
+func writeAtomic(path string, b []byte, mode os.FileMode) error {
+	if fi, err := os.Stat(path); err == nil {
+		mode = fi.Mode().Perm()
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".applygate-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(b); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
 }

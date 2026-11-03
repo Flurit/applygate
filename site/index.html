@@ -238,7 +238,7 @@
         <div class="card">
           <h3>Reads commands the way bash does</h3>
           <p>Parses with a real shell parser, follows <code>cd</code>, variables, loops and functions, and unwraps <code>bash -c</code>, <code>eval</code>, here-documents, <code>sudo</code>, <code>xargs</code>, <code>find -exec</code>, secrets runners, Makefile recipes and scripts. It decodes <code>echo … | base64 -d | sh</code>.</p>
-          <p>It tells commands from text: <code>grep "terraform destroy"</code> is a grep. What it cannot resolve statically, it refuses (ask) instead of guessing.</p>
+          <p>It tells commands from text: <code>grep "terraform destroy"</code> is a grep. What it cannot reproduce exactly, it refuses (ask in protected environments) instead of guessing. A program it does not know that wraps another cloud CLI is not seen through unless the config lists it.</p>
         </div>
         <div class="card">
           <h3>Judges the plan, not just the command</h3>
@@ -259,12 +259,12 @@
         <div class="stop"><h3>State surgery</h3><p><code>state rm/mv/push</code>, <code>force-unlock</code>, <code>-migrate-state</code>.</p></div>
         <div class="stop"><h3>Cloud CLI deletes</h3><p><code>aws … delete-*</code>, <code>s3 rb</code>, terminate, <code>kubectl delete</code>.</p></div>
         <div class="stop"><h3>Hidden commands</h3><p><code>eval "$(curl …)"</code>, <code>curl … | bash</code>, encoded payloads.</p></div>
-        <div class="stop"><h3>Guard tampering</h3><p>Skip-permissions flags and edits to hook config, applygate's config or its log.</p></div>
+        <div class="stop"><h3>Guard tampering</h3><p>Skip-permissions flags, edits to hook config, applygate's config, log, approvals or binary, and renamed copies of applygate.</p></div>
       </div>
       <ul class="principles" style="margin-top: 56px">
         <li><b>Deterministic</b><span>Rules decide; an opt-in model can only add a prompt.</span></li>
-        <li><b>Local</b><span>No network calls by default. Telemetry is off unless you turn it on.</span></li>
-        <li><b>Fails closed</b><span>A check that cannot finish blocks in protected tiers.</span></li>
+        <li><b>Local</b><span>No network calls by default. The model judge and telemetry are off unless you turn them on; the judge then sends the calls it judges, redacted, to the model you chose.</span></li>
+        <li><b>Fails closed</b><span>A check that cannot finish blocks when the repository has a protected environment; a timeout blocks everywhere.</span></li>
         <li><b>Observe first</b><span>Log what would be blocked for a few days, then enforce.</span></li>
       </ul>
       <div class="hosts" aria-label="Works with">

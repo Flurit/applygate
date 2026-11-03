@@ -1,6 +1,6 @@
 # applygate as a Claude Code plugin
 
-This directory is a Claude Code plugin that registers the applygate PreToolUse hook. It needs a `.applygate.yaml` in the repository (`applygate init --no-hooks`, or write one by hand: [docs/config.md](../../docs/config.md)).
+This directory is a Claude Code plugin that registers the applygate PreToolUse hook. A `.applygate.yaml` in the repository tells it which directories are which environment (`applygate init --no-hooks`, or write one by hand: [docs/config.md](../../docs/config.md)). Without one the defaults apply: enforce mode, strict, so every directory is judged as protected.
 
 Try it for one session:
 

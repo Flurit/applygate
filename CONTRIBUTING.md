@@ -30,7 +30,7 @@ review/               live-agent test write-ups, host research and the open-sour
 plugin/claude-code/   Claude Code plugin: hooks and a launcher that finds or fetches the pinned release
 site/                 project page, published to https://flurit.github.io/applygate/ by .github/workflows/pages.yml
 .goreleaser.yaml      release builds: reproducible archives, checksums, cosign signature, SBOMs
-install.sh            installer: verifies the cosign signature (when cosign is installed) and the sha256
+install.sh            installer: verifies the cosign signature (required unless APPLYGATE_VERIFY_SIGNATURE=auto) and the sha256
 ```
 
 ## Adding a scenario

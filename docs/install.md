@@ -5,8 +5,9 @@
 Pick one:
 
 ```bash
-# Installer, from a release tag (never from main). It checks the sha256 and, when cosign is
-# installed, the signature; APPLYGATE_VERIFY_SIGNATURE=require makes the signature check mandatory.
+# Installer, from a release tag (never from main). It checks the sha256 and the cosign
+# signature. Up to v0.5.0 the signature check needs APPLYGATE_VERIFY_SIGNATURE=require; from
+# v0.6.0 it is required by default, and APPLYGATE_VERIFY_SIGNATURE=auto installs without cosign.
 curl -fsSL https://raw.githubusercontent.com/Flurit/applygate/v0.5.0/install.sh | APPLYGATE_VERIFY_SIGNATURE=require sh
 
 # Homebrew (checks the sha256 only, not the signature)

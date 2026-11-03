@@ -41,7 +41,7 @@ Secrets are redacted first, the same way as in the decision log: AWS keys, `pass
 
 ## Choosing a judge
 
-Every option below was measured the same way: on the fifth held-out set (143 calls the rules let through, written independently and scored once per judge), with applygate's prompt and the filter of that time. The filter now sends more calls to the judge (see Limits), which these numbers do not reflect; they have not been measured again. The full method is under [How well it works](#how-well-it-works).
+The options below were measured the same way, except the `claude` CLI, which was measured on the fourth set only: on the fifth held-out set (143 calls the rules let through, written independently and scored once per judge), with applygate's prompt and the filter of that time. The filter now sends more calls to the judge (see Limits), which these numbers do not reflect; they have not been measured again. The full method is under [How well it works](#how-well-it-works).
 
 | Option | Should be stopped: caught (72) | Should go through: escalated (71) | Model time p95 | Cost per judged call |
 |---|---|---|---|---|
@@ -279,7 +279,7 @@ With Anthropic's endpoint the hook took 1.2 to 3.0 s per judged call, against 3.
 
 ## Limits
 
-- **A model can be wrong.** It missed up to three calls of each held-out set, mostly writes whose effect depends on context it cannot see, and it can be fooled in ways the sets did not try. The rules stay the guarantee; the judge is extra coverage.
+- **A model can be wrong.** On the fifth held-out set the measured judges missed between 1 and 7 of the 72 calls that should be stopped (Gemini 3.8 Flash 1, Haiku 5.5 2, Jev 3, `gpt-6-luna` 7), mostly writes whose effect depends on context it cannot see, and it can be fooled in ways the sets did not try. The rules stay the guarantee; the judge is extra coverage.
 - **Some calls skip the judge.** The filter keeps local work away from the model: reads inside the working tree, builds, tests, local git. So a destructive call that looks like local work is not judged, for example `git log -p` printing a key from history.
   - **Not local:**
     - a program started through its own options (`git -c`, `git config` that sets a value, `tar --to-command`, `sort --compress-program`, `rg --pre`, `go test -exec`, `go build -toolexec`, `go env -w`);

@@ -257,16 +257,19 @@ func TestAllowProducesNoOutput(t *testing.T) {
 }
 
 func TestClaudeCanAsk(t *testing.T) {
-	// Only dontAsk suppresses the ask prompt on Claude Code. bypassPermissions
-	// still shows it (observed on Claude Code 2.1.312, test T3.2).
+	// An ask is left to Claude Code only in the modes where the prompt was
+	// seen live: default (T3.1) and bypassPermissions (2.1.312, T3.2). Every
+	// other mode, untested ones included, enforces ask as block (I1).
 	cases := []struct {
 		mode string
 		want bool
 	}{
 		{"default", true},
-		{"acceptEdits", true},
-		{"plan", true},
+		{"", true},
 		{"bypassPermissions", true},
+		{"acceptEdits", false},
+		{"plan", false},
+		{"auto", false},
 		{"dontAsk", false},
 	}
 	for _, c := range cases {

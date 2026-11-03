@@ -43,31 +43,11 @@ builds:
     # Reproducible builds: stamp the binary with the commit time, not the
     # build machine's clock.
     mod_timestamp: "{{ .CommitTimestamp }}"
-  # Compatibility entry point for installs that still call "seatbelt"
-  # (hook entries with an absolute path to the old binary). Ships for one
-  # release after the rename; it prints a deprecation line and runs applygate.
-  - id: seatbelt-shim
-    main: ./cmd/seatbelt
-    binary: seatbelt
-    env:
-      - CGO_ENABLED=0
-    flags:
-      - -trimpath
-    ldflags:
-      - -s -w
-    goos:
-      - linux
-      - darwin
-    goarch:
-      - amd64
-      - arm64
-    mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
   - id: tarballs
     ids:
       - applygate
-      - seatbelt-shim
     formats:
       - tar.gz
     name_template: "applygate_{{ .Version }}_{{ .Os }}_{{ .Arch }}"

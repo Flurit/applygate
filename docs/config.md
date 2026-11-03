@@ -66,6 +66,7 @@ judge:                          # user config only; a repository config may only
   base_url: ""                  # required for openai: no provider is chosen for you (docs/judge.md compares them)
   model: ""                     # required for openai
   api_key_env: ""               # the variable holding the key; empty sends none
+  reasoning_effort: ""          # sent as reasoning_effort only when set (some endpoints ignore it)
   command: []                   # required for command
   timeout: 10s
   skip_mcp: []                  # MCP tool globs never sent, for tools that only read

@@ -67,7 +67,10 @@ runs:
     - name: Use the given binary
       if: inputs.binary != ''
       shell: bash
-      run: echo "APPLYGATE_BIN=$(cd "$(dirname "${{ inputs.binary }}")" && pwd)/$(basename "${{ inputs.binary }}")" >> "$GITHUB_ENV"
+      env:
+        # Through the environment, not the script text: an input is data.
+        BINARY: ${{ inputs.binary }}
+      run: echo "APPLYGATE_BIN=$(cd "$(dirname "$BINARY")" && pwd)/$(basename "$BINARY")" >> "$GITHUB_ENV"
     - name: plan-check
       id: check
       shell: bash

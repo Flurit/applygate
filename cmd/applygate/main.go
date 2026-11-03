@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -36,13 +37,13 @@ Usage:
   applygate hook AGENT                 read one hook event on stdin (used by the agent); AGENT is
                                       claude, codex, cursor, copilot, gemini, windsurf, devin, opencode
                                       or cline (applygate hosts says what each was verified on)
-  applygate check [--cwd DIR] [--dir-unknown] [--json] "<command>"
-                                      dry-run a command through the policy
-  applygate explain [--cwd DIR] [--dir-unknown] "<command>"
+  applygate check [--cwd DIR] [--dir-unknown] [--json] [--agent NAME] [--no-judge] [--plan-json F=J] "<command>"
+                                      dry-run a command through the policy (and the judge, if on)
+  applygate explain [--cwd DIR] [--dir-unknown] [--agent NAME] [--no-judge] [--plan-json F=J] "<command>"
                                       show the parse, classification and decision trace
   applygate plan-check [--tier T] [--cwd DIR] <plan.json>
                                       evaluate "terraform show -json" output
-  applygate apply [--cwd DIR] [--engine terraform|tofu] [--yes] <planfile> [args]
+  applygate apply [--cwd DIR] [--engine terraform|tofu] <planfile> [args]
                                       judge a saved plan as the hooks would, confirm an ask by typing the
                                       environment name, then run the engine's apply (the human door)
   applygate approve [ID]               allow one call an agent was stopped on because it could not ask you;
@@ -636,9 +637,22 @@ func entryCommands(e any) []string {
 	return out
 }
 
+// ownEntry is the command hook install writes, "<binary>" hook <agent>
+// (an older release wrote the path unquoted), with the binary named
+// applygate or seatbelt, or this very binary.
+var ownEntry = regexp.MustCompile(`^(?:"([^"]+)"|(\S+)) hook ([a-z-]+)$`)
+
+// isApplygateEntry reports whether a hook entry is one applygate wrote: its
+// command is exactly the one hook install writes. Another tool's entry that
+// merely mentions applygate is left alone.
 func isApplygateEntry(e any) bool {
 	for _, c := range entryCommands(e) {
-		if (strings.Contains(c, "applygate") || strings.Contains(c, "seatbelt")) && strings.Contains(c, " hook ") {
+		m := ownEntry.FindStringSubmatch(strings.TrimSpace(c))
+		if m == nil {
+			continue
+		}
+		bin := m[1] + m[2]
+		if b := filepath.Base(bin); b == "applygate" || b == "seatbelt" || bin == selfPath() {
 			return true
 		}
 	}
@@ -910,7 +924,7 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 						say(false, "%s hook command binary %s: %s", agent, why, bin)
 					}
 					if filepath.Base(bin) == "seatbelt" {
-						say(false, "%s hook still calls the pre-rename seatbelt binary (works for one release); run: applygate hook install --agent %s --scope %s", agent, agent, scope)
+						say(false, "%s hook still calls the pre-rename seatbelt binary, which v0.6.0 no longer ships, so the hook fails; run: applygate hook install --agent %s --scope %s", agent, agent, scope)
 					}
 				}
 			} else if agent == "codex" {

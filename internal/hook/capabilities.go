@@ -39,16 +39,16 @@ type Host struct {
 var Hosts = []Host{
 	{
 		Name: "Claude Code", Agent: "claude", Supported: true,
-		CanAsk:     `yes: a hook "ask" shows Claude Code's permission prompt with applygate's reason (T3.1)`,
+		CanAsk:     `yes, in the default and bypassPermissions modes: a hook "ask" shows Claude Code's permission prompt with applygate's reason (T3.1, T3.2b); in the other modes applygate enforces ask as block (see the modes row)`,
 		Failure:    `fails closed: the installed hook carries onFailure: "block", so a crashed, timed-out (30 s) or missing hook blocks the tool call (T3.4 missing binary, T3.5 timeout, T3.6 killed by a signal); needs Claude Code 2.1.295 or later, older versions fail open`,
 		Tools:      `matcher "*" (every tool): shell: Bash, and any other tool whose input carries a command (Monitor, PowerShell), judged the same way (Monitor and PowerShell from replayed events, not tested live); file writes: Write, Edit, MultiEdit, NotebookEdit; reads: Read, Grep; MCP calls: calls to known infrastructure tools are judged as the equivalent command (docs/mcp.md, from the servers' source, not tested against running servers), other calls are logged with their arguments (redacted, capped at 4 KB) and allowed; a hook installed with an older, narrower matcher misses some tools and doctor says so. Cursor, Copilot CLI and Devin also load hooks from .claude/settings.json and may send their own tool names (Shell, exec); applygate judges those like that host's own calls: no ask, a block as exit 2 (from their docs, not tested live)`,
 		CommandDir: `yes: the top-level cwd is the shell's directory at the time of the call and follows an earlier cd (hooks docs, read 2026-10-29); not tested live`,
 		Settings:   `project: <session cwd>/.claude/settings.json and settings.local.json, read from the launch directory only, not from ancestors (T3.1: launched from a subdirectory the hook never ran); user: ~/.claude/settings.json (hook install --scope user); managed: managed-settings.json (docs; not tested)`,
 		Trust:      `none observed for a project hook (T3.1); not tested further`,
-		AskModes:   `default: prompt shown (T3.1); bypassPermissions: prompt still shown on 2.1.312, which is undocumented (T3.2b); dontAsk: no prompt can be shown, so applygate enforces ask as block (T3.2c); acceptEdits, plan: not tested`,
+		AskModes:   `default: prompt shown (T3.1); bypassPermissions: prompt still shown on 2.1.312, which is undocumented (T3.2b); dontAsk: no prompt can be shown, so applygate enforces ask as block (T3.2c); acceptEdits, plan, auto and any other mode: not tested, so applygate enforces ask as block`,
 		Verified:   `Claude Code 2.1.312 on Linux, 2026-10-28; user-scope hook from a subdirectory (T3.9) on 2.1.314 on macOS 26.7.1, 2026-10-30`,
 		Evidence:   []string{"review/T3_RESULTS.md", "docs/project/ACCEPTANCE.md"},
-		Pending:    `none`,
+		Pending:    `the "*" matcher with Monitor and PowerShell calls; the per-command cwd after a cd; the prompt in acceptEdits, plan and auto; v0.6.0 as a whole (re-run T3 before the release)`,
 	},
 	{
 		Name: "Codex", Agent: "codex", Supported: true,

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Flurit/applygate/internal/approval"
@@ -193,7 +194,20 @@ func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
 		d.PlanJSON = ShowPlan(ctx, cfg.ShowTimeout())
 	}
 	if !opt.NoGit {
-		d.Lockfile = preflight.LockfileDrift
+		// One git check per directory: a command with hundreds of destroys
+		// in one directory used to run it per action (finding I6).
+		var mu sync.Mutex
+		seen := map[string]*preflight.Finding{}
+		d.Lockfile = func(dir string) *preflight.Finding {
+			mu.Lock()
+			defer mu.Unlock()
+			if f, ok := seen[dir]; ok {
+				return f
+			}
+			f := preflight.LockfileDrift(dir)
+			seen[dir] = f
+			return f
+		}
 	}
 	if cfg.Preflight.LiveIdentity {
 		d.Account = func(p string) (string, error) { return preflight.CallerAccount(p, 5*time.Second) }

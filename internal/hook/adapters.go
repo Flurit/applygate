@@ -83,6 +83,10 @@ type passer interface{ Pass() Output }
 func (Cursor) Pass() Output { return Output{Stdout: []byte(`{"permission":"allow"}` + "\n")} }
 func (Cline) Pass() Output  { return Output{Stdout: clineOut(false, "")} }
 
+// claudeAskModes are the Claude Code permission modes known to show the
+// prompt for a hook's ask ("" is an older version without the field).
+var claudeAskModes = map[string]bool{"": true, "default": true, "bypassPermissions": true}
+
 type hookInput struct {
 	SessionID      string          `json:"session_id"`
 	Cwd            string          `json:"cwd"`
@@ -120,12 +124,13 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 	if in.ToolName == "" {
 		return policy.Event{}, false, errors.New("malformed hook event: no tool_name")
 	}
-	// Claude Code 2.1.312 shows a permission prompt for a hook "ask" even in
-	// bypassPermissions (live test T3.2), so only dontAsk converts ask to
-	// block. This is observed, not documented; rerun T3.2 on new versions
-	// (see docs/limits.md).
+	// An ask is left to Claude Code only in the permission modes where a
+	// prompt was seen live: default (T3.1) and bypassPermissions on 2.1.312
+	// (T3.2, observed, not documented). In every other mode (dontAsk, and
+	// the untested acceptEdits, plan and auto) an ask is enforced as a
+	// block, so an untested mode cannot turn an ask into a silent allow.
 	ev := policy.Event{Agent: "claude", Tool: in.ToolName, Cwd: in.Cwd, Session: in.SessionID, PermissionMode: in.PermissionMode,
-		CanAsk: in.PermissionMode != "dontAsk", DirKnown: true}
+		CanAsk: claudeAskModes[in.PermissionMode], DirKnown: true}
 	var ti struct {
 		Command      string `json:"command"`
 		FilePath     string `json:"file_path"`
