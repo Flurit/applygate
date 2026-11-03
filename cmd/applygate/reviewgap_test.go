@@ -111,3 +111,20 @@ func TestReview2T13PlanCheckReadsTheBackend(t *testing.T) {
 		t.Fatalf("plan-check judged a prod backend in a dev path at rc %d: %s%s", rc, out.String(), errb.String())
 	}
 }
+
+// check --enforce exits by the verdict under observe mode, so a gate such
+// as a Terragrunt hook is not turned off by the user's trial setting
+// (finding 2D13).
+func TestReview2D13CheckEnforce(t *testing.T) {
+	dir, xdg := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	os.MkdirAll(filepath.Join(xdg, "applygate"), 0o755)
+	os.WriteFile(filepath.Join(xdg, "applygate", "config.yaml"), []byte("version: 1\nmode: observe\n"), 0o644)
+	var out, errb bytes.Buffer
+	if rc := run([]string{"check", "--no-judge", "--cwd", dir, "terraform destroy -auto-approve"}, nil, &out, &errb); rc != 0 {
+		t.Fatalf("observe mode without --enforce: rc %d", rc)
+	}
+	if rc := run([]string{"check", "--enforce", "--no-judge", "--cwd", dir, "terraform destroy -auto-approve"}, nil, &out, &errb); rc != 3 {
+		t.Fatalf("--enforce under observe: rc %d %s", rc, out.String())
+	}
+}

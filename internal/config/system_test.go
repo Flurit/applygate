@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -96,5 +97,21 @@ func TestManagedTrustStore(t *testing.T) {
 	}
 	if fi, _ := os.Stat(SystemTrustPath()); fi.Mode().Perm() != 0o644 {
 		t.Fatalf("system trust store mode %v", fi.Mode().Perm())
+	}
+}
+
+// doctor names every repository setting that is ignored (finding 2D16).
+func TestRepoUserOnlySettingsNoted(t *testing.T) {
+	repo := t.TempDir()
+	os.WriteFile(filepath.Join(repo, FileName), []byte("version: 1\nlog_path: /tmp/x.jsonl\napprovals: true\nunknown_dir: session_root\njudge:\n  enabled: true\npreflight:\n  live_state: true\n"), 0o644)
+	cfg, err := Load("", repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := strings.Join(cfg.Deprecations, "\n")
+	for _, k := range []string{"log_path", "approvals: true", "unknown_dir: session_root", "judge", "preflight.live_state"} {
+		if !strings.Contains(notes, k) {
+			t.Errorf("no note for %s:\n%s", k, notes)
+		}
 	}
 }

@@ -476,6 +476,11 @@ func merge(cfg *Config, path string, l layer) error {
 	ignored := func(field string) {
 		cfg.Deprecations = append(cfg.Deprecations, path+": "+field+" would loosen protection and is ignored in a repository config; only the user config ("+UserPath()+") may set it")
 	}
+	// userOnly notes a setting that is the user's for another reason: it
+	// sends data off the machine or moves applygate's own files.
+	userOnly := func(field string) {
+		cfg.Deprecations = append(cfg.Deprecations, path+": "+field+" is ignored in a repository config; only the user config ("+UserPath()+") may set it")
+	}
 	if c.Mode != "" {
 		switch {
 		case !repo || c.Mode == "enforce":
@@ -508,9 +513,13 @@ func merge(cfg *Config, path string, l layer) error {
 			ignored("on_error: " + c.OnError)
 		}
 	}
-	if c.LogPath != "" && !repo {
+	if c.LogPath != "" {
 		// A repository cannot redirect the log; only the user config can.
-		cfg.LogPath = c.LogPath
+		if repo {
+			userOnly("log_path")
+		} else {
+			cfg.LogPath = c.LogPath
+		}
 	}
 	if c.NameHints != nil {
 		switch {
@@ -520,15 +529,21 @@ func merge(cfg *Config, path string, l layer) error {
 			ignored("name_hints: false")
 		}
 	}
-	if c.Approvals != nil && (!repo || !*c.Approvals) {
+	if c.Approvals != nil {
 		// A repository may turn approvals off, never back on.
-		cfg.Approvals = c.Approvals
+		if !repo || !*c.Approvals {
+			cfg.Approvals = c.Approvals
+		} else {
+			ignored("approvals: true")
+		}
 	}
 	if repo {
 		// The judge sends calls off the machine with the user's key: a
 		// repository may turn it off, nothing else.
 		if c.Judge.Enabled != nil && !*c.Judge.Enabled {
 			cfg.Judge.Enabled = c.Judge.Enabled
+		} else if !reflect.DeepEqual(c.Judge, Judge{}) {
+			userOnly("judge (a repository config may only turn it off)")
 		}
 	} else if l == layerUser || !reflect.DeepEqual(c.Judge, Judge{}) {
 		cfg.Judge = c.Judge
@@ -540,6 +555,8 @@ func merge(cfg *Config, path string, l layer) error {
 		// only the user config can. It may switch it back on.
 		if !repo || c.UnknownDir == UnknownDirMostProtected {
 			cfg.UnknownDir = c.UnknownDir
+		} else {
+			ignored("unknown_dir: " + c.UnknownDir)
 		}
 	default:
 		return fmt.Errorf("%s: unknown_dir must be %s or %s, not %q", path, UnknownDirMostProtected, UnknownDirSessionRoot, c.UnknownDir)
@@ -608,11 +625,18 @@ func merge(cfg *Config, path string, l layer) error {
 	tighten("preflight.stale_state", &cfg.Preflight.StaleState, c.Preflight.StaleState)
 	tighten("preflight.lockfile", &cfg.Preflight.Lockfile, c.Preflight.Lockfile)
 	tighten("preflight.backend", &cfg.Preflight.Backend, c.Preflight.Backend)
-	if c.Preflight.LiveIdentity && !repo {
-		cfg.Preflight.LiveIdentity = true // network access is a user decision
-	}
-	if c.Preflight.LiveState && !repo {
-		cfg.Preflight.LiveState = true // network access is a user decision
+	// Network access is a user decision.
+	for _, x := range []struct {
+		on   bool
+		dst  *bool
+		name string
+	}{{c.Preflight.LiveIdentity, &cfg.Preflight.LiveIdentity, "preflight.live_identity"}, {c.Preflight.LiveState, &cfg.Preflight.LiveState, "preflight.live_state"}} {
+		switch {
+		case x.on && repo:
+			userOnly(x.name + ": true")
+		case x.on:
+			*x.dst = true
+		}
 	}
 	cfg.ProtectedPaths = append(cfg.ProtectedPaths, c.ProtectedPaths...)
 	cfg.ProtectedResources = append(cfg.ProtectedResources, c.ProtectedResources...)

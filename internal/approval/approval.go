@@ -27,6 +27,7 @@ import (
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/policy"
 	"github.com/Flurit/applygate/internal/safefile"
+	"github.com/Flurit/applygate/internal/shell"
 )
 
 const (
@@ -94,6 +95,28 @@ func NewRequest(ev policy.Event, d policy.Decision) Record {
 		Command: decisionlog.Redact(ev.Command)}
 	if r.Command == "" {
 		r.Command = ev.Tool + " " + strings.Join(ev.Paths, " ")
+	}
+	if r.Command != ev.Command && ev.Command != "" {
+		// Redaction may hide what runs (API_TOKEN=`pulumi destroy` true):
+		// say which programs the command starts.
+		var runs []string
+		for _, inv := range shell.Analyze(ev.Command, shell.Options{Dir: ev.Cwd, ReadFile: func(string) ([]byte, error) { return nil, os.ErrNotExist }}).Invocations {
+			var words []string
+			for _, w := range inv.Args {
+				if len(words) == 2 {
+					break
+				}
+				if !strings.HasPrefix(w.Text, "-") || len(words) == 0 {
+					words = append(words, w.Text)
+				}
+			}
+			if len(words) > 0 {
+				runs = append(runs, decisionlog.Redact(strings.Join(words, " ")))
+			}
+		}
+		if len(runs) > 0 {
+			r.Reasons = append(r.Reasons, "secrets are hidden in the command above; it starts: "+strings.Join(runs, ", "))
+		}
 	}
 	var token string
 	var tier config.Tier

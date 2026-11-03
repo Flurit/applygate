@@ -3913,6 +3913,21 @@
    "expect": [
     "allow"
    ]
+  },
+  {
+   "id": "Y2D4-1",
+   "finding": "2D4",
+   "kind": "dangerous",
+   "title": "tool_input keys that differ only in case",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "ls",
+    "COMMAND": "terraform destroy -auto-approve"
+   },
+   "expect": [
+    "block"
+   ]
   }
  ]
 }

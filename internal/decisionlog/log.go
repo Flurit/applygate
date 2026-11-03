@@ -4,6 +4,7 @@ package decisionlog
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,8 +54,12 @@ type Judge struct {
 	Error   string         `json:"error,omitempty"`
 }
 
-// Values stop at whitespace, quotes and the shell's separators.
-const secretValue = `[^\s"'&;|$]+`
+// Values stop at whitespace, quotes and the shell's separators. A $ inside
+// a value is part of it; one at the start is a variable, not a secret.
+const secretValue = `[^\s"'&;|$][^\s"'&;|]*`
+
+// quotedValue is a whole quoted value, spaces included.
+const quotedValue = `(?:"[^"\n]*"|'[^'\n]*')`
 
 // secretName matches names of settings, flags and variables that hold a
 // secret: db_pass, aws_secret_access_key, API_TOKEN, client-secret.
@@ -70,7 +75,7 @@ type redaction struct {
 var secretPatterns = []redaction{
 	// Private keys first: the name=value pattern would otherwise eat the
 	// -----BEGIN line and leave the key body.
-	{regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`), false},
+	{regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY[A-Z ]*-----.*?-----END [A-Z ]*PRIVATE KEY[A-Z ]*-----`), false},
 	// Token formats.
 	{regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`), false},
 	{regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`), false},
@@ -80,13 +85,25 @@ var secretPatterns = []redaction{
 	{regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{20,}`), false},
 	{regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{35}\b`), false},
 	{regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`), false},
+	{regexp.MustCompile(`\bhv[sbr]\.[A-Za-z0-9_-]{20,}`), false},
+	{regexp.MustCompile(`\bnpm_[A-Za-z0-9]{30,}\b`), false},
+	// Azure storage keys and SAS signatures.
+	{regexp.MustCompile(`(?i)((?:AccountKey|SharedAccessKey|[?&]sig)=)[^;&\s"']+`), true},
 	// Credentials in a URL: scheme://user:PASSWORD@host.
 	{regexp.MustCompile(`(://[^/\s:@]+:)[^@\s/]+(@)`), true},
-	{regexp.MustCompile(`(?i)(authorization:\s*(?:bearer|basic)\s+)\S+`), true},
+	{regexp.MustCompile(`(?i)(authorization["']?\s*[:=]\s*["']?(?:bearer|basic|token|digest)?\s*)[^\s"']+`), true},
 	// curl -u user:PASSWORD, --user user:PASSWORD.
 	{regexp.MustCompile(`((?:^|\s)(?:-u|--user)(?:\s+|=)[^\s:"']+:)` + secretValue), true},
-	// mysql -pPASSWORD (attached, as the client takes it).
+	// mysql -pPASSWORD and -p'PASSWORD' (attached, as the client takes it),
+	// docker login -p, redis-cli -a, sshpass -p.
+	{regexp.MustCompile(`(\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b[^|;&\n]*?\s-p)` + quotedValue), true},
 	{regexp.MustCompile(`(\b(?:mysql|mysqldump|mysqladmin|mariadb|mariadb-dump)\b[^|;&\n]*?\s-p)` + secretValue), true},
+	{regexp.MustCompile(`(\b(?:docker|podman|nerdctl)\s+login\b[^|;&\n]*?\s-p\s*)(?:` + quotedValue + `|` + secretValue + `)`), true},
+	{regexp.MustCompile(`(\bredis-cli\b[^|;&\n]*?\s-a\s*)(?:` + quotedValue + `|` + secretValue + `)`), true},
+	{regexp.MustCompile(`(\bsshpass\b[^|;&\n]*?\s-p\s*)(?:` + quotedValue + `|` + secretValue + `)`), true},
+	// name="value with spaces" and name='value': the whole quoted value.
+	{regexp.MustCompile(`(?i)(` + secretName + `["']?\s*[=:]\s*)` + quotedValue), true},
+	{regexp.MustCompile(`(?i)((?:^|\s)--?` + secretName + `(?:\s+|=))` + quotedValue), true},
 	// name=value and name: value, quoted or not ("password": "x").
 	{regexp.MustCompile(`(?i)(` + secretName + `["']?\s*[=:]\s*["']?)` + secretValue), true},
 	// --token VALUE, --password VALUE: a secret-named flag and the next word.
@@ -140,6 +157,17 @@ func redactEntry(e *Entry) {
 		}
 	}
 	e.Error = Redact(e.Error)
+	// Notes quote commands too (the MCP note holds the translated one).
+	e.Notes = append([]string(nil), e.Notes...)
+	for i := range e.Notes {
+		e.Notes[i] = Redact(e.Notes[i])
+	}
+	for i := range e.Actions {
+		e.Actions[i].Matched = append([]string(nil), e.Actions[i].Matched...)
+		for j := range e.Actions[i].Matched {
+			e.Actions[i].Matched[j] = Redact(e.Actions[i].Matched[j])
+		}
+	}
 	if e.Judge != nil {
 		j := *e.Judge
 		j.Reason, j.Error = Redact(j.Reason), Redact(j.Error)
@@ -172,11 +200,23 @@ func Append(path string, e Entry) error {
 func Read(r io.Reader) ([]Entry, int) {
 	var out []Entry
 	bad := 0
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 1<<20), 16<<20)
-	for sc.Scan() {
+	// A line over the cap is counted as bad and skipped; it must not hide
+	// the entries after it.
+	br := bufio.NewReaderSize(r, 1<<20)
+	for {
+		line, over, err := readLine(br, maxLine)
+		if err != nil && len(line) == 0 && !over {
+			break
+		}
+		if over {
+			bad++
+			continue
+		}
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
 		var e Entry
-		if json.Unmarshal(sc.Bytes(), &e) != nil {
+		if json.Unmarshal(line, &e) != nil {
 			bad++
 			continue
 		}
@@ -186,6 +226,28 @@ func Read(r io.Reader) ([]Entry, int) {
 		out = append(out, e)
 	}
 	return out, bad
+}
+
+// maxLine caps one log line.
+const maxLine = 16 << 20
+
+// readLine reads one line of at most max bytes; over is set when the line
+// was longer, and the rest of it has been read past.
+func readLine(br *bufio.Reader, max int) (line []byte, over bool, err error) {
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if !over {
+			if len(line)+len(chunk) > max {
+				over, line = true, nil
+			} else {
+				line = append(line, chunk...)
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return line, over, err
+	}
 }
 
 // Report writes a summary of entries.

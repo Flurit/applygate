@@ -276,10 +276,10 @@
   <section id="start">
     <div class="wrap">
       <h2>Running in a minute.</h2>
-      <p class="sub">Start in observe mode: nothing is blocked while applygate learns your repository. Then review what it would have stopped and turn enforcement on.</p>
+      <p class="sub">Start in observe mode: nothing is blocked while applygate learns your repository, self-protection included. Then review what it would have stopped and turn enforcement on.</p>
 <pre class="steps"><span class="p">$ </span>brew install Flurit/tap/applygate
 <span class="p">$ </span>cd your-infra-repo
-<span class="p">$ </span>applygate init                <span class="c"># .applygate.yaml in observe mode; hooks Claude Code and Codex</span>
+<span class="p">$ </span>applygate init                <span class="c"># .applygate.yaml, an observe-mode user config, hooks for Claude Code and Codex</span>
 <span class="p">$ </span>applygate check "terraform -chdir=envs/prod destroy"
 <span class="c">  # a few days later</span>
 <span class="p">$ </span>applygate report              <span class="c"># what it would have blocked</span>

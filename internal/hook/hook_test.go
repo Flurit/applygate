@@ -810,3 +810,25 @@ func TestKnownMCPToolJudged(t *testing.T) {
 		t.Fatalf("unknown tool with a broken config must pass: %+v", o)
 	}
 }
+
+// A broken repository config follows the user config's on_error and mode
+// (finding 2D7): observe mode never blocks, on_error: allow allows.
+func TestRepoConfigErrorFollowsUserConfig(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, ".applygate.yaml"), []byte("version: 1\nnot_a_key: true\n"), 0o644)
+	for _, c := range []struct {
+		user string
+		exit int
+	}{
+		{"version: 1\n", 2},
+		{"version: 1\nmode: observe\n", 0},
+		{"version: 1\non_error: allow\n", 0},
+	} {
+		user := filepath.Join(t.TempDir(), "config.yaml")
+		os.WriteFile(user, []byte(c.user), 0o644)
+		o := Run(Claude{}, strings.NewReader(event("Bash", root, map[string]any{"command": "terraform destroy -auto-approve"})), Options{UserConfig: user, NoLog: true, NoGit: true, Env: map[string]string{}})
+		if o.Exit != c.exit {
+			t.Errorf("user config %q: exit %d, want %d (%s)", c.user, o.Exit, c.exit, o.Stderr)
+		}
+	}
+}

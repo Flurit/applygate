@@ -40,13 +40,14 @@ need() { command -v "$1" >/dev/null 2>&1; }
 
 # --- HTTP helpers: curl preferred, wget as fallback --------------------------
 if need curl; then
-    fetch() { curl -fsSL --retry 3 -o "$2" "$1"; }
-    fetch_stdout() { curl -fsSL --retry 3 "$1"; }
+    # HTTPS only, redirects included.
+    fetch() { curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 3 -o "$2" "$1"; }
+    fetch_stdout() { curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 3 "$1"; }
     # URL after following redirects (used to resolve releases/latest).
-    fetch_final_url() { curl -fsSL -o /dev/null -w '%{url_effective}' "$1"; }
+    fetch_final_url() { curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL -o /dev/null -w '%{url_effective}' "$1"; }
 elif need wget; then
-    fetch() { wget -q -O "$2" "$1"; }
-    fetch_stdout() { wget -q -O - "$1"; }
+    fetch() { wget --https-only -q -O "$2" "$1"; }
+    fetch_stdout() { wget --https-only -q -O - "$1"; }
     fetch_final_url() {
         # wget prints "  Location: <url> [following]"; keep only the URL.
         wget --spider -S "$1" 2>&1 | sed -n 's/^ *[Ll]ocation: *\([^ ]*\).*/\1/p' | tail -n 1

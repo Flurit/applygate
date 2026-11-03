@@ -21,6 +21,8 @@ func TestInstallRemoveEveryAgent(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("COPILOT_HOME", "")
+			t.Setenv("CLAUDE_CONFIG_DIR", "")
+			t.Setenv("CODEX_HOME", "")
 			for _, scope := range []string{"project", "user"} {
 				var out, errb bytes.Buffer
 				if rc := cmdInstall("install", []string{"--agent", agent, "--scope", scope}, &out, &errb); rc != 0 {
@@ -280,5 +282,19 @@ func TestInstallKeepsTheSettingsLayout(t *testing.T) {
 	b, _ = os.ReadFile(path)
 	if !strings.Contains(string(b), "audit-log --note") {
 		t.Errorf("remove took another tool's entry:\n%s", b)
+	}
+}
+
+// User scope follows CLAUDE_CONFIG_DIR and CODEX_HOME, where the agents
+// read their settings (finding 2D9).
+func TestUserScopeFollowsRelocatedDirs(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	claude, codex := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", claude)
+	t.Setenv("CODEX_HOME", codex)
+	for agent, want := range map[string]string{"claude": filepath.Join(claude, "settings.json"), "codex": filepath.Join(codex, "hooks.json")} {
+		if p, _ := settingsPath(agent, "user"); p != want {
+			t.Errorf("%s user scope: %s, want %s", agent, p, want)
+		}
 	}
 }

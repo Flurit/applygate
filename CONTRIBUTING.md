@@ -8,7 +8,7 @@ applygate is small on purpose: a shell-aware analyzer, a classifier, preflight c
 
 - **Never execute scenario commands.** The scenario pack is a corpus of destructive commands. Tests and the replay runner only ever build synthetic hook events; `harness/run.py` runs the guard with an empty `PATH`, a fake `HOME` and no credentials. Keep it that way.
 - **No cloud credentials in tests or fixtures.** Plan fixtures are hand-built or generated from `terraform_data`-only configurations with a local backend.
-- **No model in the decision path, no telemetry, no network by default.** Opt-in network checks (`live_identity`, `live_state`) stay user-config-only.
+- **No model, telemetry or network by default.** The model judge, telemetry and the network checks (`live_identity`, `live_state`) are off until the user config or a person at the terminal turns them on, and stay that way.
 - **Rule lists are data.** Add resource types, protections and admin policies to `internal/plangate/rules/aws.json`, not to Go code.
 - **Document deviations.** Anything that differs from the [roadmap](docs/roadmap.md) goes in `docs/project/spec-alignment.md` and, if it changes a verdict, in `docs/policy.md`.
 
@@ -23,6 +23,14 @@ internal/preflight/   workspace, backend, stale state, lock-file drift, planfile
 internal/plangate/    plan JSON rules; AWS resource lists in rules/aws.json (data, not code)
 internal/policy/      verdict table and Decide()
 internal/hook/        agent adapters, host capability table, error behavior
+internal/mcpmap/      MCP tool table (rules.json, data): known tools translated into commands
+internal/judge/       opt-in model judge: filter, prompt, backends, cache
+internal/guard/       guard paths: canonical names, case folding, globs
+internal/approval/    one-time approvals
+internal/safefile/    non-blocking reads and appends of regular files only
+internal/telemetry/   opt-in anonymous counts
+internal/suggest/     a proposed config from the observe log
+internal/reviewgap/   the review findings not fixed yet (tests of open findings are skipped)
 internal/decisionlog/ JSONL log with redaction, report
 harness/              scenario pack, fixtures, Go regression test, run.py replay runner
 docs/                 install, policy, config, limits, hosts (generated), threat model, roadmap; docs/project/ for project records
@@ -38,6 +46,8 @@ install.sh            installer: verifies the cosign signature (required unless 
 1. Append it to `harness/pack/scenarios.json` with an `id`, `spec` (S1–S14, `plan` or `benign`), `kind`, `title`, `cwd` (relative to `pack/fixtures/repo`), `tool`, `tool_input`, `expect`, and `must_mention` strings the message must contain. S3 cases take a `bypass_class`.
 2. Plan-level scenarios reference a `show -json` fixture under `pack/plans` by `plans: {"<planfile>": "<fixture>.json"}`.
 3. Run `go test ./harness`, `go build -o bin/applygate ./cmd/applygate && bin/applygate selftest -v` and `python3 -I harness/run.py --guard bin/applygate`.
+
+A reproduction of a review finding goes to `harness/pack_attack/scenarios.json` with its `finding` ID instead, and the ID goes on `internal/reviewgap.Open` until the fix lands. Benign calls a fix must keep allowed are `control` scenarios there.
 
 ## Adding a guard to the comparison
 

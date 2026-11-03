@@ -274,3 +274,12 @@ func readLog(t *testing.T) []decisionlog.Entry {
 	entries, _ := decisionlog.Read(f)
 	return entries
 }
+
+func TestVersionIsNotFreeText(t *testing.T) {
+	for v, want := range map[string]string{"v0.6.0": "v0.6.0", "0.6.0-rc.1": "0.6.0-rc.1", "dev": "dev",
+		"0.6.0-acme.prod.eks.blue": "other", "0.6.0-" + "a": "other"} {
+		if got := enumVersion(v); got != want {
+			t.Errorf("%s: %s, want %s", v, got, want)
+		}
+	}
+}

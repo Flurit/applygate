@@ -3,6 +3,7 @@ package approval
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,5 +94,14 @@ func TestKeyBindsContext(t *testing.T) {
 		if Key(e, dd) == base {
 			t.Errorf("%s change kept the same key", name)
 		}
+	}
+}
+
+// Redaction must not hide from the person what a command runs (2D11).
+func TestRequestShowsHiddenPrograms(t *testing.T) {
+	ev := policy.Event{Agent: "codex", Tool: "Bash", Kind: policy.KindShell, Command: "API_TOKEN=`pulumi destroy --yes` true", Cwd: "/r"}
+	r := NewRequest(ev, policy.Decision{Verdict: policy.Ask})
+	if !strings.Contains(strings.Join(r.Reasons, "\n"), "pulumi destroy") {
+		t.Fatalf("reasons %v", r.Reasons)
 	}
 }
