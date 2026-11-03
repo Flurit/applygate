@@ -878,14 +878,17 @@ func uvarint(b []byte) (uint64, int) {
 
 // CallerAccount runs "aws sts get-caller-identity" for a profile. It is only
 // called when preflight.live_identity is enabled.
-func CallerAccount(profile string, timeout time.Duration) (string, error) {
+//
+// bin is the aws CLI to run (config.EngineBinary: root's alone under a
+// managed install).
+func CallerAccount(bin, profile string, timeout time.Duration) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	args := []string{"sts", "get-caller-identity", "--output", "json"}
 	if profile != "" {
 		args = append(args, "--profile", profile)
 	}
-	out, err := exec.CommandContext(ctx, "aws", args...).Output()
+	out, err := exec.CommandContext(ctx, bin, args...).Output()
 	if err != nil {
 		return "", err
 	}

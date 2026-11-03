@@ -5,7 +5,7 @@ applygate reads these config files. Unknown keys are rejected.
 - **The system config,** `/etc/applygate/config.yaml`, only under a managed install ([managed.md](managed.md)). It is read first and may set anything, and the user config may then only tighten, like a repository config. It is used only when root owns it and nobody else can write it.
 - **Every trusted `.applygate.yaml`** from the outermost directory above the command down to the command's own directory.
 
-**A repository config must be trusted.** applygate reads a `.applygate.yaml` only when a person approved its exact content with `applygate trust` (`sudo applygate trust` under a managed install). It shows each untrusted config and asks you to type `trust`. A config that is new or changed since is not read, and every directory is judged as protected; `doctor` lists them. `trust` trusts the exact bytes it showed you, and refuses if the file changed before you confirmed. Only a regular file can be trusted: a `.applygate.yaml` that is a symlink, or that cannot be read, is not read either. In CI, where there is no trust store, `plan-check --trust-config` (the Action's `trust-config: true`) reads the checked-out config. `applygate init` trusts the config it writes. Trust is stored by path and SHA-256 in `~/.config/applygate/trusted.json`, or `/etc/applygate/trusted.json` under a managed install.
+**A repository config must be trusted.** applygate reads a `.applygate.yaml` only when a person approved its exact content with `applygate trust` (`/usr/bin/sudo /usr/local/libexec/applygate/applygate trust` under a managed install). It shows each untrusted config and asks you to type `trust`. A config that is new or changed since is not read, and every directory is judged as protected; `doctor` lists them. `trust` trusts the exact bytes it showed you, and refuses if the file changed before you confirmed. Only a regular file can be trusted: a `.applygate.yaml` that is a symlink, or that cannot be read, is not read either. In CI, where there is no trust store, `plan-check --trust-config` (the Action's `trust-config: true`) reads the checked-out config. `applygate init` trusts the config it writes. Trust is stored by path and SHA-256 in `~/.config/applygate/trusted.json`, or `/etc/applygate/trusted.json` under a managed install.
 
 **Only the user config can loosen protection.** A repository config is written to the repository, which an agent or a cloned project may control, so it can only add protection.
 - **The outermost repository config** is the repository's. It defines the environments, and may tighten any other setting.
@@ -34,7 +34,7 @@ name_hints: true         # treat prod/production/prd/live as a whole word in nam
 unknown_dir: most_protected   # most_protected | session_root: how a command is judged when the host does not report its directory (Codex 0.165.0); a repository config may set most_protected but not session_root
 approvals: false         # user config only: on agents that cannot show an ask prompt, let a person allow one asked call with `applygate approve ID` (docs/policy.md step 9). Off by default: on one machine the agent can reach any terminal the person can, so turning this on trusts that no agent runs `applygate approve` in a way applygate does not recognise
 log_path: ~/.local/state/applygate/decisions.jsonl   # user config only
-strict_shapes: true      # in a protected environment, ask about a shell command that is not a plain list or pipeline of known programs (docs/policy.md step 3); false only from the user config
+strict_shapes: true      # in a protected environment, ask about a shell command that is not a plain list or pipeline of known programs in their exact shapes (docs/policy.md step 3); false only from the user config
 aliases: {tf: terraform} # user config only
 
 environments:            # any matching signal applies; the most protected match wins
@@ -55,7 +55,7 @@ plan_gate:
   scope: ["module.app.*"]       # optional: changes outside are a high finding
   run_show: true                # run "<engine> show -json <planfile>" for apply <planfile>
   show_timeout: 20s
-  engines: {}                   # user or system config only: absolute paths of the terraform, tofu and terragrunt the hook runs; without one it looks the name up on PATH (docs/managed.md)
+  engines: {}                   # user or system config only: absolute paths of the terraform, tofu, terragrunt and aws the hook runs; without one it looks the name up on PATH (docs/managed.md)
 
 preflight:
   stale_state: true

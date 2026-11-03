@@ -56,10 +56,10 @@ Usage:
   applygate selftest [-v]              run the scenario pack against this binary
   applygate init [--no-hooks] [--scope user|project]
                                       write a starter .applygate.yaml, detect agents, install their hooks (user scope)
-  sudo applygate install --managed [--exclusive]
+  /usr/bin/sudo /path/to/applygate install --managed [--exclusive]
                                       root-owned install the agent's user cannot change: binary, system
                                       config, trust store, Claude Code managed settings (docs/managed.md)
-  sudo applygate uninstall --managed [--purge]
+  /usr/bin/sudo /usr/local/libexec/applygate/applygate uninstall --managed [--purge]
   applygate hook install|remove --agent AGENT [--scope project|user]
                                       install defaults to project scope; remove cleans both scopes
   applygate doctor                     check config, hooks, launch directory and versions (exit 1 on a problem)

@@ -120,6 +120,21 @@ type Options struct {
 	// live, so a directory that holds one counts too.
 	Guard *guard.Set
 	Home  string
+	// UnknownCwd is set when the host does not report the directory a
+	// command runs in, and Cwd is the session directory used instead. A
+	// relative path from there with a guard file's name may then be one.
+	UnknownCwd bool
+	Cwd        string
+}
+
+// relGuard reports whether rel, written from dir, may be a guard file the
+// hook cannot place: the command's directory is not known and rel is
+// relative to it.
+func (o Options) relGuard(dir, rel string) bool {
+	if !o.UnknownCwd || o.Guard == nil || dir != o.Cwd || rel == "" || filepath.IsAbs(rel) || strings.HasPrefix(rel, "~") {
+		return false
+	}
+	return o.Guard.NamedLike(filepath.Base(rel))
 }
 
 func (o Options) protected(p string) bool {
@@ -230,6 +245,11 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 	cmdText := strings.Join(words(inv), " ")
 	base := Action{Dir: inv.Dir, Env: inv.Env, Command: cmdText, Via: inv.Via, AnyDir: inv.Dir == ""}
 	var out []Action
+	if why := plantsCommand(inv); why != "" {
+		a := base
+		a.Class, a.Engine, a.Why = Tampering, "file", why
+		out = append(out, a)
+	}
 
 	// Writes to guard files through redirection, whatever the program.
 	for _, r := range inv.Redirs {
@@ -249,6 +269,10 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 			if opt.protected(p) {
 				a := base
 				a.Class, a.Engine, a.Why = Tampering, "file", "redirect writes to guard file "+p
+				out = append(out, a)
+			} else if opt.relGuard(inv.Dir, r.Target.Text) {
+				a := base
+				a.Class, a.Engine, a.Why = Tampering, "file", "redirect writes to "+r.Target.Text+", which has a guard file's name, in a directory the host does not report"
 				out = append(out, a)
 			} else if isStateFile(p) {
 				a := base
@@ -500,6 +524,10 @@ func fileOps(base Action, name string, args []shell.Word, dir string, opt Option
 			tamper(name + " changes " + t + ", which holds a guard file")
 			return out
 		}
+		if rel, ok := strings.CutPrefix(t, dir+"/"); ok && opt.relGuard(dir, rel) {
+			tamper(name + " changes " + rel + ", which has a guard file's name, in a directory the host does not report")
+			return out
+		}
 	}
 	inPlace := false
 	if name == "sed" || name == "perl" || name == "ruby" {
@@ -524,6 +552,8 @@ func fileOps(base Action, name string, args []shell.Word, dir string, opt Option
 		switch {
 		case isWriter && opt.protected(p):
 			tamper(name + " modifies guard file " + p)
+		case isWriter && opt.relGuard(dir, t):
+			tamper(name + " modifies " + t + ", which has a guard file's name, in a directory the host does not report")
 		case isWriter && name != "cp" && isStateFile(p) && name != "rm":
 			a := base
 			a.Class, a.Engine, a.Why, a.TouchesState = StateSurgery, "file", name+" modifies state file "+p, true
@@ -1119,6 +1149,64 @@ func selfTamper(args []shell.Word, loose bool) string {
 }
 
 var hexID = regexp.MustCompile(`^[0-9a-f]{8}$`)
+
+// plantsCommand reports a program's own command that writes, into a config
+// file outside the repository, a command the program runs later: a global
+// git config key that runs a command, a gh or glab shell alias or pager,
+// a kubeconfig exec credential plugin, an aws credential_process or pager.
+// Plain calls of these programs in a protected tier would then run it.
+func plantsCommand(inv shell.Invocation) string {
+	if len(inv.Args) < 2 || !inv.Args[0].Resolved {
+		return ""
+	}
+	var ws []string
+	for _, w := range inv.Args[1:] {
+		ws = append(ws, w.Text)
+	}
+	has := func(s ...string) bool {
+		for _, w := range ws {
+			for _, x := range s {
+				if w == x || strings.HasPrefix(w, x+"=") {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	pos := func() []string {
+		var out []string
+		for _, w := range ws {
+			if !strings.HasPrefix(w, "-") {
+				out = append(out, w)
+			}
+		}
+		return out
+	}()
+	n := shell.ProgName(inv.Args[0].Text)
+	switch {
+	case n == "git" && len(pos) >= 2 && pos[0] == "config" && has("--global", "--system", "--file", "-f"):
+		k := pos[1]
+		if (k == "set" || k == "add") && len(pos) >= 3 {
+			k = pos[2]
+		}
+		if !inv.Args[len(inv.Args)-1].Resolved || shell.GitRunsKey(strings.ToLower(k), "") {
+			return "git config " + k + " outside the repository sets a command git runs later"
+		}
+	case (n == "gh" || n == "glab") && len(pos) >= 2 && pos[0] == "alias" && pos[1] != "list":
+		return n + " alias " + pos[1] + " defines a command " + n + " runs later"
+	case (n == "gh" || n == "glab") && len(pos) >= 3 && pos[0] == "config" && pos[1] == "set" &&
+		(pos[2] == "pager" || pos[2] == "editor" || pos[2] == "browser"):
+		return n + " config set " + pos[2] + " names a program " + n + " runs later"
+	case n == "kubectl" && len(pos) >= 2 && pos[0] == "config" && pos[1] == "set-credentials" && (has("--exec-command") || has("--auth-provider")):
+		return "kubectl config set-credentials writes an exec credential plugin kubectl runs later"
+	case n == "kubectl" && len(pos) >= 3 && pos[0] == "config" && pos[1] == "set" && strings.Contains(pos[2], ".exec"):
+		return "kubectl config set writes an exec credential plugin kubectl runs later"
+	case n == "aws" && len(pos) >= 3 && pos[0] == "configure" && pos[1] == "set" &&
+		(strings.Contains(pos[2], "credential_process") || strings.Contains(pos[2], "cli_pager")):
+		return "aws configure set " + pos[2] + " names a program aws runs later"
+	}
+	return ""
+}
 
 // isSelf reports whether p is the running applygate binary or one next to
 // it, compared as files so a hard link or a copy's original counts.

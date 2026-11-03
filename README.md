@@ -41,7 +41,7 @@ On the same 17 dangerous Terraform scenarios:
 | A competent hand-written Rego/regex policy | 14 / 17 |
 | **applygate** (protected tier) | **17 / 17** |
 
-The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 316 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
+The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 358 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
 
 applygate is a check, not a sandbox. Pair it with plan-only credentials for agents; see [the threat model](docs/threat-model.md). Its self-protection, which stops an agent from turning it off, is a guarantee only under a managed install (`sudo applygate install --managed`, [docs/managed.md](docs/managed.md)); without one it is best-effort.
 
@@ -57,7 +57,7 @@ applygate is a check, not a sandbox. Pair it with plan-only credentials for agen
 | Destructive cloud CLI | `aws … delete-*`, `s3 rb`, `kubectl delete`, `helm uninstall`, `az`/`gcloud … delete` | block | ask | ask |
 | Disabling the guard | skip-permission flags, edits to hooks, applygate's config, log, approvals, judge cache or binary, a renamed copy of applygate | block | block | block |
 | Unresolvable | `eval "$(curl …)"`, `curl … \| bash` | ask | ask | allow |
-| Not a plain command (strict shapes) | loops, functions, `$(…)`, `bash -c`, `python3 -c`, `export` | ask | allow | allow |
+| Not a plain command (strict shapes) | loops, functions, `$(…)`, `bash -c`, `python3 -c`, `export`, `npx`, `man`, a program option that runs a program (`git --upload-pack`, `tar --checkpoint-action`, `sed 's/x/y/e'`), git in a repository with hooks | ask | allow | allow |
 
 A command whose directory cannot be followed (a `cd` to a computed path), or that could not be analyzed to the end, is judged at the most protected tier under the repository.
 
@@ -109,7 +109,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 | `applygate check "<cmd>"` | Dry-run a command (exit 0 allow, 4 ask, 3 block); `explain` shows the reasoning |
 | `applygate apply <planfile>` | Judge a saved plan, confirm, then apply |
 | `applygate trust` | Review and trust this repository's `.applygate.yaml`; until then it is not read and every directory is protected |
-| `sudo applygate install --managed` | Root-owned install the agent's user cannot change ([docs/managed.md](docs/managed.md)) |
+| `/usr/bin/sudo /path/to/applygate install --managed --exclusive` | Root-owned install the agent's user cannot change ([docs/managed.md](docs/managed.md)) |
 | `applygate approve [ID]` | Allow once a call an agent was stopped on because it could not ask you; without ID, list pending requests |
 | `applygate plan-check plan.json` | Judge `terraform show -json` output |
 | `applygate report` / `suggest` | Summarize the decision log / propose a config from it |
@@ -135,8 +135,8 @@ v0.6.0 fixes the findings of a pre-release security review ([review/v0.6.0](revi
 - **Reinstall the hooks:** run `applygate hook install --agent claude` (and `--agent codex`) with the `--scope` you used. The Claude Code matcher is now `*`, so every tool reaches the hook, and the `seatbelt` compatibility binary is gone: a hook entry that still calls it fails. `applygate doctor` flags both.
 - **Trust your repository configs:** run `applygate trust` in each repository and after every change to its `.applygate.yaml`. Until then the config is not read and every directory is protected; `applygate doctor` lists the configs that need it.
 - **The Claude Code plugin pins its binary** the first time it finds one. After upgrading applygate, remove `pinned-binary` from the plugin's data directory, or every call is blocked with a message that says so.
-- **For a guard the agent cannot change,** use `sudo applygate install --managed` ([docs/managed.md](docs/managed.md)). Without it, self-protection is best-effort. Under it, the plan gate runs only a root-owned `terraform`; name one in the system config's `plan_gate.engines` if yours is a Homebrew or user install.
-- **Strict shapes are on.** In a protected environment, a shell command that is not a plain list or pipeline of known programs (a loop, `bash -c`, `python3 -c`, `export`, `xargs`) is asked about. `strict_shapes: false` in the user config turns it off.
+- **For a guard the agent cannot change,** use `install --managed --exclusive`, run with `/usr/bin/sudo` and a verified binary by its full path ([docs/managed.md](docs/managed.md)). Without it, self-protection is best-effort. Under it, the plan gate runs only a root-owned `terraform`; name one in the system config's `plan_gate.engines` if yours is a Homebrew or user install.
+- **Strict shapes are on.** In a protected environment, a shell command that is not a plain list or pipeline of known programs, each called in a shape that runs no other program, is asked about: a loop, `bash -c`, `python3 -c`, `export`, `xargs`, `npx`, `man`, a pager or editor variable, git with `-c` or in a repository with hooks. `strict_shapes: false` in the user config turns it off.
 - **Move loosening settings to your user config.** A repository `.applygate.yaml` can now only add protection: `mode: observe`, `strict: false`, a looser `default_tier`, `name_hints` or `on_error`, and `aliases` there are ignored, and `doctor` says so.
 - **One-time approvals are off by default.** Turn them on in the user config (`approvals: true`) if you accept that an agent on the same machine can reach your terminal.
 - **`applygate apply` has no `--yes` and no `--plan-json`.** In CI, gate with `applygate plan-check` or the Action and run the engine yourself.

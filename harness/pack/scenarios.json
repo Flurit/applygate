@@ -2577,7 +2577,7 @@
     "command": "man terraform"
    },
    "expect": [
-    "allow"
+    "ask"
    ],
    "origin": "added for the unknown-wrapper backstop"
   },
@@ -2622,7 +2622,7 @@
     "command": "brew install terraform tflint"
    },
    "expect": [
-    "allow"
+    "ask"
    ],
    "origin": "added for the unknown-wrapper backstop"
   },

@@ -23,6 +23,7 @@ const (
 	wroteFile     writeKind = iota + 1 // the file's content (redirect, tee, sed -i, curl -o)
 	wroteContents                      // files under the path (git checkout, pull, ...)
 	wroteTree                          // anything at or under it, symlinks too (tar -C, cp, mv, ln)
+	madeDir                            // a directory created (mkdir), which may also be read
 )
 
 type writtenError struct{ path string }
@@ -53,6 +54,9 @@ func (a *analyzer) read(st *state, p string) ([]byte, error) {
 // writes that may have left symlinks count (for cd).
 func (a *analyzer) writtenAt(p string, dirOnly bool) string {
 	for w, k := range a.written {
+		if k == madeDir {
+			continue
+		}
 		if p == w && (!dirOnly || k == wroteTree) {
 			return w
 		}
@@ -61,6 +65,20 @@ func (a *analyzer) writtenAt(p string, dirOnly bool) string {
 		}
 	}
 	return ""
+}
+
+// created reports whether an earlier step may have created directory p:
+// mkdir, or a write into a tree above it (clone, checkout, extract, copy).
+func (a *analyzer) created(p string) bool {
+	if a.writtenUnknown {
+		return true
+	}
+	for w, k := range a.written {
+		if p == w || k != wroteFile && strings.HasPrefix(p, strings.TrimSuffix(w, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *analyzer) wrote(st *state, w Word, k writeKind) {
@@ -72,7 +90,7 @@ func (a *analyzer) wrote(st *state, w Word, k writeKind) {
 		a.written = map[string]writeKind{}
 	}
 	p := a.abs(st, w.Text)
-	if a.written[p] < k {
+	if old, ok := a.written[p]; !ok || old == madeDir || old < k && k != madeDir {
 		a.written[p] = k
 	}
 }
@@ -104,6 +122,10 @@ func (a *analyzer) noteWrites(bn string, rest []Word, st *state) {
 		return Word{}, false
 	}
 	switch bn {
+	case "mkdir":
+		for _, w := range pos {
+			a.wrote(st, w, madeDir)
+		}
 	case "tee":
 		for _, w := range pos {
 			a.wrote(st, w, wroteFile)

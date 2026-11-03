@@ -116,11 +116,39 @@ func CheckSystemFile(p string) error {
 	if err := rootOnly(p, fi); err != nil {
 		return err
 	}
-	di, err := os.Lstat(filepath.Dir(p))
+	return CheckSystemDirs(filepath.Dir(p))
+}
+
+// CheckSystemDirs reports why directory d, or one above it, cannot be relied
+// on: each must be root's alone, since whoever can write a directory can
+// rename what is in it aside and put another in its place.
+func CheckSystemDirs(d string) error {
+	if !RequireRootOwned {
+		return nil
+	}
+	// The real path: /etc is a symlink on macOS, root's, in a directory
+	// that is root's.
+	d, err := filepath.EvalSymlinks(d)
 	if err != nil {
 		return err
 	}
-	return rootOnly(filepath.Dir(p), di)
+	for {
+		di, err := os.Lstat(d)
+		if err != nil {
+			return err
+		}
+		if di.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink", d)
+		}
+		if err := rootOnly(d, di); err != nil {
+			return err
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			return nil
+		}
+		d = parent
+	}
 }
 
 func rootOnly(p string, fi os.FileInfo) error {
@@ -154,7 +182,7 @@ func managedGuards() []string {
 }
 
 // EngineBinary is the program the hook runs for an engine (show -json, state
-// pull): plan_gate.engines first, else the name on PATH. A name with a path
+// pull) or the aws CLI (preflight.live_identity): plan_gate.engines first, else the name on PATH. A name with a path
 // separator (TG_TF_PATH) is that path. Under a managed
 // install the binary, after symlinks, and the directory holding it must be
 // root's alone: one the agent's user can replace could answer the plan gate

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/applygate-hook\" --fetch",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/applygate-hook\" --fetch",
             "timeout": 120
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/applygate-hook\" hook claude",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/applygate-hook\" hook claude",
             "timeout": 30,
             "onFailure": "block"
           }

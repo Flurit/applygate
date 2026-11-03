@@ -274,16 +274,20 @@ func MCPGuardPath(cfg *config.Config, env map[string]string, tool, cwd string, a
 	}
 	copt := GuardOptions(cfg, env)
 	var found string
-	n := 0
+	n, overflow := 0, false
 	var walk func(any, int)
 	walk = func(x any, depth int) {
-		if found != "" || depth > 8 || n > 500 {
+		if found != "" {
+			return
+		}
+		if depth > 8 || n > 500 {
+			overflow = true
 			return
 		}
 		n++
 		switch t := x.(type) {
 		case string:
-			if t == "" || len(t) > 4096 || !strings.ContainsAny(t, "/.~") {
+			if t == "" || !strings.ContainsAny(t, "/.~") {
 				return
 			}
 			p := t
@@ -292,8 +296,13 @@ func MCPGuardPath(cfg *config.Config, env map[string]string, tool, cwd string, a
 			} else if !filepath.IsAbs(p) {
 				p = filepath.Join(cwd, p)
 			}
-			if copt.Guard.Touches(filepath.Clean(p)) {
-				found = filepath.Clean(p)
+			// Cleaned first: ./ and // pad a path past any length.
+			if p = filepath.Clean(p); len(p) > 4096 {
+				overflow = true
+				return
+			}
+			if copt.Guard.Touches(p) {
+				found = p
 			}
 		case []any:
 			for _, e := range t {
@@ -306,7 +315,47 @@ func MCPGuardPath(cfg *config.Config, env map[string]string, tool, cwd string, a
 		}
 	}
 	walk(v, 0)
+	if found == "" && overflow {
+		// Arguments too large or deep to walk: the call names a guard file
+		// when its text does, once padding is taken out.
+		found = guardInText(copt, cwd, string(args))
+	}
 	return found
+}
+
+// guardInText returns the guard path a text names, by the guard set's
+// needles, with ./ and // collapsed; "" when it names none.
+func guardInText(copt classify.Options, cwd, text string) string {
+	t := strings.ToLower(text)
+	for {
+		u := strings.ReplaceAll(strings.ReplaceAll(t, "/./", "/"), "//", "/")
+		if u == t {
+			break
+		}
+		t = u
+	}
+	for _, nd := range copt.Guard.Needles(copt.Home) {
+		if !strings.Contains(t, nd) {
+			continue
+		}
+		var cands []string
+		switch {
+		case strings.HasPrefix(nd, "/"):
+			cands = []string{nd}
+		case strings.HasPrefix(nd, "~/"), strings.HasPrefix(nd, "$home/"), strings.HasPrefix(nd, "${home}/"):
+			_, rel, _ := strings.Cut(nd, "/")
+			cands = []string{filepath.Join(copt.Home, rel)}
+		default:
+			cands = []string{filepath.Join(copt.Home, nd), filepath.Join(cwd, nd)}
+		}
+		for _, c := range cands {
+			if copt.Guard.Touches(c) {
+				return c
+			}
+		}
+		return cands[0]
+	}
+	return ""
 }
 
 func GuardOptions(cfg *config.Config, env map[string]string) classify.Options {
@@ -315,13 +364,19 @@ func GuardOptions(cfg *config.Config, env map[string]string) classify.Options {
 		home, _ = os.UserHomeDir()
 	}
 	paths := cfg.GuardPaths()
-	return classify.Options{ProtectedPaths: paths, Guard: guard.New(paths, cfg.GuardTargets(home)), Home: home}
+	g := guard.New(paths, cfg.GuardTargets(home)).Programs(config.PathDirs(home), config.PathPrograms())
+	return classify.Options{ProtectedPaths: paths, Guard: g, Home: home}
 }
 
 // ShellOptions returns the analyzer options for a command run in dir.
 func ShellOptions(cfg *config.Config, copt classify.Options, dir string, env map[string]string, read func(string) ([]byte, error)) shell.Options {
-	return shell.Options{Dir: dir, Env: env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ReadFile: read,
+	return shell.Options{Dir: dir, Env: env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ReadFile: read, IsDir: isDir,
 		ProtectedPaths: copt.ProtectedPaths, ProtectedPath: copt.Guard.Protected, GuardNeedles: copt.Guard.Needles(copt.Home)}
+}
+
+func isDir(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 // Decide evaluates an event. It does not write the log.
@@ -333,6 +388,7 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 		deps.Rules = plangate.DefaultRules()
 	}
 	copt := GuardOptions(cfg, deps.Env)
+	copt.UnknownCwd, copt.Cwd = !ev.DirKnown, ev.Cwd
 	var actions []classify.Action
 	var notes []string
 	switch ev.Kind {
@@ -820,14 +876,27 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 		}
 	}
 	// A plan saved in another directory was made against that directory's
-	// state: its tier joins the command's.
+	// state: its tier joins the command's. A plan reached through a
+	// symlink is in the directory the link leads to.
 	// Only a Terraform working directory says where a plan was made: a plan
 	// file kept in /tmp says nothing.
-	if pd := filepath.Dir(planPath); a.Dir != "" && filepath.IsAbs(pd) && filepath.Clean(pd) != filepath.Clean(a.Dir) && terraformDir(pd) {
-		sig, _ := DirSignals(pd, deps.Env)
-		if alt := cfg.Resolve(sig); alt.Tier.Rank() > r.Tier.Rank() {
-			r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "the saved plan is in "+pd)
+	planDirs := []string{filepath.Dir(planPath)}
+	if real, err := filepath.EvalSymlinks(planPath); err == nil {
+		planDirs = append(planDirs, filepath.Dir(real))
+	}
+	for _, pd := range planDirs {
+		if a.Dir != "" && filepath.IsAbs(pd) && filepath.Clean(pd) != filepath.Clean(a.Dir) && terraformDir(pd) {
+			sig, _ := DirSignals(pd, deps.Env)
+			if alt := cfg.Resolve(sig); alt.Tier.Rank() > r.Tier.Rank() {
+				r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "the saved plan is in "+pd)
+			}
 		}
+	}
+	if fi, err := os.Stat(planPath); err == nil && hardLinked(fi) && r.Tier.Rank() < config.Protected.Rank() {
+		// A hard link is the same file under another name, in a directory
+		// that cannot be found from here.
+		r.Tier, r.Env = config.Protected, "unknown"
+		r.Matched = append(r.Matched, "the saved plan "+a.PlanFile+" is a hard link, so the directory it was made in is not known; judged as protected")
 	}
 	for _, f := range r.Findings {
 		if f.Rule == "plan-ambiguous" {

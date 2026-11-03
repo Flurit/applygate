@@ -22,7 +22,7 @@ var euid = os.Geteuid
 const systemConfig = `# applygate system config, written by "applygate install --managed".
 # Root owns it, and what it sets wins over the user config
 # (~/.config/applygate/config.yaml). Repository configs are read only when
-# trusted with "sudo applygate trust".
+# trusted with "/usr/bin/sudo /usr/local/libexec/applygate/applygate trust".
 version: 1
 mode: enforce
 approvals: false
@@ -48,7 +48,7 @@ func cmdManaged(verb string, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if euid() != 0 {
-		fmt.Fprintf(stderr, "applygate: the managed install writes root-owned files: run sudo applygate %s --managed\n", verb)
+		fmt.Fprintf(stderr, "applygate: the managed install writes root-owned files: run /usr/bin/sudo with this binary's full path: /usr/bin/sudo %s %s --managed\n", selfPath(), verb)
 		return 2
 	}
 	if verb == "uninstall" {
@@ -200,7 +200,17 @@ func rootDir(dir string) error {
 			return err
 		}
 	}
-	return os.Chmod(dir, 0o755)
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return err
+	}
+	// The directories above must be root's too: one the agent's user can
+	// write lets it rename this one aside and plant its own.
+	if parent := filepath.Dir(dir); parent != dir {
+		if err := config.CheckSystemDirs(parent); err != nil {
+			return fmt.Errorf("%s cannot hold the managed install: %w", dir, err)
+		}
+	}
+	return nil
 }
 
 // writeRootFile writes a file atomically with exactly this mode.
@@ -246,7 +256,7 @@ func doctorManaged(say func(bool, string, ...any)) {
 	if tp := config.SystemTrustPath(); fileExists(tp) {
 		check("trust store", tp)
 	} else {
-		say(true, "managed trust store: no repository config trusted yet (sudo applygate trust)")
+		say(true, "managed trust store: no repository config trusted yet ("+config.TrustCommand()+")")
 	}
 }
 

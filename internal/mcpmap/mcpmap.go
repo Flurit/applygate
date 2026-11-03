@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/Flurit/applygate/internal/shell"
 )
 
 //go:embed rules.json
@@ -190,7 +192,9 @@ func translateOne(s Server, tl Tool, tool string, args map[string]any, parseErr 
 	// A relative directory is resolved by the server against its
 	// own working directory, which the hook does not know.
 	if d := str(args[tl.Dir]); tl.Dir != "" && filepath.IsAbs(d) && !tl.SharedDir {
-		r.Dir = filepath.Clean(d)
+		// The server changes to the path as the OS resolves it: .. after a
+		// symlink goes up from the symlink's target.
+		r.Dir = shell.PhysicalJoin("", d)
 	}
 	if tl.Shell != "" {
 		// A list holds several commands, each run on its own; a
@@ -310,7 +314,18 @@ func genericShell(tool string, args map[string]any, parseErr error) (Result, boo
 				r.Command = unresolved(tool, "argument "+k+" is not text")
 				return r, true
 			}
-			r.Command = withStdin(tool, strings.Join(cmds, "\n"), args, []string{"stdin", "stdin_text", "input"})
+			cmd := strings.Join(cmds, "\n")
+			if _, isArray := v.([]any); isArray {
+				// An array is one command: a program's argv, or words a
+				// server joins with spaces for a shell. Both readings are
+				// judged, not one line per element.
+				q := make([]string, len(cmds))
+				for i, c := range cmds {
+					q[i] = quote(c)
+				}
+				cmd = strings.Join(q, " ") + "\n" + strings.Join(cmds, " ")
+			}
+			r.Command = withStdin(tool, cmd, args, []string{"stdin", "stdin_text", "input"})
 			if sh := str(args["shell"]); sh != "" {
 				r.Command = viaShell(tool, sh, r.Command)
 			}
