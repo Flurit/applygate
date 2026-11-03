@@ -52,3 +52,10 @@ jobs:
       - name: fuzz shell analyzer (short)
         if: matrix.os == 'ubuntu-latest'
         run: go test -run XXX -fuzz FuzzAnalyze -fuzztime 30s ./internal/shell
+      - name: keep the failing fuzz input
+        if: failure() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-failure
+          path: internal/shell/testdata/fuzz/
+          if-no-files-found: ignore
