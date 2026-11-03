@@ -57,6 +57,10 @@ Usage:
   applygate selftest [-v]              run the scenario pack against this binary
   applygate init [--no-hooks] [--scope user|project]
                                       write a starter .applygate.yaml, detect agents, install their hooks (user scope)
+  sudo applygate install --managed [--exclusive]
+                                      root-owned install the agent's user cannot change: binary, system
+                                      config, trust store, Claude Code managed settings (docs/managed.md)
+  sudo applygate uninstall --managed [--purge]
   applygate hook install|remove --agent AGENT [--scope project|user]
                                       install defaults to project scope; remove cleans both scopes
   applygate doctor                     check config, hooks, launch directory and versions (exit 1 on a problem)
@@ -93,6 +97,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdApprove(args[1:], stdin, stdout, stderr)
 	case "trust":
 		return cmdTrust(args[1:], stdin, stdout, stderr)
+	case "install", "uninstall":
+		return cmdManaged(args[0], args[1:], stdout, stderr)
 	case "report":
 		return cmdReport(args[1:], stdout, stderr)
 	case "suggest":
@@ -877,6 +883,7 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "FAIL %s\n", fmt.Sprintf(format, a...))
 	}
 	fmt.Fprintf(stdout, "applygate %s at %s\n", hook.Version, selfPath())
+	doctorManaged(say)
 	wd, _ := os.Getwd()
 	cfg, err := config.Load(config.UserPath(), wd)
 	say(err == nil, "config loads (%s)", orNone(func() string {
@@ -890,7 +897,10 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 	} else {
 		say(cfg.Root != "", "repository config found (%s)", orNone(cfg.Root))
 		for _, u := range cfg.Untrusted {
-			say(false, "%s is not trusted, so it is not read and every directory is protected; review it and run: applygate trust", u)
+			if u == config.SystemPath() {
+				continue // its reason is among the notes below
+			}
+			say(false, "%s is not trusted, so it is not read and every directory is protected; review it and run: %s", u, config.TrustCommand())
 		}
 		for _, d := range cfg.Deprecations {
 			say(false, "%s", d)

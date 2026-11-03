@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,12 +27,30 @@ var TrustAll bool
 
 // TrustPath is the store of approved repository configs: canonical path to
 // SHA-256 of the content. It lives in the user config directory, a guard
-// path.
-func TrustPath() string { return filepath.Join(UserDir(), "trusted.json") }
+// path, or under a managed install in the root-owned system directory, the
+// only store that counts there.
+func TrustPath() string {
+	if Managed() {
+		return SystemTrustPath()
+	}
+	return filepath.Join(UserDir(), "trusted.json")
+}
+
+// TrustCommand is what a person runs to trust a config.
+func TrustCommand() string {
+	if Managed() {
+		return "sudo applygate trust"
+	}
+	return "applygate trust"
+}
 
 func loadTrust() map[string]string {
 	m := map[string]string{}
-	if b, err := safefile.ReadFile(TrustPath()); err == nil {
+	p := TrustPath()
+	if Managed() && CheckSystemFile(p) != nil {
+		return m // a system store root does not own approves nothing
+	}
+	if b, err := safefile.ReadFile(p); err == nil {
 		_ = json.Unmarshal(b, &m)
 	}
 	return m
@@ -83,11 +103,25 @@ func TrustContent(content map[string][]byte) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(TrustPath()), 0o700); err != nil {
+	path := TrustPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(TrustPath()), ".trusted-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".trusted-*")
 	if err != nil {
+		if Managed() && errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("%s is root's under a managed install: run sudo applygate trust", path)
+		}
+		return err
+	}
+	// The hook runs as the user and reads the system store.
+	mode := os.FileMode(0o600)
+	if Managed() {
+		mode = 0o644
+	}
+	if err := tmp.Chmod(mode); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
 		return err
 	}
 	defer os.Remove(tmp.Name())
@@ -98,5 +132,5 @@ func TrustContent(content map[string][]byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), TrustPath())
+	return os.Rename(tmp.Name(), path)
 }

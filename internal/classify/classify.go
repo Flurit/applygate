@@ -848,7 +848,7 @@ func selfTamper(args []shell.Word, loose bool) string {
 		if loose || len(pos) == 1 || has("--cwd") {
 			return "trusts a repository config, which only a person who reviewed it may do"
 		}
-	case "install":
+	case "install", "uninstall":
 		if loose || has("--managed") {
 			return "changes applygate's own installation"
 		}

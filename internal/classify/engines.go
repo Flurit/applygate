@@ -642,7 +642,9 @@ func agentFlags(base Action, name string, args []shell.Word) (Action, bool) {
 		off := name == "claude" && t == "--bare" ||
 			name == "codex" && (t == "--disable" && i+1 < len(args) && strings.Contains(args[i+1].Text, "hook") || strings.HasPrefix(t, "--disable=") && strings.Contains(t, "hook")) ||
 			name == "gemini" && (t == "-y" || t == "--yolo" || t == "--approval-mode=yolo" || t == "--approval-mode" && i+1 < len(args) && args[i+1].Text == "yolo") ||
-			name == "copilot" && (t == "--allow-all-tools" || t == "--allow-all" || t == "--allow-all-paths")
+			name == "copilot" && (t == "--allow-all-tools" || t == "--allow-all" || t == "--allow-all-paths") ||
+			// A Codex profile can set features.hooks = false.
+			name == "codex" && (t == "-p" || t == "--profile" || strings.HasPrefix(t, "--profile="))
 		if off {
 			a.Class, a.Why = Tampering, name+" "+t+" starts a session without the hook or its checks"
 			return a, true

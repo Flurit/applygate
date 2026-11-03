@@ -1,8 +1,11 @@
 # Configuration
 
-applygate reads two kinds of config file. Unknown keys are rejected.
+applygate reads these config files. Unknown keys are rejected.
 - **The user config,** `~/.config/applygate/config.yaml` (optional; `applygate doctor` prints its path).
-- **Every `.applygate.yaml`** from the outermost directory above the command down to the command's own directory.
+- **The system config,** `/etc/applygate/config.yaml`, only under a managed install ([managed.md](managed.md)). It is read after the user config, so what it sets wins, and it is used only when root owns it and nobody else can write it.
+- **Every trusted `.applygate.yaml`** from the outermost directory above the command down to the command's own directory.
+
+**A repository config must be trusted.** applygate reads a `.applygate.yaml` only when a person approved its exact content with `applygate trust` (`sudo applygate trust` under a managed install). It shows each untrusted config and asks you to type `trust`. A config that is new or changed since is not read, and every directory is judged as protected; `doctor` lists them. `applygate init` trusts the config it writes. Trust is stored by path and SHA-256 in `~/.config/applygate/trusted.json`, or `/etc/applygate/trusted.json` under a managed install.
 
 **Only the user config can loosen protection.** A repository config is written to the repository, which an agent or a cloned project may control, so it can only add protection.
 - **The outermost repository config** is the repository's. It defines the environments, and may tighten any other setting.
