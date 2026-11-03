@@ -189,7 +189,8 @@ func firstLine(s string) string {
 // Deps builds policy dependencies for a config. ctx is cancelled on the
 // internal deadline; the plan gate's show subprocess is bound to it.
 func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
-	d := policy.Deps{Env: opt.Env, PlanJSON: opt.PlanJSON}
+	d := policy.Deps{Env: opt.Env, PlanJSON: opt.PlanJSON,
+		LoadConfig: func(dir string) (*config.Config, error) { return config.Load(opt.UserConfig, dir) }}
 	if d.PlanJSON == nil && cfg.RunShow() {
 		d.PlanJSON = ShowPlan(ctx, cfg.ShowTimeout())
 	}

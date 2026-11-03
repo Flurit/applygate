@@ -287,7 +287,9 @@ func TestUnknownDirPlanfileSearch(t *testing.T) {
 		}
 		os.MkdirAll(deep, 0o755)
 		os.WriteFile(filepath.Join(deep, "tfplan"), []byte("plan"), 0o644)
-		if m, tr := findPlanfile(root, "tfplan"); len(m) != 0 || tr {
+		// A copy beyond the depth cap is not found, and the search says it
+		// was cut short (finding 2T18), so no other copy is trusted.
+		if m, tr := findPlanfile(root, "tfplan"); len(m) != 0 || !tr {
 			t.Fatalf("beyond the depth cap: %v %v", m, tr)
 		}
 		os.MkdirAll(filepath.Join(root, "plans"), 0o755)

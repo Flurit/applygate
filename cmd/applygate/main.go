@@ -26,7 +26,6 @@ import (
 	"github.com/Flurit/applygate/internal/judge"
 	"github.com/Flurit/applygate/internal/plangate"
 	"github.com/Flurit/applygate/internal/policy"
-	"github.com/Flurit/applygate/internal/preflight"
 	"github.com/Flurit/applygate/internal/shell"
 	"github.com/Flurit/applygate/internal/telemetry"
 )
@@ -335,21 +334,24 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	t := config.Tier(*tier)
-	if t == "" {
-		t = cfg.Resolve(config.Signals{Dir: dir}).Tier
+	switch t {
+	case "", config.Protected, config.Standard, config.Disposable:
+	default:
+		fmt.Fprintf(stderr, "unknown tier %q: use protected, standard or disposable\n", t)
+		return 2
 	}
-	res, err := plangate.Evaluate(plangate.Input{PlanJSON: js, MaxDestroy: cfg.MaxDestroy(t), Scope: cfg.PlanGate.Scope, Protected: cfg.ProtectedResources, Backend: preflight.InitBackend(dir)}, plangate.DefaultRules())
+	// The tier comes from the same signals the hook reads: the path, the
+	// workspace and the backend.
+	sig, be := policy.DirSignals(dir, hook.EnvMap())
+	if t == "" {
+		t = cfg.Resolve(sig).Tier
+	}
+	res, err := plangate.Evaluate(plangate.Input{PlanJSON: js, MaxDestroy: cfg.MaxDestroy(t), Scope: cfg.PlanGate.Scope, Protected: cfg.ProtectedResources, Backend: be}, plangate.DefaultRules())
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	v := policy.Allow
-	if len(res.Deletes) > 0 {
-		v = policy.Table["destroy"][t]
-	}
-	for _, f := range res.Findings {
-		v = policy.Max(v, policy.FindingVerdict(f.Severity, t))
-	}
+	v := policy.SavedPlanVerdict(res, t)
 	fmt.Fprintf(stdout, "tier %s: %s (%d changes, %d deletes, %d replaces)\n", t, v, res.Changes, len(res.Deletes), len(res.Replaces))
 	for _, f := range res.Findings {
 		fmt.Fprintf(stdout, "- %s %s: %s\n", f.Severity, f.Rule, f.Message)

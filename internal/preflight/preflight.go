@@ -42,10 +42,14 @@ type Finding struct {
 
 // Backend is the backend configuration as recorded or declared.
 type Backend struct {
-	Type      string            `json:"type"`
-	Config    map[string]string `json:"config,omitempty"`
-	Declared  bool              `json:"-"`
-	sourceTag string
+	Type     string            `json:"type"`
+	Config   map[string]string `json:"config,omitempty"`
+	Declared bool              `json:"-"`
+	// Unreadable says why the declared backend could not be read in full
+	// (a value built from variables or templates, a file that does not
+	// parse): the state it points at is unknown.
+	Unreadable string `json:"-"`
+	sourceTag  string
 }
 
 // URL renders the backend for matching, e.g. "s3://bucket/key".
@@ -131,18 +135,186 @@ func InitBackendEnv(dir string, env map[string]string) *Backend {
 }
 
 var (
-	backendBlock = regexp.MustCompile(`(?s)\bbackend\s+"([A-Za-z0-9_-]+)"\s*\{`)
+	// The label may be unquoted: Terraform accepts backend s3 { }.
+	backendBlock = regexp.MustCompile(`(?s)\bbackend\s+"?([A-Za-z0-9_-]+)"?\s*\{`)
 	cloudBlock   = regexp.MustCompile(`(?s)\bcloud\s*\{`)
 	attrLine     = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"`)
+	// anyAttr is every attribute line; a value that refers to anything
+	// (OpenTofu allows variables and locals in a backend) or is a template
+	// is not known.
+	anyAttr    = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$`)
+	quotedStr  = regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
+	refInValue = regexp.MustCompile(`\b(?:var|local|data|module|each|path|terraform)\.|[A-Za-z_][A-Za-z0-9_]*\s*\(`)
+	plainStr   = regexp.MustCompile(`^"[^"\\]*"$`)
+	nestedName = regexp.MustCompile(`(?s)\bworkspaces\s*\{([^}]*)\}`)
 	// configLine also accepts unquoted values (bucket=acme-prod-tfstate) in
 	// -backend-config files. Terraform rejects those as HCL, but reading
 	// them can only make the tier stricter.
 	configLine = regexp.MustCompile(`(?m)^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:"([^"]*)"|([^\s"#]+))`)
 )
 
-// DeclaredBackend parses the backend block from *.tf files in dir. Only
-// literal string attributes are read; this is not a full HCL parser.
+// DeclaredBackend reads the backend or cloud block from the .tf and .tf.json
+// files in dir, override files last, as Terraform merges them. Only plain
+// values are read; this is not a full HCL parser. A block it cannot read in
+// full is returned with Unreadable set.
 func DeclaredBackend(dir string) *Backend {
+	var files, overrides []string
+	for _, pat := range []string{"*.tf", "*.tf.json"} {
+		m, _ := filepath.Glob(filepath.Join(dir, pat))
+		for _, f := range m {
+			b := strings.TrimSuffix(strings.TrimSuffix(filepath.Base(f), ".json"), ".tf")
+			if b == "override" || strings.HasSuffix(b, "_override") {
+				overrides = append(overrides, f)
+			} else {
+				files = append(files, f)
+			}
+		}
+	}
+	sort.Strings(files)
+	sort.Strings(overrides)
+	var found *Backend
+	for _, f := range append(files, overrides...) {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var be *Backend
+		if strings.HasSuffix(f, ".json") {
+			be = jsonBackend(src)
+		} else {
+			be = hclBackend(stripComments(string(src)))
+		}
+		if be != nil {
+			found = be
+		}
+	}
+	return found
+}
+
+func hclBackend(s string) *Backend {
+	if loc := backendBlock.FindStringSubmatchIndex(s); loc != nil {
+		body := braceBody(s, loc[1]-1)
+		be := &Backend{Type: s[loc[2]:loc[3]], Config: map[string]string{}, Declared: true}
+		readAttrs(be, body)
+		return be
+	}
+	if loc := cloudBlock.FindStringIndex(s); loc != nil {
+		be := &Backend{Type: "cloud", Config: map[string]string{}, Declared: true}
+		readAttrs(be, braceBody(s, loc[1]-1))
+		return be
+	}
+	return nil
+}
+
+// readAttrs reads a block's plain attributes, and the workspace name or
+// prefix of a cloud or remote backend.
+func readAttrs(be *Backend, body string) {
+	if m := nestedName.FindStringSubmatch(body); m != nil {
+		for _, a := range attrLine.FindAllStringSubmatch(m[1], -1) {
+			if a[1] == "name" || a[1] == "prefix" || a[1] == "project" {
+				be.Config["workspaces"] = a[2]
+			}
+		}
+		body = strings.Replace(body, m[0], "", 1)
+	}
+	for _, m := range anyAttr.FindAllStringSubmatch(body, -1) {
+		v := m[2]
+		if strings.Contains(v, "${") || strings.Contains(v, "%{") || refInValue.MatchString(quotedStr.ReplaceAllString(v, `""`)) {
+			be.Unreadable = "the backend's " + m[1] + " is computed (" + clip(v) + ")"
+			continue
+		}
+		if plainStr.MatchString(v) {
+			be.Config[m[1]] = strings.Trim(v, `"`)
+		}
+	}
+}
+
+// jsonBackend reads terraform.backend.<type> or terraform.cloud from a
+// .tf.json file. terraform may be an object or a list of objects.
+func jsonBackend(src []byte) *Backend {
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(src, &doc) != nil {
+		if strings.Contains(string(src), `"backend"`) || strings.Contains(string(src), `"cloud"`) {
+			return &Backend{Type: "unknown", Config: map[string]string{}, Declared: true, Unreadable: "a .tf.json file that names a backend does not parse"}
+		}
+		return nil
+	}
+	var blocks []map[string]json.RawMessage
+	if raw, ok := doc["terraform"]; ok {
+		var one map[string]json.RawMessage
+		if json.Unmarshal(raw, &one) == nil {
+			blocks = append(blocks, one)
+		} else {
+			json.Unmarshal(raw, &blocks)
+		}
+	}
+	var found *Backend
+	for _, t := range blocks {
+		if raw, ok := t["backend"]; ok {
+			var byType map[string]json.RawMessage
+			if json.Unmarshal(raw, &byType) != nil || len(byType) != 1 {
+				return &Backend{Type: "unknown", Config: map[string]string{}, Declared: true, Unreadable: "a .tf.json backend block applygate cannot read"}
+			}
+			for typ, body := range byType {
+				found = &Backend{Type: typ, Config: map[string]string{}, Declared: true}
+				jsonAttrs(found, body)
+			}
+		}
+		if raw, ok := t["cloud"]; ok {
+			found = &Backend{Type: "cloud", Config: map[string]string{}, Declared: true}
+			jsonAttrs(found, raw)
+		}
+	}
+	return found
+}
+
+func jsonAttrs(be *Backend, raw json.RawMessage) {
+	var attrs map[string]any
+	if json.Unmarshal(raw, &attrs) != nil {
+		// A list of blocks, or something else: not read.
+		be.Unreadable = "a .tf.json backend body applygate cannot read"
+		return
+	}
+	for k, v := range attrs {
+		switch x := v.(type) {
+		case string:
+			if strings.Contains(x, "${") || strings.Contains(x, "%{") {
+				be.Unreadable = "the backend's " + k + " is a template (" + clip(x) + ")"
+				continue
+			}
+			be.Config[k] = x
+		case bool, float64:
+			be.Config[k] = fmt.Sprint(x)
+		case map[string]any:
+			if k == "workspaces" {
+				for _, n := range []string{"name", "prefix", "project"} {
+					if s, ok := x[n].(string); ok {
+						be.Config["workspaces"] = s
+					}
+				}
+			}
+		default:
+			be.Unreadable = "the backend's " + k + " is not a plain value"
+		}
+	}
+}
+
+func clip(s string) string {
+	if len(s) > 60 {
+		return s[:60] + "…"
+	}
+	return s
+}
+
+var (
+	providerAWS = regexp.MustCompile(`(?s)\bprovider\s+"?aws"?\s*\{`)
+	roleARN     = regexp.MustCompile(`(?m)^\s*role_arn\s*=\s*"([^"]*)"`)
+)
+
+// ProviderAWS returns the literal profile and role_arn values of the aws
+// provider blocks in dir's .tf files, aliases included: each is a target
+// the configuration may change.
+func ProviderAWS(dir string) (profiles, roles []string) {
 	files, _ := filepath.Glob(filepath.Join(dir, "*.tf"))
 	sort.Strings(files)
 	for _, f := range files {
@@ -151,19 +323,19 @@ func DeclaredBackend(dir string) *Backend {
 			continue
 		}
 		s := stripComments(string(src))
-		if loc := backendBlock.FindStringSubmatchIndex(s); loc != nil {
+		for _, loc := range providerAWS.FindAllStringIndex(s, -1) {
 			body := braceBody(s, loc[1]-1)
-			be := &Backend{Type: s[loc[2]:loc[3]], Config: map[string]string{}, Declared: true}
 			for _, m := range attrLine.FindAllStringSubmatch(body, -1) {
-				be.Config[m[1]] = m[2]
+				if m[1] == "profile" {
+					profiles = append(profiles, m[2])
+				}
 			}
-			return be
-		}
-		if cloudBlock.MatchString(s) {
-			return &Backend{Type: "cloud", Config: map[string]string{}, Declared: true}
+			for _, m := range roleARN.FindAllStringSubmatch(body, -1) {
+				roles = append(roles, m[1])
+			}
 		}
 	}
-	return nil
+	return profiles, roles
 }
 
 func stripComments(s string) string {

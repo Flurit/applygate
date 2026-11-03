@@ -17,23 +17,12 @@ import (
 
 // Open lists the findings not fixed yet, by review ID.
 var Open = map[string]string{
-	"2C1":  "trap bodies are judged where they are set",
-	"2C2":  "aws s3 cp with a valued flag is read as a download",
-	"2C3":  "git options that run programs are missed",
-	"2C5":  ".ONESHELL recipes keep no directory across lines",
-	"2C6":  "make -C into a symlink made in the same command",
-	"2C7":  "PowerShell bodies are parsed as bash",
-	"2C9":  "unknown valued flags shift aws and helm positionals",
-	"2T1":  "a backend the parser cannot read falls back to the path tier",
-	"2T4":  "a symlink to an unmatched directory is judged at the link's tier",
-	"2T12": "plan-check treats replaces more leniently than the hook",
-	"2T14": "plan-check accepts an unknown tier",
-	"2M1":  "wcgw send_ascii is translated to true",
-	"2M2":  "decoy arguments reroute MCP calls to a milder rule",
-	"2M3":  "a fake workdir picks the tier",
-	"2M4":  "shell servers' stdin is ignored",
-	"2M6":  "call_kubectl without the kubectl prefix",
-	"2M7":  "shell MCP tools outside the table are not judged",
+	"2M1": "wcgw send_ascii is translated to true",
+	"2M2": "decoy arguments reroute MCP calls to a milder rule",
+	"2M3": "a fake workdir picks the tier",
+	"2M4": "shell servers' stdin is ignored",
+	"2M6": "call_kubectl without the kubectl prefix",
+	"2M7": "shell MCP tools outside the table are not judged",
 }
 
 // Check reports one test of finding id. ok is whether the behaviour the

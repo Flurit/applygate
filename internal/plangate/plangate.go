@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net"
 	"path"
 	"sort"
 	"strconv"
@@ -109,7 +110,25 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 	if err := json.Unmarshal(in.PlanJSON, &p); err != nil {
 		return nil, fmt.Errorf("plan JSON: %w", err)
 	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(in.PlanJSON, &top); err != nil {
+		return nil, fmt.Errorf("plan JSON: %w", err)
+	}
+	if _, ok := top["planned_values"]; !ok {
+		if _, ok := top["resource_changes"]; !ok {
+			// State JSON (terraform show -json without a plan) or other
+			// JSON: judging it as an empty plan would allow anything.
+			return nil, fmt.Errorf("plan JSON: not a plan (no planned_values or resource_changes); pass terraform show -json <planfile>")
+		}
+	}
 	res := &Result{}
+	// Actions (Terraform 1.14) run provider operations the resource
+	// changes do not describe.
+	var actions []json.RawMessage
+	if raw, ok := top["action_invocations"]; ok && json.Unmarshal(raw, &actions) == nil && len(actions) > 0 {
+		res.Findings = append(res.Findings, preflight.Finding{Rule: "plan-actions", Severity: preflight.High,
+			Message: fmt.Sprintf("the plan invokes %d action(s), which run provider operations applygate cannot check", len(actions))})
+	}
 	var stateful, protection, exposure, stateInfra, outOfScope, unprotectedCreate, reducedCreate, protectedAddr, unknownAttrs []string
 	var crit = func(list *[]string, s string) { *list = append(*list, s) }
 
@@ -440,7 +459,7 @@ func exposed(rc *tfjson.ResourceChange, after map[string]any, rules *Rules) []st
 		for _, c := range cidrs {
 			switch v := c.(type) {
 			case string:
-				if v == "0.0.0.0/0" || v == "::/0" {
+				if wideCIDR(v) {
 					return true
 				}
 			case []any:
@@ -471,7 +490,7 @@ func exposed(rc *tfjson.ResourceChange, after map[string]any, rules *Rules) []st
 		return "", false
 	}
 	switch rc.Type {
-	case "aws_security_group":
+	case "aws_security_group", "aws_default_security_group":
 		ingress, _ := after["ingress"].([]any)
 		for _, r := range ingress {
 			m, _ := r.(map[string]any)
@@ -503,6 +522,36 @@ func exposed(rc *tfjson.ResourceChange, after map[string]any, rules *Rules) []st
 		if acl, _ := after["acl"].(string); acl == "public-read" || acl == "public-read-write" {
 			out = append(out, rc.Address+": bucket ACL "+acl)
 		}
+		if b, err := json.Marshal(after["access_control_policy"]); err == nil &&
+			(strings.Contains(string(b), "acs.amazonaws.com/groups/global/AllUsers") || strings.Contains(string(b), "acs.amazonaws.com/groups/global/AuthenticatedUsers")) {
+			out = append(out, rc.Address+": bucket ACL grants access to all users")
+		}
+	case "aws_db_instance", "aws_rds_cluster_instance", "aws_redshift_cluster", "aws_dms_replication_instance":
+		if v, ok := after["publicly_accessible"].(bool); ok && v {
+			out = append(out, rc.Address+": publicly_accessible is true")
+		}
+	case "aws_iam_role":
+		if s, _ := after["assume_role_policy"].(string); policyPublic(s) {
+			out = append(out, rc.Address+": trust policy lets any principal assume the role")
+		}
+		arns, _ := after["managed_policy_arns"].([]any)
+		for _, a := range arns {
+			arn, _ := a.(string)
+			for _, p := range rules.AdminPolicies {
+				if strings.HasSuffix(arn, ":policy/"+p) {
+					out = append(out, rc.Address+": attaches "+p)
+				}
+			}
+		}
+		inline, _ := after["inline_policy"].([]any)
+		for _, ip := range inline {
+			m, _ := ip.(map[string]any)
+			if s, _ := m["policy"].(string); s != "" {
+				for _, w := range policyWildcards(s) {
+					out = append(out, rc.Address+": "+w)
+				}
+			}
+		}
 	case "aws_s3_bucket_policy":
 		if s, _ := after["policy"].(string); policyPublic(s) {
 			out = append(out, rc.Address+": bucket policy allows any principal")
@@ -532,6 +581,7 @@ type policyDoc struct {
 type statement struct {
 	Effect    string          `json:"Effect"`
 	Action    json.RawMessage `json:"Action"`
+	NotAction json.RawMessage `json:"NotAction"`
 	Principal json.RawMessage `json:"Principal"`
 	Condition json.RawMessage `json:"Condition"`
 }
@@ -574,21 +624,64 @@ func policyWildcards(doc string) []string {
 				out = append(out, "IAM policy allows wildcard action "+a)
 			}
 		}
+		if len(s.NotAction) > 0 {
+			// Allow with NotAction allows every action but the listed ones.
+			out = append(out, "IAM policy allows every action except "+strings.Join(stringsOf(s.NotAction), ", "))
+		}
 	}
 	return out
 }
 
 func policyPublic(doc string) bool {
 	for _, s := range statements(doc) {
-		if s.Effect != "Allow" || len(s.Condition) > 0 {
+		if s.Effect != "Allow" {
 			continue
 		}
-		p := strings.ReplaceAll(string(s.Principal), " ", "")
-		if p == `"*"` || strings.Contains(p, `"AWS":"*"`) || strings.Contains(p, `"AWS":["*"]`) {
+		// An empty Condition ({} or null) limits nothing.
+		var cond map[string]any
+		if json.Unmarshal(s.Condition, &cond) == nil && len(cond) > 0 {
+			continue
+		}
+		if anyPrincipal(s.Principal) {
 			return true
 		}
 	}
 	return false
+}
+
+// anyPrincipal reports whether a Principal is "*", or names "*" for any
+// kind (AWS, Service, Federated), alone or in a list.
+func anyPrincipal(raw json.RawMessage) bool {
+	var one string
+	if json.Unmarshal(raw, &one) == nil {
+		return one == "*"
+	}
+	var byKind map[string]json.RawMessage
+	if json.Unmarshal(raw, &byKind) != nil {
+		return false
+	}
+	for _, v := range byKind {
+		for _, p := range stringsOf(v) {
+			if p == "*" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// wideCIDR reports whether a CIDR covers the whole internet or a large
+// part of it: 0.0.0.0/0, or a split such as 0.0.0.0/1 and 128.0.0.0/1.
+func wideCIDR(c string) bool {
+	_, n, err := net.ParseCIDR(c)
+	if err != nil {
+		return false
+	}
+	ones, bits := n.Mask.Size()
+	if bits == 32 {
+		return ones <= 4
+	}
+	return ones <= 16
 }
 
 // lookup reads a dotted path ("a.0.b") from planned values.

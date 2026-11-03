@@ -42,7 +42,7 @@ func TestReviewCRuns(t *testing.T) {
 		// C4: walked constructs.
 		{`case $(terraform destroy) in *) ;; esac`, "terraform destroy @/r/envs/prod"},
 		{`export "$(terraform destroy)"`, "terraform destroy @/r/envs/prod"},
-		{`trap 'terraform destroy' EXIT`, "terraform destroy @/r/envs/prod"},
+		{`trap 'terraform destroy' EXIT`, "terraform destroy @"}, // fires later: directory unknown
 		{`for ((i=$(terraform destroy); i<1; i++)); do :; done`, "terraform destroy @/r/envs/prod"},
 		{`echo ${x:-$(terraform destroy)}`, "terraform destroy @/r/envs/prod"},
 		// C6: placeholders with known input.

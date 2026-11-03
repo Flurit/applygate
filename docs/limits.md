@@ -47,6 +47,14 @@ What each host can do with the hook, as verified live, is the generated table in
 
 The v0.6.0 pre-release review ([review/v0.6.0](../review/v0.6.0)) left these open, by decision or because they need a live test. The next red-team round keeps this list current.
 
+- **Tier signals not read (round 2, R2-3):**
+  - Terragrunt `dependency` and `include` blocks that point outside the unit; only `--config`, `TG_CONFIG` and the working-directory options move the unit.
+  - The backend recorded inside a binary planfile. A plan file kept in another Terraform directory brings that directory's tier, but a plan copied elsewhere carries only its workspace.
+  - An S3 lifecycle rule that expires objects is not a finding, since it is often deliberate.
+- **Costs of the round-2 tier fixes:**
+  - A `trap` handler is judged at the most protected tier under the root, since it fires after any `cd`.
+  - When the host does not report the directory, a planfile search that reaches its depth limit is `plan-ambiguous`, so a deep repository can block `apply <planfile>` from Codex until the command `cd`s into the directory.
+  - A `.tf` value that is computed (OpenTofu variables in a backend block) makes every command in that directory protected.
 - **Unknown wrappers around other CLIs.** A program applygate does not know that runs `aws`, `kubectl` or another CLI from its arguments (a team's own runner) is not seen through unless it is listed under `wrappers:`; only standalone `terraform`, `tofu` and `terragrunt` arguments trigger the backstop.
 - **Files written another way.** A file written by interpreter code (`open()` in Python) or by a program the analyzer does not model is read as it is on disk, not as unresolved. Guard files are not affected: any program that names one is tampering unless it only reads ([threat-model.md](threat-model.md)).
 - **Guard files reached without naming them.** Default-deny looks at what a command names. A command that rewrites a guard file without naming it (`git checkout <branch>` to a commit with another `.applygate.yaml`, `git checkout-index -a`) is not caught by it. For repository configs, trust covers it: a rewritten config is not read. For the other guard files, only a managed install does ([managed.md](managed.md)).

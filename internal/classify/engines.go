@@ -1,6 +1,8 @@
 package classify
 
 import (
+	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Flurit/applygate/internal/shell"
@@ -11,7 +13,7 @@ var tfValueFlags = map[string]bool{
 	"var": true, "var-file": true, "target": true, "replace": true, "lock-timeout": true, "parallelism": true,
 	"state": true, "state-out": true, "backup": true, "out": true, "generate-config-out": true, "exclude": true,
 	"config": true, "backend-config": true, "from-module": true, "plugin-dir": true, "provider": true, "chdir": true,
-	"filter": true, "test-directory": true, "id": true, "lock-file": true,
+	"filter": true, "test-directory": true, "id": true, "lock-file": true, "invoke": true,
 }
 
 type tfFlag struct {
@@ -259,8 +261,11 @@ func terraformArgs(a *Action, args []shell.Word) {
 			op = pos[0].Text
 		}
 		a.Sub = "workspace " + op
-		if (op == "select" || op == "new") && len(pos) > 1 && pos[1].Resolved {
+		if (op == "select" || op == "new") && len(pos) > 1 {
 			a.SelectWorkspace = pos[1].Text
+			if !pos[1].Resolved {
+				a.SelectWorkspace = UnknownWorkspace
+			}
 		}
 		if op == "delete" {
 			a.TouchesState = true
@@ -303,7 +308,74 @@ var awsProtectionRemoval = []string{
 	"--bypass-governance-retention",
 }
 
+// awsBoolOpts are the aws CLI's global options that take no value.
+var awsBoolOpts = map[string]bool{"--debug": true, "--no-verify-ssl": true, "--no-paginate": true, "--no-sign-request": true,
+	"--no-cli-pager": true, "--cli-auto-prompt": true, "--no-cli-auto-prompt": true}
+
+// helmBoolOpts are helm's global options that take no value.
+var helmBoolOpts = map[string]bool{"--debug": true, "-h": true, "--help": true}
+
+// bothWays classifies a command whose path (service and operation, or
+// subcommand) may be shifted by an option applygate does not know: an
+// unknown option before the first n positionals may or may not take the
+// next word as its value. Both readings are classified, and the stricter
+// one is kept.
+func bothWays(classify func(Action, []shell.Word) (Action, bool), base Action, args []shell.Word, valued, booleans map[string]bool, n int) (Action, bool) {
+	return bothWaysDepth(classify, base, args, valued, booleans, n, 0)
+}
+
+func bothWaysDepth(classify func(Action, []shell.Word) (Action, bool), base Action, args []shell.Word, valued, booleans map[string]bool, n, depth int) (Action, bool) {
+	pos := 0
+	for i := 0; i < len(args) && pos < n; i++ {
+		t := args[i].Text
+		if !strings.HasPrefix(t, "-") || t == "-" {
+			pos++
+			continue
+		}
+		if strings.Contains(t, "=") || booleans[t] {
+			continue
+		}
+		if valued[t] {
+			i++
+			continue
+		}
+		if i+1 >= len(args) || strings.HasPrefix(args[i+1].Text, "-") {
+			continue
+		}
+		if depth >= 3 {
+			a := base
+			a.Class, a.Why = Dynamic, "too many options applygate does not know before the command"
+			return a, true
+		}
+		// i is unknown and followed by a word: boolean, or valued.
+		boolA, okA := bothWaysDepth(classify, base, args, valued, mergeSet(booleans, t), n, depth+1)
+		rest := append(append([]shell.Word(nil), args[:i+1]...), args[i+2:]...)
+		valB, okB := bothWaysDepth(classify, base, rest, valued, booleans, n, depth+1)
+		switch {
+		case !okB:
+			return boolA, okA
+		case !okA || severityRank(valB.Class) > severityRank(boolA.Class):
+			return valB, true
+		}
+		return boolA, okA
+	}
+	return classify(base, args)
+}
+
+func mergeSet(m map[string]bool, k string) map[string]bool {
+	out := make(map[string]bool, len(m)+1)
+	for x, v := range m {
+		out[x] = v
+	}
+	out[k] = true
+	return out
+}
+
 func awsArgs(base Action, args []shell.Word) (Action, bool) {
+	return bothWays(awsArgsOne, base, args, awsValueOpts, awsBoolOpts, 2)
+}
+
+func awsArgsOne(base Action, args []shell.Word) (Action, bool) {
 	a := base
 	a.Engine = "aws"
 	var pos []string
@@ -355,7 +427,9 @@ func awsArgs(base Action, args []shell.Word) (Action, bool) {
 	case svc == "s3" && op == "mv":
 		a.Class, a.Why = CloudWrite, "aws s3 mv moves objects"
 	case svc == "s3" && op == "cp":
-		if len(pos) > 3 && strings.HasPrefix(pos[3], "s3://") {
+		// The destination is the last path, but an option's value may sit
+		// among the paths, so any s3:// word after the source counts.
+		if slices.ContainsFunc(pos[min(3, len(pos)):], func(p string) bool { return strings.HasPrefix(p, "s3://") }) {
 			a.Class, a.Why = CloudWrite, "aws s3 cp uploads objects"
 		} else {
 			a.Class, a.Why = ReadOnly, "aws s3 cp downloads objects"
@@ -435,15 +509,23 @@ var kubectlBool = toSet("--insecure-skip-tls-verify", "--all-namespaces", "--war
 // helmArgs classifies a helm command by its subcommand: uninstall deletes a
 // release and everything it created, install, upgrade and rollback change the
 // cluster, and the rest only read or work locally.
+var helmValueOpts = map[string]bool{"-n": true, "--namespace": true, "--kube-context": true, "--kubeconfig": true, "--kube-apiserver": true, "--kube-token": true, "--kube-as-user": true,
+	"-f": true, "--values": true, "--set": true, "--set-string": true, "--version": true, "-o": true, "--output": true, "--repo": true,
+	"--kube-as-group": true, "--kube-ca-file": true, "--kube-tls-server-name": true, "--burst-limit": true, "--qps": true,
+	"--registry-config": true, "--repository-cache": true, "--repository-config": true}
+
 func helmArgs(base Action, args []shell.Word) (Action, bool) {
+	return bothWays(helmArgsOne, base, args, helmValueOpts, helmBoolOpts, 1)
+}
+
+func helmArgsOne(base Action, args []shell.Word) (Action, bool) {
 	a := base
 	a.Engine = "helm"
 	if a.Target = flagValue(args, "--kube-context"); a.Target == "" {
 		a.Target = flagValue(args, "--kube-apiserver")
 	}
 	kubeconfigFlag(&a, args)
-	pos, dynamic := positionals(args, map[string]bool{"-n": true, "--namespace": true, "--kube-context": true, "--kubeconfig": true, "--kube-apiserver": true, "--kube-token": true, "--kube-as-user": true,
-		"-f": true, "--values": true, "--set": true, "--set-string": true, "--version": true, "-o": true, "--output": true, "--repo": true})
+	pos, dynamic := positionals(args, helmValueOpts)
 	if dynamic {
 		a.Class, a.Why = Dynamic, "helm subcommand cannot be resolved"
 		return a, true
@@ -724,11 +806,32 @@ func terragruntDir(a *Action, args []shell.Word) []shell.Word {
 			a.Dir, a.AnyDir = "", true
 		}
 	}
+	// --config names the terragrunt.hcl to run, whose directory is the
+	// unit's: a config in prod is prod's, wherever the command runs.
+	var config *shell.Word
+	setConfig := func(w shell.Word) { config = &w }
 	for _, k := range []string{"TERRAGRUNT_WORKING_DIR", "TG_WORKING_DIR"} {
 		if v, ok := a.Env[k]; ok {
 			setDir(shell.Word{Text: v, Resolved: v != "", Prefix: v})
 		}
 	}
+	for _, k := range []string{"TERRAGRUNT_CONFIG", "TG_CONFIG"} {
+		if v, ok := a.Env[k]; ok {
+			setConfig(shell.Word{Text: v, Resolved: v != "", Prefix: v})
+		}
+	}
+	defer func() {
+		if config == nil {
+			return
+		}
+		if !config.Resolved || config.Text == "" {
+			a.Dir, a.AnyDir = "", true
+			return
+		}
+		if a.Dir != "" || filepath.IsAbs(config.Text) {
+			a.Dir = filepath.Dir(absPath(a.Dir, config.Text, ""))
+		}
+	}()
 	out := make([]shell.Word, 0, len(args))
 	for i := 0; i < len(args); i++ {
 		w := args[i]
@@ -737,15 +840,20 @@ func terragruntDir(a *Action, args []shell.Word) []shell.Word {
 			t = w.Prefix
 		}
 		name, val, eq := strings.Cut(t, "=")
-		if name != "--working-dir" && name != "--terragrunt-working-dir" {
+		set := setDir
+		switch name {
+		case "--working-dir", "--terragrunt-working-dir":
+		case "--config", "--terragrunt-config":
+			set = setConfig
+		default:
 			out = append(out, w)
 			continue
 		}
 		switch {
 		case eq:
-			setDir(shell.Word{Text: val, Resolved: w.Resolved, Prefix: val})
+			set(shell.Word{Text: val, Resolved: w.Resolved, Prefix: val})
 		case i+1 < len(args):
-			setDir(args[i+1])
+			set(args[i+1])
 			i++
 		}
 	}
