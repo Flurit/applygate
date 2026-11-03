@@ -131,6 +131,14 @@ func terraformArgs(a *Action, args []shell.Word) {
 	sub := args[0].Text
 	rest := args[1:]
 	if a.Engine == "terragrunt" {
+		if strings.HasSuffix(sub, "-all") {
+			a.Subtree = true
+		}
+		for _, w := range rest {
+			if w.Text == "--all" || w.Text == "-all" || w.Text == "--terragrunt-all" || !w.Resolved && strings.HasPrefix(w.Prefix, "-") {
+				a.Subtree = true
+			}
+		}
 		switch sub {
 		case "run-all", "run":
 			// terragrunt run-all <cmd>, terragrunt run [--all] -- <cmd>
@@ -812,6 +820,15 @@ func agentFlags(base Action, name string, args []shell.Word) (Action, bool) {
 		}
 		// A nested session with other settings, or settings sources that
 		// leave out the user's, can run without the hook.
+		// An inline MCP server, plugin directory or subagent definition
+		// starts programs of its own when the session starts, and no hook
+		// judges a server's start-up command.
+		if flag, _, _ := strings.Cut(t, "="); (name == "claude" && (flag == "--mcp-config" || flag == "--strict-mcp-config" || flag == "--plugin-dir" || flag == "--agents")) ||
+			(name == "copilot" && (flag == "--additional-mcp-config" || flag == "--mcp-config")) ||
+			(name == "gemini" && (flag == "--extensions" || flag == "-e")) {
+			a.Class, a.Why = Tampering, name+" "+flag+" starts a session with MCP servers, plugins or agents of its own, whose commands no hook judges"
+			return a, true
+		}
 		if t == "--settings" || strings.HasPrefix(t, "--settings=") || t == "--setting-sources" || strings.HasPrefix(t, "--setting-sources=") ||
 			(name == "codex" && (t == "-c" || t == "--config" || strings.HasPrefix(t, "--config=")) && i+1 < len(args) && codexHookKey(args[i+1].Text)) ||
 			(name == "codex" && strings.HasPrefix(t, "--config=") && codexHookKey(strings.TrimPrefix(t, "--config="))) {
@@ -847,11 +864,14 @@ func agentFlags(base Action, name string, args []shell.Word) (Action, bool) {
 }
 
 // codexHookKey reports whether a codex -c override touches hooks, the
-// sandbox or approvals.
+// sandbox, approvals or a command Codex starts itself.
 func codexHookKey(kv string) bool {
 	k, _, _ := strings.Cut(kv, "=")
 	k = strings.ToLower(k)
-	return strings.Contains(k, "hook") || strings.Contains(k, "sandbox") || strings.Contains(k, "approval")
+	return strings.Contains(k, "hook") || strings.Contains(k, "sandbox") || strings.Contains(k, "approval") ||
+		// MCP servers and the notify program are commands Codex starts
+		// itself, outside any hook.
+		strings.Contains(k, "mcp_servers") || k == "notify" || strings.HasPrefix(k, "profiles")
 }
 
 func hasAnyPrefix(s string, ps ...string) bool {

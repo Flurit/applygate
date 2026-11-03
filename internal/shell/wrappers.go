@@ -248,10 +248,42 @@ func (a *analyzer) backstop(bn string, rest []Word, redirs []Redir, cmdSt, st *s
 		if i > 0 && rest[i-1].Resolved && messageFlags[rest[i-1].Text] {
 			continue
 		}
-		a.call(rest[i:], redirs, cmdSt, st, append(via, label), depth+1, stdin{})
+		es := cmdSt
+		if movesDir(rest[:i]) {
+			// pnpm -C DIR exec, yarn --cwd DIR, npm --prefix DIR: the
+			// wrapper runs it somewhere the backstop does not follow.
+			es = cmdSt.clone()
+			es.dir = ""
+		}
+		a.call(rest[i:], redirs, es, st, append(via, label), depth+1, stdin{})
 		return true
 	}
 	return false
+}
+
+// dirFlags are options with which runners and wrappers choose the directory
+// the command they start runs in.
+var dirFlags = toSet("-C", "--chdir", "--cd", "--cwd", "--dir", "--directory", "--wd", "--workdir", "--working-dir",
+	"--working-directory", "--prefix", "--project", "--root", "--path")
+
+// movesDir reports whether wrapper options choose another directory, or are
+// unresolved and might.
+func movesDir(ws []Word) bool {
+	for _, w := range ws {
+		if !w.Resolved && strings.HasPrefix(w.Prefix, "-") {
+			return true
+		}
+		if f, _, _ := strings.Cut(w.Text, "="); dirFlags[f] {
+			return true
+		}
+	}
+	return false
+}
+
+// isAbbrev reports whether t is long option opt or an abbreviation of it at
+// least min characters after the dashes, as getopt_long accepts.
+func isAbbrev(t, opt string, min int) bool {
+	return len(t) >= 2+min && strings.HasPrefix(opt, t)
 }
 
 // IsBackstopVia reports whether an invocation was reached through the

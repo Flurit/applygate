@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
@@ -617,6 +618,8 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	}
 	var res config.Resolution
 	switch {
+	case a.Subtree && a.Dir != "":
+		res = subtreeResolve(cfg, a.Dir, sig, deps.Env)
 	case a.AnyDir && rootOf(cfg, ev) != "":
 		why := "the directory this command runs in could not be followed statically"
 		if a.Dir != "" {
@@ -845,13 +848,32 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 	if a.PlanWritten {
 		// The plan on disk now is not the one that will be applied: an
 		// earlier step of this command writes it (plan -out, cp, a download).
+		// It was made where its plan -out ran; written by anything else, it
+		// could have been made anywhere.
+		if a.PlanOrigin == "" {
+			r.Tier, r.Env = config.Protected, "unknown"
+			r.Matched = append(r.Matched, "an earlier step writes the saved plan "+a.PlanFile+" by a means other than plan -out, so where it was made is not known; judged as protected")
+		} else if filepath.Clean(a.PlanOrigin) != filepath.Clean(a.Dir) {
+			sig, _ := DirSignals(a.PlanOrigin, deps.Env)
+			if alt := cfg.Resolve(sig); alt.Tier.Rank() > r.Tier.Rank() {
+				r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "the saved plan is made in "+a.PlanOrigin)
+			}
+		}
 		r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-unverifiable", Severity: preflight.Critical,
 			Message: "an earlier step of this command writes the saved plan " + a.PlanFile + ", so the plan that would be applied cannot be checked; run the steps separately"})
 		return classify.ApplySavedPlan
 	}
 	planPath := a.PlanFile
 	if !filepath.IsAbs(planPath) && a.Dir != "" {
-		planPath = filepath.Join(a.Dir, planPath)
+		// Physically, as Terraform opens it: m/../tfplan through a link m
+		// is in the directory the link's parent is.
+		planPath = shell.PhysicalJoin(a.Dir, planPath)
+	}
+	if p := filepath.ToSlash(planPath); strings.HasPrefix(p, "/dev/") || strings.HasPrefix(p, "/proc/") {
+		// A plan read from stdin or a descriptor (apply /dev/stdin <
+		// ../prod/tfplan) has no directory.
+		r.Tier, r.Env = config.Protected, "unknown"
+		r.Matched = append(r.Matched, "the saved plan "+a.PlanFile+" is read from a stream, so where it was made is not known; judged as protected")
 	}
 	if b, err := deps.ReadFile(planPath); err == nil {
 		sum := sha256.Sum256(b)
@@ -885,11 +907,21 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 		planDirs = append(planDirs, filepath.Dir(real))
 	}
 	for _, pd := range planDirs {
-		if a.Dir != "" && filepath.IsAbs(pd) && filepath.Clean(pd) != filepath.Clean(a.Dir) && terraformDir(pd) {
+		if a.Dir == "" || !filepath.IsAbs(pd) || filepath.Clean(pd) == filepath.Clean(a.Dir) {
+			continue
+		}
+		if terraformDir(pd) {
 			sig, _ := DirSignals(pd, deps.Env)
 			if alt := cfg.Resolve(sig); alt.Tier.Rank() > r.Tier.Rank() {
 				r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "the saved plan is in "+pd)
 			}
+			continue
+		}
+		// Elsewhere only a configured environment's path counts (a plan in
+		// envs/prod/out is prod's); an unmatched place such as /tmp says
+		// nothing.
+		if alt := cfg.Resolve(config.Signals{Dir: pd}); !alt.Unknown && alt.Tier.Rank() > r.Tier.Rank() {
+			r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "the saved plan is in "+pd)
 		}
 	}
 	if fi, err := os.Stat(planPath); err == nil && hardLinked(fi) && r.Tier.Rank() < config.Protected.Rank() {
@@ -1186,4 +1218,46 @@ func shapeActions(ev Event, res *shell.Result) []classify.Action {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Dir < out[j].Dir })
 	return out
+}
+
+// subtreeResolve is the tier of a command that runs in every Terragrunt unit
+// under dir: the most protected of dir and each unit's own signals. When
+// the units cannot all be listed (too many, unreadable), it is the most
+// protected tier anything under dir could have.
+func subtreeResolve(cfg *config.Config, dir string, sig config.Signals, env map[string]string) config.Resolution {
+	best := cfg.Resolve(sig)
+	n, complete := 0, true
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			complete = false
+			return filepath.SkipDir
+		}
+		if d.IsDir() {
+			if n++; n > 2000 {
+				complete = false
+				return filepath.SkipAll
+			}
+			if name := d.Name(); p != dir && (name == ".git" || name == ".terraform" || name == ".terragrunt-cache" || name == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			// A linked unit or directory could lead anywhere.
+			complete = false
+			return nil
+		}
+		if d.Name() != "terragrunt.hcl" {
+			return nil
+		}
+		usig, _ := DirSignals(filepath.Dir(p), env)
+		if r := cfg.Resolve(usig); r.Tier.Rank() > best.Tier.Rank() {
+			best = config.Resolution{Tier: r.Tier, Env: r.Env, Matched: append([]string{"terragrunt runs the unit in " + filepath.Dir(p)}, r.Matched...)}
+		}
+		return nil
+	})
+	if !complete {
+		return cfg.ResolveUnder(dir, sig, "terragrunt runs every unit under "+dir+", and they could not all be listed")
+	}
+	return best
 }

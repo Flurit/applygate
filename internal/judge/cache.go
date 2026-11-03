@@ -48,7 +48,10 @@ func (c Cache) Get(key string, now time.Time) (Result, bool) {
 	e, ok := c.load()[key]
 	// An entry dated in the future (beyond a minute of clock skew) was not
 	// written by this machine's hook.
-	if !ok || now.Sub(e.At) > c.TTL || e.At.After(now.Add(time.Minute)) || e.Verdict == "" || e.Verdict == policy.Allow {
+	// Only an escalation is kept, so only one is read back: any other
+	// string (a planted "Allow", say) would be ranked below allow and let
+	// the call skip the judge.
+	if !ok || now.Sub(e.At) > c.TTL || e.At.After(now.Add(time.Minute)) || (e.Verdict != policy.Ask && e.Verdict != policy.Block) {
 		return Result{}, false
 	}
 	return Result{Verdict: e.Verdict, Reason: e.Reason, Model: e.Model, Cached: true}, true

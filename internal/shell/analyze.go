@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"mvdan.cc/sh/v3/expand"
@@ -265,6 +266,11 @@ type analyzer struct {
 }
 
 const maxWork = 50000
+
+// maxText bounds a resolved word and a variable's value. Longer text is
+// left unresolved: doubling a variable (x=$x$x) or a long brace sequence
+// would otherwise grow without bound, in branches that never run too.
+const maxText = 64 << 10
 
 type stdin struct {
 	text    string
@@ -537,7 +543,7 @@ func (a *analyzer) declClause(c *syntax.DeclClause, st *state, via []string, dep
 				name, val, eq := strings.Cut(w.Text, "=")
 				a.declare(name, st, local)
 				if eq {
-					st.vars[name] = value{text: val, ok: true}
+					st.vars[name] = capped(val, true)
 				}
 				if export {
 					st.exported[name] = true
@@ -595,10 +601,34 @@ func (a *analyzer) assign(as *syntax.Assign, st *state, via []string, depth int)
 	}
 	if as.Append {
 		prev := st.vars[as.Name.Value]
-		st.vars[as.Name.Value] = value{text: prev.text + w.Text, ok: prev.ok && w.Resolved}
+		st.vars[as.Name.Value] = capped(prev.text+w.Text, prev.ok && w.Resolved)
 		return
 	}
-	st.vars[as.Name.Value] = value{text: w.Text, ok: w.Resolved}
+	st.vars[as.Name.Value] = capped(w.Text, w.Resolved)
+}
+
+// litOnly reports whether parts hold no expansion.
+func litOnly(parts []syntax.WordPart) bool {
+	for _, p := range parts {
+		switch x := p.(type) {
+		case *syntax.Lit, *syntax.SglQuoted:
+		case *syntax.DblQuoted:
+			if !litOnly(x.Parts) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// capped is a variable's value, unresolved when it is longer than maxText.
+func capped(text string, ok bool) value {
+	if len(text) > maxText {
+		return value{}
+	}
+	return value{text: text, ok: ok}
 }
 
 func (a *analyzer) callExpr(c *syntax.CallExpr, redirs []Redir, st *state, via []string, depth int, in stdin) {
@@ -655,7 +685,7 @@ func (a *analyzer) words(w *syntax.Word, st *state, via []string, depth int) []W
 		n := 1
 		for _, p := range cp.Parts {
 			if be, ok := p.(*syntax.BraceExp); ok {
-				n *= max(len(be.Elems), 1)
+				n *= braceCount(be)
 			}
 			if n > 64 {
 				// Too many expansions to follow: the BraceExp part makes
@@ -676,6 +706,49 @@ func (a *analyzer) words(w *syntax.Word, st *state, via []string, depth int) []W
 		return ws
 	}
 	return a.split(a.word(w, st, via, depth), st)
+}
+
+// braceCount is how many words a brace expansion makes: its elements, or
+// for a sequence ({1..N}, {a..z}) the length of the range. A range that
+// cannot be counted counts as too many.
+func braceCount(be *syntax.BraceExp) int {
+	if !be.Sequence {
+		return max(len(be.Elems), 1)
+	}
+	if len(be.Elems) < 2 {
+		return 1 << 30
+	}
+	end := func(e *syntax.Word) (int, bool) {
+		t := e.Lit()
+		if n, err := strconv.Atoi(t); err == nil {
+			return n, true
+		}
+		if len(t) == 1 {
+			return int(t[0]), true
+		}
+		return 0, false
+	}
+	lo, ok1 := end(be.Elems[0])
+	hi, ok2 := end(be.Elems[1])
+	if !ok1 || !ok2 {
+		return 1 << 30
+	}
+	step := 1
+	if len(be.Elems) > 2 {
+		n, err := strconv.Atoi(be.Elems[2].Lit())
+		if err != nil || n == 0 {
+			return 1 << 30
+		}
+		step = max(n, -n)
+	}
+	d := hi - lo
+	if d < 0 {
+		d = -d
+	}
+	if d/step > 1<<20 {
+		return 1 << 30
+	}
+	return d/step + 1
 }
 
 // allParams expands a word that is exactly "$@" or $@ into one word per
@@ -746,6 +819,9 @@ func (a *analyzer) word(w *syntax.Word, st *state, via []string, depth int) Word
 		}
 		res.Resolved = false
 	}
+	// A literal word is as long as the command that holds it; only
+	// expansions can grow past it.
+	literal := litOnly(w.Parts)
 	for i, p := range w.Parts {
 		if !res.unquoted {
 			switch p.(type) {
@@ -754,6 +830,11 @@ func (a *analyzer) word(w *syntax.Word, st *state, via []string, depth int) Word
 			}
 		}
 		a.part(p, st, via, depth, &b, mark, i == 0, false)
+		if b.Len() > maxText && !literal {
+			mark()
+			res.Prefix = res.Prefix[:min(len(res.Prefix), maxText)]
+			return Word{Prefix: res.Prefix, unquoted: res.unquoted}
+		}
 	}
 	res.Text = b.String()
 	if res.Resolved {

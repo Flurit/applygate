@@ -69,7 +69,11 @@ func TestAnalyze(t *testing.T) {
 		{"f(){ terraform $1; }; f destroy", []string{"/repo: terraform destroy"}, nil},
 		{"terraform {destroy,plan}", []string{"/repo: terraform destroy plan"}, nil},
 		{"find . -name '*.tf' -exec terraform destroy \\;", []string{"/repo: terraform destroy"}, nil},
-		{"docker run --rm -v $PWD:/w hashicorp/terraform:1.9 destroy -auto-approve", []string{"/repo: terraform destroy -auto-approve"}, nil},
+		// Without -w the command runs in the image's own directory, not
+		// the host's: the directory is unknown.
+		{"docker run --rm -v $PWD:/w hashicorp/terraform:1.9 destroy -auto-approve", []string{": terraform destroy -auto-approve"}, nil},
+		{"docker run --rm -v $PWD:/w -w /w hashicorp/terraform:1.9 destroy -auto-approve", []string{"/repo: terraform destroy -auto-approve"}, nil},
+		{"docker run --rm -v $PWD/..:/e -w /e/prod hashicorp/terraform:1.9 destroy -auto-approve", []string{"/prod: terraform destroy -auto-approve"}, nil},
 		{"alias tf=terraform; tf destroy", []string{"/repo: terraform destroy"}, nil},
 		{"git commit -m 'never run terraform destroy'", []string{"/repo: git commit -m never run terraform destroy"}, []string{"PROBLEM"}},
 		{`grep -rn "terraform destroy" docs/`, []string{"/repo: grep -rn terraform destroy docs/"}, []string{"PROBLEM"}},

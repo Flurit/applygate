@@ -193,3 +193,26 @@ func TestManagedUserCannotDisableJudge(t *testing.T) {
 		t.Fatal("the managed user config turned the system judge off")
 	}
 }
+
+// A managed judge program is named by its full path, and it and its scripts
+// must pass the system-file check (6C4).
+func TestSystemProgram(t *testing.T) {
+	managedDirs(t, false)
+	if _, err := SystemProgram([]string{"sh", "/x/judge.sh"}); err == nil {
+		t.Fatal("a bare program name was accepted")
+	}
+	d := t.TempDir()
+	script := filepath.Join(d, "judge.sh")
+	os.WriteFile(script, []byte("#!/bin/sh\n"), 0o644)
+	argv, err := SystemProgram([]string{"/bin/sh", script, "--model", "m"})
+	if err != nil || len(argv) != 4 {
+		t.Fatalf("argv %v, err %v", argv, err)
+	}
+	os.Symlink(d, filepath.Join(d, "dirlink"))
+	if _, err := SystemProgram([]string{"/bin/sh", filepath.Join(d, "missing.sh")}); err != nil {
+		t.Fatalf("a non-file argument was checked: %v", err)
+	}
+	if _, err := SystemProgram([]string{filepath.Join(d, "nope")}); err == nil {
+		t.Fatal("a missing program was accepted")
+	}
+}
