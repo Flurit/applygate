@@ -23,11 +23,12 @@ In scope:
 
 - **Bypasses:** a command, tool call or saved plan that should be asked about or blocked under the documented policy ([docs/policy.md](docs/policy.md)), but is allowed. Examples: shell constructs the analyzer resolves wrongly instead of refusing, or plan changes the gate misses.
 - **Fail-open:** an input that makes applygate crash, hang or exit in a way the agent treats as "proceed" when the configuration says it should fail closed.
-- **Self-protection:** an agent tool call that changes hook settings, applygate's config or its decision log without being blocked.
-- **Log leaks:** secrets written to the decision log unredacted.
+- **Self-protection:** an agent tool call that changes hook settings, applygate's config, its decision log, approval store, judge cache or binary, or approves its own call, without being blocked.
+- **Model judge and MCP:** a call that skips the judge or the MCP translation it should go through, or a judge answer that lowers a verdict.
+- **Log leaks:** secrets written to the decision log, or sent to the judge, unredacted.
 - **Release integrity:** problems with release signing, provenance or `install.sh` verification.
 
-Out of scope: anything [docs/limits.md](docs/limits.md) and [docs/threat-model.md](docs/threat-model.md) already list as not defended (for example MCP tool calls, code in other languages that mentions no infrastructure tool, or an agent with another path to cloud credentials). Reports that show one of these limits is worse than documented are welcome.
+Out of scope: anything [docs/limits.md](docs/limits.md) and [docs/threat-model.md](docs/threat-model.md) already list as not defended (for example calls to MCP tools outside the known-tool table, code in other languages that mentions no infrastructure tool, or an agent with another path to cloud credentials). Reports that show one of these limits is worse than documented are welcome.
 
 ## What to expect
 

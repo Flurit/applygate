@@ -44,14 +44,23 @@ case "$code" in
     *) verdict=error ;;
 esac
 
+# The output quotes the plan (resource addresses, values), which whoever
+# wrote the configuration controls: drop control characters other than
+# newline and tab, and end the multi-line output with a random delimiter
+# that the text cannot contain, so it cannot add outputs of its own.
+out=$(printf '%s' "$out" | LC_ALL=C tr -d '\000-\010\013-\037\177')
 printf '%s\n' "$out"
 if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    delim="APPLYGATE_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    while printf '%s' "$out" | grep -qF "$delim"; do
+        delim="APPLYGATE_$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    done
     {
         echo "verdict=$verdict"
         echo "exit-code=$code"
-        echo "summary<<APPLYGATE_EOF"
+        echo "summary<<$delim"
         printf '%s\n' "$out"
-        echo "APPLYGATE_EOF"
+        echo "$delim"
     } >> "$GITHUB_OUTPUT"
 fi
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then

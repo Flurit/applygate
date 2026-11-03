@@ -92,8 +92,19 @@
       `Via` is redacted too.
     - **Telemetry** sends only known agents, modes, verdicts and version numbers.
   - **Failure handling** (H2): one function decides whether an error, a panic or the deadline blocks. A panic now follows `on_error` like any other error.
+  - **Hosts, CI and the supply chain** (I1 to I6):
+    - **Claude Code** is trusted to show an ask only in the modes where that was seen live (default, `bypassPermissions`). In `acceptEdits`, `plan` and `auto` an ask is a block.
+    - **`scripts/ci-plan-check.sh`** ends its multi-line output with a random delimiter and strips control characters, so a resource address in the plan cannot add a `verdict=allow` output. The Action passes `binary` through the environment.
+    - **The release workflow** runs the tests in a read-only job without stored credentials; only the release job holds the token and signing identity.
+    - **`install.sh`** requires cosign unless `APPLYGATE_VERIFY_SIGNATURE=auto`, and the `seatbelt` compatibility binary is no longer shipped.
+    - **`hook install`** writes settings files atomically, keeps their key order, the bytes of the keys it does not change, and their permissions. It recognizes its own entries by the exact command it writes.
+    - **The lock-file check** runs once per directory: 300 destroys in one command took 13 s, now 1 s.
+  - **Docs** (J1 to J10): every claim was checked against the code. The upgrade notes are in the README and the known gaps in `docs/limits.md`.
 - **Behaviour changes:**
   - **One-time approvals are off by default.** Only the user config turns them on. The approval key now binds write content and full MCP arguments, the store's lock never waits more than about half a second, and the approve prompt escapes control characters.
+  - **The `seatbelt` binary is gone.** Run `applygate hook install` before upgrading if a hook entry still calls it; `applygate doctor` flags one.
+  - **`install.sh` requires cosign** by default.
+  - **Claude Code's `acceptEdits`, `plan` and `auto` modes** get a block where an ask was before, until the prompt is tested live there.
   - **`applygate apply` has no `--yes` and no `--plan-json`.** An ask outside a terminal is refused; in CI, gate with `applygate plan-check` and run the engine yourself.
   - **Repository configs can only add protection.** Every `.applygate.yaml` from the outermost directory down applies, and a nested one no longer replaces the repository's.
     - **User config only:** observe mode, `strict: false`, a looser `default_tier`, `name_hints` or `on_error`, `aliases`, and the other settings listed in `docs/config.md`. In a repository config they are ignored, and `doctor` says so.

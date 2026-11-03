@@ -14,9 +14,7 @@ import (
 )
 
 // Open lists the findings not fixed yet, by review ID.
-var Open = map[string]string{
-	"I2": "ci-plan-check.sh outputs can be injected through the plan text",
-}
+var Open = map[string]string{}
 
 // Check reports one test of finding id. ok is whether the behaviour the
 // review asks for holds.

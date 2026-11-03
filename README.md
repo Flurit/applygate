@@ -17,11 +17,11 @@ applygate checks every command a coding agent is about to run against your Terra
 ```bash
 brew install Flurit/tap/applygate     # or see docs/install.md
 cd your-infra-repo
-applygate init                        # writes .applygate.yaml in observe mode, hooks Claude Code and Codex
+applygate init                        # writes .applygate.yaml, starts observe mode in your user config, hooks Claude Code and Codex
 applygate check "terraform -chdir=envs/prod destroy"
 ```
 
-applygate starts in **observe mode**: it logs what it would block and blocks nothing, so `check` prints `allow` followed by the block it would give in enforce mode. After a few days, `applygate report` shows what it caught and `applygate suggest` proposes a config with your environments and their tiers. Review it, set `mode: enforce`, and run `applygate doctor` to check the setup.
+applygate starts in **observe mode**: it logs what it would block and blocks nothing, so `check` prints `allow` followed by the block it would give in enforce mode. After a few days, `applygate report` shows what it caught and `applygate suggest` proposes a config with your environments and their tiers. Review it, set `mode: enforce` in your user config (`~/.config/applygate/config.yaml`; a repository config can only add protection), and run `applygate doctor` to check the setup.
 
 applygate is pre-1.0. See [what has been verified](docs/project/ACCEPTANCE.md).
 
@@ -29,7 +29,7 @@ applygate is pre-1.0. See [what has been verified](docs/project/ACCEPTANCE.md).
 
 Pattern matching reads text. applygate reads commands and plans:
 
-- **It parses commands the way the shell does.** It follows `cd`, variables, `bash -c`, `eval`, `sudo`, `xargs`, Makefiles, scripts and base64-decoded payloads, so a destroy can't hide behind a wrapper. `grep "terraform destroy"` is still just a grep. Anything it can't resolve, such as a script fetched with `curl | sh`, gets an **ask** rather than a guess.
+- **It parses commands the way the shell does.** It follows `cd`, variables, functions, `bash -c`, `eval`, `sudo`, `xargs`, git aliases and `ssh -o ProxyCommand`, interpreter options, Makefiles, scripts and base64-decoded payloads. `grep "terraform destroy"` is still just a grep. What it cannot reproduce exactly gets an **ask** in protected environments rather than a guess: a script fetched with `curl | sh`, a glob in a program name, a file written earlier in the same command. A program it does not know that wraps `aws` or `kubectl` (a team's own runner) is not seen through unless you list it under `wrappers:` ([limits](docs/limits.md)).
 - **It knows which environment a command targets.** Directory, workspace, backend, AWS profile, Kubernetes context, GCP project and Azure subscription map to a tier: protected, standard or disposable. Unknown environments count as protected. It also catches a planfile made in another workspace, a backend changed since `init`, stale state and lock-file drift.
 - **It reads the plan before an apply.** For `apply <planfile>` it checks what will happen: stateful resources destroyed or replaced, deletion protection removed, resources exposed to the internet, IAM wildcards, changes to the state backend.
 
@@ -41,7 +41,7 @@ On the same 17 dangerous Terraform scenarios:
 | A competent hand-written Rego/regex policy | 14 / 17 |
 | **applygate** (protected tier) | **17 / 17** |
 
-The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 141 scenarios against your binary.
+The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 162 reproductions of the v0.6.0 security review are in `harness/pack_attack`.
 
 applygate is a check, not a sandbox. Pair it with plan-only credentials for agents; see [the threat model](docs/threat-model.md).
 
@@ -55,8 +55,10 @@ applygate is a check, not a sandbox. Pair it with plan-only credentials for agen
 | Destroy | destroy, `apply -destroy`, `-replace`, a plan that deletes | block | ask | allow |
 | State surgery | state rm/mv/push, force-unlock, taint, `-migrate-state` | block | ask | ask |
 | Destructive cloud CLI | `aws … delete-*`, `s3 rb`, `kubectl delete`, `helm uninstall`, `az`/`gcloud … delete` | block | ask | ask |
-| Disabling the guard | skip-permission flags, edits to hooks, applygate config or logs | block | block | block |
+| Disabling the guard | skip-permission flags, edits to hooks, applygate's config, log, approvals, judge cache or binary, a renamed copy of applygate | block | block | block |
 | Unresolvable | `eval "$(curl …)"`, `curl … \| bash` | ask | ask | allow |
+
+A command whose directory cannot be followed (a `cd` to a computed path), or that could not be analyzed to the end, is judged at the most protected tier under the repository.
 
 The **plan gate** blocks critical findings and asks on high ones in protected environments, and asks on critical findings in standard ones. The rules, and how to mark your own resources as critical, are in [docs/policy.md](docs/policy.md). The config format is in [docs/config.md](docs/config.md).
 
@@ -74,15 +76,15 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 | OpenCode | Preview | blocks |
 | Cline | Preview | blocks; a block cancels the whole task |
 
-`applygate init` installs the hooks for Claude Code and Codex. **Preview** hooks follow each agent's documentation but have not yet been tested inside the agent. Install one with `applygate hook install --agent NAME`, then check it: ask the agent to run `terraform destroy -auto-approve` in an empty directory, and applygate should block it. Only Claude Code and Copilot CLI can show you an "ask" prompt; on the other agents an ask is a block. One-time approvals (`applygate approve ID`) are off by default, because an agent on the same machine can reach any terminal you can; turning them on in your user config trusts that no agent runs the approval in a way applygate does not recognise ([docs/policy.md](docs/policy.md) step 9). For every agent's details, see [docs/hosts.md](docs/hosts.md) (also `applygate hosts`).
+`applygate init` installs the hooks for Claude Code and Codex. **Preview** hooks follow each agent's documentation but have not yet been tested inside the agent. Install one with `applygate hook install --agent NAME`, then check it: ask the agent to run `terraform destroy -auto-approve` in an empty directory, and applygate should block it. Only Claude Code and Copilot CLI can show you an "ask" prompt; on the other agents an ask is a block. Claude Code is trusted to prompt only in the permission modes where that was seen live (default and `bypassPermissions`); in `acceptEdits`, `plan`, `auto` and `dontAsk` an ask is a block. One-time approvals (`applygate approve ID`) are off by default, because an agent on the same machine can reach any terminal you can; turning them on in your user config trusts that no agent runs the approval in a way applygate does not recognise ([docs/policy.md](docs/policy.md) step 9). For every agent's details, see [docs/hosts.md](docs/hosts.md) (also `applygate hosts`).
 
-**MCP servers.** In Claude Code and Codex, a call to a known infrastructure MCP tool (AWS, HCP Terraform, Kubernetes, Helm, gcloud, az, or a server that runs shell commands) is judged as the command it is equivalent to, so a Terraform server's `destroy` gets the same verdict as `terraform destroy`. Other MCP calls are logged and allowed. The list of servers is in [docs/mcp.md](docs/mcp.md).
+**MCP servers.** In Claude Code and Codex, a call to a known infrastructure MCP tool (AWS, HCP Terraform, Kubernetes, Helm, gcloud, az, or a server that runs shell commands) is judged as the command it is equivalent to, so a Terraform server's `destroy` gets the same verdict as `terraform destroy`. Other MCP calls are logged and allowed. The translations were written from each server's source code and have not been tested against the running servers; the list is in [docs/mcp.md](docs/mcp.md).
 
 **No model needed.** applygate's rules are deterministic, work offline and decide every call they recognize. Calls they do not recognize (Pulumi, database clients, PaaS CLIs, inline SDK code, unknown scripts and MCP tools, file writes) are allowed.
 
 **Model judge (optional).** If you want a second look at those calls, turn on `judge:` in the user config and choose a model: any OpenAI-compatible endpoint with your own key, or a program you name. There is no default model.
 - **What it can do:** it can only make a verdict stricter.
-- **Measured options:** Claude Haiku, Gemini, Jev and OpenAI's Decisions API. On an independently written set of 72 such calls that should be stopped, which the rules miss, they caught between 65 and 71.
+- **Measured options:** Claude Haiku, Gemini, Jev and OpenAI's Decisions API. On an independently written set of 72 such calls that should be stopped, which the rules miss, they caught between 65 and 71, with the filter of that time (this release sends more calls to the judge and was not measured again).
 - **Details:** [docs/judge.md](docs/judge.md) compares them, with pros and cons, and says what is sent and what was not measured.
 
 ## Beyond agents
@@ -123,6 +125,21 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 
 Known gaps: [docs/limits.md](docs/limits.md).
 
+## Upgrading to v0.6.0
+
+v0.6.0 fixes the findings of a pre-release security review ([review/v0.6.0](review/v0.6.0)). Several fixes change behaviour:
+
+- **Reinstall the hooks:** run `applygate hook install --agent claude` (and `--agent codex`) with the `--scope` you used. The Claude Code matcher is now `*`, so every tool reaches the hook, and the `seatbelt` compatibility binary is gone: a hook entry that still calls it fails. `applygate doctor` flags both.
+- **Move loosening settings to your user config.** A repository `.applygate.yaml` can now only add protection: `mode: observe`, `strict: false`, a looser `default_tier`, `name_hints` or `on_error`, and `aliases` there are ignored, and `doctor` says so.
+- **One-time approvals are off by default.** Turn them on in the user config (`approvals: true`) if you accept that an agent on the same machine can reach your terminal.
+- **`applygate apply` has no `--yes` and no `--plan-json`.** In CI, gate with `applygate plan-check` or the Action and run the engine yourself.
+- **The plan gate needs a committed `.terraform.lock.hcl`** wherever `.terraform/providers` holds providers. Before running `terraform show` it checks the providers against it, and without one a saved plan in a protected environment is blocked. Terragrunt's own `show` is no longer run.
+- **Stricter verdicts:**
+  - replacing a resource in a saved plan is judged like destroying it;
+  - a file a command writes and then runs, a glob in a program name, and a command whose directory cannot be followed are asked about in protected environments;
+  - an internal error under `on_error: auto` blocks when the repository has a protected environment.
+- **`install.sh` requires cosign** to verify the release signature; `APPLYGATE_VERIFY_SIGNATURE=auto` installs without it.
+
 ## Upgrading to v0.5.0
 
 - **Approvals:** on agents that cannot show you an ask prompt, the block now names an approval ID that you can allow once with `applygate approve ID`. Nothing to reinstall; `approvals: false` turns it off.
@@ -138,7 +155,10 @@ Coming from seatbelt, the project's old name? See [docs/migration.md](docs/migra
 
 ## Privacy
 
-applygate makes no network calls by default. Decisions are logged locally, with secrets redacted. Telemetry is off unless you turn it on. When on, it sends anonymous daily verdict counts and nothing else; `applygate telemetry status --payload` shows the exact report ([docs/telemetry.md](docs/telemetry.md)).
+applygate makes no network calls by default. Decisions are logged locally, with secrets redacted. Three opt-in features do make network calls:
+- **The model judge**, when you turn it on, sends each call it judges (the command or the MCP arguments, up to 4,000 characters of written content, the directory and the environment's tier, with secrets redacted) to the endpoint or program you chose ([docs/judge.md](docs/judge.md)).
+- **Telemetry**, when on, sends anonymous daily verdict counts and nothing else; `applygate telemetry status --payload` shows the exact report ([docs/telemetry.md](docs/telemetry.md)).
+- **`preflight.live_identity` and `preflight.live_state`** ask AWS STS for the account and run `terraform state pull` against your backend.
 
 ## Contributing
 

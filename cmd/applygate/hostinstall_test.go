@@ -238,3 +238,47 @@ func TestInitSkipsDocsOnlyAgents(t *testing.T) {
 		t.Fatalf("init did not install the claude hook: %v", err)
 	}
 }
+
+// hook install changes only the hooks of another tool's settings file: the
+// other keys keep their order and bytes, the file its permissions, and an
+// entry that only mentions applygate is not taken for applygate's own
+// (review finding I5).
+func TestInstallKeepsTheSettingsLayout(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.MkdirAll(".claude", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	orig := "{\n    \"model\": \"opus\",\n    \"permissions\": {\"allow\": [\"Bash(ls:*)\"], \"deny\": []},\n    \"hooks\": {\"PreToolUse\": [{\"matcher\": \"*\", \"hooks\": [{\"type\": \"command\", \"command\": \"audit-log --note 'applygate hook claude'\"}]}]},\n    \"z_last\": 1.50\n}\n"
+	path := filepath.Join(".claude", "settings.json")
+	if err := os.WriteFile(path, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if rc := cmdInstall("install", []string{"--agent", "claude"}, &out, &errb); rc != 0 {
+		t.Fatalf("install rc=%d stderr=%s", rc, errb.String())
+	}
+	b, _ := os.ReadFile(path)
+	s := string(b)
+	for _, want := range []string{"\"permissions\": {\"allow\": [\"Bash(ls:*)\"], \"deny\": []}", "\"z_last\": 1.50", "audit-log --note"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("lost %q:\n%s", want, s)
+		}
+	}
+	if !(strings.Index(s, `"model"`) < strings.Index(s, `"permissions"`) && strings.Index(s, `"permissions"`) < strings.Index(s, `"hooks"`) && strings.Index(s, `"hooks"`) < strings.Index(s, `"z_last"`)) {
+		t.Errorf("key order changed:\n%s", s)
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode %v, want 0600", fi.Mode().Perm())
+	}
+	if !settingsHasApplygate(b) {
+		t.Errorf("applygate entry not written:\n%s", s)
+	}
+	if rc := cmdInstall("remove", []string{"--agent", "claude"}, &out, &errb); rc != 0 {
+		t.Fatalf("remove rc=%d stderr=%s", rc, errb.String())
+	}
+	b, _ = os.ReadFile(path)
+	if !strings.Contains(string(b), "audit-log --note") {
+		t.Errorf("remove took another tool's entry:\n%s", b)
+	}
+}

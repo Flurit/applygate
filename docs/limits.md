@@ -43,6 +43,24 @@ What each host can do with the hook, as verified live, is the generated table in
 - **A hook loaded by another host.** Cursor, Copilot CLI and Devin also run hooks from `.claude/settings.json`. The Claude Code hook then receives their tool names (`Shell`, `exec`); applygate judges those shell calls like that host's own (no ask; a block is exit 2), so a cross-loaded hook does not let a shell command through as an unknown tool. Whether those hosts apply the Claude Code matcher to their own tool names is not documented, so install the host's own hook rather than relying on this.
 - **When applygate fails.** Errors applygate catches (a malformed event, a config error, a panic) follow `on_error`: with `auto`, the default, they block when the most protected tier under the repository root is protected or unknown, and allow otherwise, since a command that was not analyzed could run anywhere under it. A block is exit 2 for Claude Code and Codex; Cline gets a cancel instead, since it ignores exit codes. A decision that misses the internal 25 s deadline (for example a slow `terraform show`) cancels the in-flight work, including the `show` subprocess, and blocks in every tier whatever `on_error` says. Failures it cannot catch (the binary missing or killed, the agent's own hook timeout) are decided by the agent: Claude Code blocks because `applygate hook install` sets `"onFailure": "block"` (Claude Code 2.1.295 or later; older versions fail open); Codex fails open (above); the other hosts are listed in [hosts.md](hosts.md). Observe mode never blocks, including on errors.
 
+## Known gaps
+
+The v0.6.0 pre-release review ([review/v0.6.0](../review/v0.6.0)) left these open, by decision or because they need a live test. The next red-team round keeps this list current.
+
+- **Unknown wrappers around other CLIs.** A program applygate does not know that runs `aws`, `kubectl` or another CLI from its arguments (a team's own runner) is not seen through unless it is listed under `wrappers:`; only standalone `terraform`, `tofu` and `terragrunt` arguments trigger the backstop.
+- **Files written another way.** A file written by interpreter code (`open()` in Python) or by a program the analyzer does not model is read as it is on disk, not as unresolved.
+- **Code in a running REPL.** Input that an MCP shell server types into a running process is judged as a shell command, whatever the process is.
+- **The plan gate's own trust:** the `terraform` binary on the hook's `PATH`, a lock file committed with a replaced provider's hash, and the opt-in `preflight.live_state` pull, which is not provider-checked.
+- **Cursor's allow.** Under `failClosed`, applygate must print a permission for every call, so a call it does not judge gets `{"permission":"allow"}`. Whether that skips Cursor's own approval prompt is not documented and has not been tested live.
+- **Untested Claude Code paths:**
+  - the `*` matcher with `Monitor` and `PowerShell` calls, which is tested only with replayed events;
+  - the prompt in `acceptEdits`, `plan` and `auto` modes, where an ask is enforced as a block until tested.
+- **Hosts other than Claude Code and Codex** have not been run inside the host ([hosts.md](hosts.md)).
+- **The model judge's accuracy** was measured before this release's filter changes and has not been measured again.
+- **Strict shapes** (allowing only plain lists and pipelines of known programs in protected tiers) was measured and not shipped: it would ask on 16% to 30% of real agent calls there ([review/v0.6.0/2026-11-03-strict-shapes.md](../review/v0.6.0/2026-11-03-strict-shapes.md)).
+- **One-time approvals** have no operating-system presence check, which is why they are off by default.
+- **Homebrew** (`Flurit/tap`) checks the archive's sha256 only, not the cosign signature; `install.sh` and the GitHub Action verify the signature ([install.md](install.md#verify-a-download)).
+
 ## Not in v1
 
-Backup isolation checks, plan-hash approval, CI mode, receipts, and GCP/Azure/Kubernetes/Pulumi rules. The only network calls are the optional STS identity check (`preflight.live_identity`), the optional state pull for lineage comparison (`preflight.live_state`), and, after a person runs `applygate telemetry on`, one anonymous usage report a day ([telemetry.md](telemetry.md)); only the user config or the person at the terminal can enable any of them.
+Backup isolation checks, plan-hash approval, CI mode, receipts, and GCP/Azure/Kubernetes/Pulumi rules. The only network calls are the optional model judge, which sends each call it judges (redacted) to the endpoint or program the user chose ([judge.md](judge.md)); the optional STS identity check (`preflight.live_identity`); the optional state pull for lineage comparison (`preflight.live_state`); and, after a person runs `applygate telemetry on`, one anonymous usage report a day ([telemetry.md](telemetry.md)). Only the user config or the person at the terminal can enable any of them.

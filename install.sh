@@ -12,9 +12,9 @@
 #                         /usr/local/bin when it is writable and $HOME/.local/bin
 #                         is not on PATH)
 #   APPLYGATE_VERIFY_SIGNATURE
-#                         auto (default): verify the cosign signature on
-#                         checksums.txt when cosign is installed, warn when it
-#                         is not; require: refuse to install without cosign
+#                         require (default): refuse to install without cosign;
+#                         auto: verify the signature when cosign is installed
+#                         and install without it otherwise, with a warning
 #
 # What is verified:
 #   1. checksums.txt is signed keylessly with cosign by this repository's
@@ -24,7 +24,8 @@
 #      This is what protects against a tampered release: a sha256 alone does
 #      not, because checksums.txt comes from the same place as the archive.
 #   2. The archive's sha256 must match checksums.txt.
-# Without cosign only step 2 runs, which catches corruption, not tampering.
+# Without cosign only step 2 could run, which catches corruption, not
+# tampering, so cosign is required unless APPLYGATE_VERIFY_SIGNATURE=auto.
 #
 # Works with curl or wget, POSIX sh only (no bash required).
 set -eu
@@ -90,22 +91,13 @@ resolve_latest() {
     printf '%s\n' "$v"
 }
 
-# The project was renamed from seatbelt on 2026-10-29; the SEATBELT_* names
-# are honoured for one release.
-for v in VERSION INSTALL_DIR VERIFY_SIGNATURE; do
-    eval "new=\${APPLYGATE_$v:-}"; eval "old=\${SEATBELT_$v:-}"
-    if [ -z "$new" ] && [ -n "$old" ]; then
-        log "SEATBELT_$v is deprecated; use APPLYGATE_$v"
-        eval "APPLYGATE_$v=\$old"
-    fi
-done
-verify_mode=${APPLYGATE_VERIFY_SIGNATURE:-auto}
+verify_mode=${APPLYGATE_VERIFY_SIGNATURE:-require}
 case "$verify_mode" in
     auto | require) ;;
     *) die "APPLYGATE_VERIFY_SIGNATURE must be auto or require, not '${verify_mode}'" ;;
 esac
 if [ "$verify_mode" = require ] && ! need cosign; then
-    die "cosign is not installed and APPLYGATE_VERIFY_SIGNATURE=require (https://docs.sigstore.dev/cosign/system_config/installation/)"
+    die "cosign is not installed, so the release signature cannot be verified (https://docs.sigstore.dev/cosign/system_config/installation/); install it, or set APPLYGATE_VERIFY_SIGNATURE=auto to install with the sha256 check only"
 fi
 
 if [ -n "${APPLYGATE_VERSION:-}" ]; then
@@ -148,12 +140,9 @@ if need cosign; then
         sed 's/^/  cosign: /' "${tmp}/cosign.err" >&2
         die "signature verification of checksums.txt failed; refusing to install"
     fi
-elif [ "$verify_mode" = require ]; then
-    die "cosign is not installed and APPLYGATE_VERIFY_SIGNATURE=require (https://docs.sigstore.dev/cosign/system_config/installation/)"
 else
-    log "WARNING: cosign is not installed, so the release signature is NOT verified."
+    log "WARNING: cosign is not installed and APPLYGATE_VERIFY_SIGNATURE=auto, so the release signature is NOT verified."
     log "  The sha256 check below catches a corrupted download, not a tampered release."
-    log "  Install cosign and rerun, or set APPLYGATE_VERIFY_SIGNATURE=require to make this an error."
 fi
 
 # --- verify sha256 -----------------------------------------------------------
@@ -176,8 +165,6 @@ log "sha256 verified"
 
 # --- extract only the binary -------------------------------------------------
 tar -xzf "${tmp}/${archive}" -C "$tmp" applygate || die "could not extract applygate from ${archive}"
-# The archive also carries the "seatbelt" compatibility shim for one release.
-tar -xzf "${tmp}/${archive}" -C "$tmp" seatbelt 2>/dev/null || true
 [ -f "${tmp}/applygate" ] || die "archive did not contain a applygate binary"
 chmod 755 "${tmp}/applygate"
 
@@ -203,11 +190,9 @@ mkdir -p "$dir" || die "cannot create ${dir}"
 
 if need install; then
     install -m 755 "${tmp}/applygate" "${dir}/applygate"
-    [ -f "${tmp}/seatbelt" ] && install -m 755 "${tmp}/seatbelt" "${dir}/seatbelt"
 else
     mv -f "${tmp}/applygate" "${dir}/applygate"
     chmod 755 "${dir}/applygate"
-    if [ -f "${tmp}/seatbelt" ]; then mv -f "${tmp}/seatbelt" "${dir}/seatbelt"; chmod 755 "${dir}/seatbelt"; fi
 fi
 
 # --- report ------------------------------------------------------------------
