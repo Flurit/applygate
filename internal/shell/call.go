@@ -17,6 +17,10 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true
 // base is the program name a command word runs, as lookups compare it.
 func base(name string) string { return ProgName(name) }
 
+// shellBuiltins act only inside the shell; their names are case-sensitive.
+var shellBuiltins = toSet("cd", "pushd", "popd", "dirs", "alias", "unalias", "eval", "source", ".", "trap", "read", "mapfile",
+	"readarray", "getopts", "shift", "set", "declare", "typeset", "local", "export", "readonly", "nameref", "builtin")
+
 // ProgName returns the program name a command word runs, as every engine,
 // wrapper and interpreter lookup compares it: the base name in lower case,
 // without a Windows .exe suffix. macOS and Windows file systems ignore case,
@@ -84,6 +88,14 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 	}
 
 	a.noteWrites(bn, rest, cmdSt)
+
+	if name != bn && shellBuiltins[bn] && !strings.Contains(name, "/") {
+		// Builtins are matched exactly: CD or Source is a program lookup,
+		// which on a case-insensitive disk finds at most a no-op script.
+		record()
+		a.backstop(bn, rest, redirs, cmdSt, st, via, depth)
+		return
+	}
 
 	switch bn {
 	case "popd":

@@ -135,3 +135,15 @@ func TestReviewCBenignStaysResolved(t *testing.T) {
 		t.Errorf("ln then cd: %q", got)
 	}
 }
+
+// Builtins are not case-folded: CD does not change the shell's directory.
+func TestReviewCBuiltinsKeepCase(t *testing.T) {
+	r := analyzeIn("CD ../dev && terraform destroy", nil)
+	if got := ran(r); len(got) == 0 || !strings.HasSuffix(got[len(got)-1], "@/r/envs/prod") {
+		t.Errorf("CD then destroy: %q", got)
+	}
+	r = analyzeIn("Source Type: CSW", nil)
+	if len(r.Problems) != 0 {
+		t.Errorf("Source is not the source builtin: %+v", r.Problems)
+	}
+}
