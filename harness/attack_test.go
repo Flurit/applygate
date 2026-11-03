@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/Flurit/applygate/internal/config"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -28,6 +29,8 @@ type AttackScenario struct {
 }
 
 func TestAttackPack(t *testing.T) {
+	config.TrustAll = false
+	defer func() { config.TrustAll = true }()
 	b, err := os.ReadFile("pack_attack/scenarios.json")
 	if err != nil {
 		t.Fatal(err)
@@ -113,6 +116,17 @@ func runAttack(t *testing.T, s AttackScenario, format, self string) (string, str
 		t.Fatal(err)
 	}
 	sub := strings.NewReplacer("{repo}", repo, "{home}", home, "{self}", self).Replace
+	// The person trusted the fixture's own configs; a config a scenario
+	// plants or rewrites is not trusted.
+	original := map[string][]byte{}
+	filepath.WalkDir(repo, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && (d.Name() == ".applygate.yaml" || d.Name() == ".seatbelt.yaml") {
+			if b, err := os.ReadFile(p); err == nil {
+				original[p] = b
+			}
+		}
+		return nil
+	})
 	place := func(p string) string {
 		p = sub(p)
 		if !filepath.IsAbs(p) {
@@ -148,6 +162,10 @@ func runAttack(t *testing.T, s AttackScenario, format, self string) (string, str
 		if strings.HasPrefix(k, "XDG_") || k == "CLAUDE_CONFIG_DIR" || k == "CODEX_HOME" || k == "COPILOT_HOME" {
 			t.Setenv(k, v)
 		}
+	}
+	// The trust store follows the environment just set.
+	if err := config.TrustContent(original); err != nil {
+		t.Fatal(err)
 	}
 	in := map[string]any{}
 	for k, v := range s.ToolInput {

@@ -46,6 +46,8 @@ Usage:
   applygate apply [--cwd DIR] [--engine terraform|tofu] <planfile> [args]
                                       judge a saved plan as the hooks would, confirm an ask by typing the
                                       environment name, then run the engine's apply (the human door)
+  applygate trust [--cwd DIR]          review and trust this repository's .applygate.yaml; a config nobody
+                                      trusted, or one changed since, is not read and every directory is protected
   applygate approve [ID]               allow one call an agent was stopped on because it could not ask you;
                                       without ID, list the pending requests (a person at a terminal only)
   applygate report [--log FILE]        summarize the decision log
@@ -89,6 +91,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdApply(args[1:], os.Stdin, os.Stdout, os.Stderr)
 	case "approve":
 		return cmdApprove(args[1:], stdin, stdout, stderr)
+	case "trust":
+		return cmdTrust(args[1:], stdin, stdout, stderr)
 	case "report":
 		return cmdReport(args[1:], stdout, stderr)
 	case "suggest":
@@ -490,7 +494,14 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "wrote %s. Edit the environments to match this repository.\n", config.FileName)
+	// The person running init wrote this config; trust it. After an edit,
+	// applygate trust approves the new content.
+	if abs, err := filepath.Abs(config.FileName); err == nil {
+		if err := config.Trust([]string{abs}); err != nil {
+			fmt.Fprintln(stderr, "applygate: could not trust the new config:", err)
+		}
+	}
+	fmt.Fprintf(stdout, "wrote %s. Edit the environments to match this repository, then run applygate trust: an edited config is not read until you trust it.\n", config.FileName)
 	// The trial runs in observe mode, which only the user config can set:
 	// start one if there is none, otherwise say how.
 	if up := config.UserPath(); fileMissing(up) {
@@ -878,6 +889,9 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "     ", err)
 	} else {
 		say(cfg.Root != "", "repository config found (%s)", orNone(cfg.Root))
+		for _, u := range cfg.Untrusted {
+			say(false, "%s is not trusted, so it is not read and every directory is protected; review it and run: applygate trust", u)
+		}
 		for _, d := range cfg.Deprecations {
 			say(false, "%s", d)
 		}

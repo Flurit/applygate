@@ -52,12 +52,22 @@ func Trusted(path string, b []byte) bool {
 
 // Trust records the current content of each repository config as approved.
 func Trust(paths []string) error {
-	m := loadTrust()
+	content := map[string][]byte{}
 	for _, p := range paths {
 		b, err := safefile.ReadFile(p)
 		if err != nil {
 			return err
 		}
+		content[p] = b
+	}
+	return TrustContent(content)
+}
+
+// TrustContent records the given content of each repository config as
+// approved, whatever is on disk now.
+func TrustContent(content map[string][]byte) error {
+	m := loadTrust()
+	for p, b := range content {
 		m[guard.Canonical(p)] = sum(b)
 	}
 	keys := make([]string, 0, len(m))

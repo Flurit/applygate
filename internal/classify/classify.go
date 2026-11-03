@@ -2,11 +2,15 @@
 package classify
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/Flurit/applygate/internal/guard"
 	"github.com/Flurit/applygate/internal/shell"
@@ -242,6 +246,11 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		}
 	}
 
+	if why := packageTamper(name, args); why != "" {
+		a := base
+		a.Class, a.Engine, a.Why = Tampering, "applygate", why
+		return append(out, a)
+	}
 	// Default-deny near guard files: a program that names one, or (when it
 	// writes, removes or extracts) a directory that holds one, is
 	// tampering unless it only reads. This does not depend on knowing how
@@ -284,6 +293,12 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 			out = append(out, a)
 		}
 		return out
+	case "npx", "bunx", "pnpx":
+		if agent, rest, ok := packageAgent(name, args); ok {
+			if a, ok := agentFlags(base, agent, rest); ok {
+				return append(out, a)
+			}
+		}
 	case "claude", "codex", "cursor-agent", "copilot", "gemini", "opencode":
 		if a, ok := agentFlags(base, name, args); ok {
 			out = append(out, a)
@@ -311,6 +326,11 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 			}
 		}
 	case "just", "task", "npm", "yarn", "pnpm", "bun", "mage", "invoke", "nx":
+		if agent, rest, ok := packageAgent(name, args); ok {
+			if a, ok := agentFlags(base, agent, rest); ok {
+				return append(out, a)
+			}
+		}
 		if t := destructiveTarget(args); t != "" {
 			a := base
 			a.Class, a.Why = UnknownWrapper, "wrapper target "+t+" looks destructive and its body is not analyzed"
@@ -824,8 +844,17 @@ func selfTamper(args []shell.Word, loose bool) string {
 		if len(pos) >= 2 && (pos[1] == "on" || pos[1] == "off") {
 			return "changes applygate's telemetry setting, which only a person may do"
 		}
+	case "trust":
+		if loose || len(pos) == 1 || has("--cwd") {
+			return "trusts a repository config, which only a person who reviewed it may do"
+		}
+	case "install":
+		if loose || has("--managed") {
+			return "changes applygate's own installation"
+		}
 	case "init", "disable":
-		if loose {
+		// --no-hooks and --scope are applygate's own flags.
+		if loose || has("--no-hooks") || has("--scope") {
 			return "changes applygate's own installation"
 		}
 	}
@@ -838,7 +867,7 @@ var hexID = regexp.MustCompile(`^[0-9a-f]{8}$`)
 // it, compared as files so a hard link or a copy's original counts.
 func isSelf(p string) bool {
 	st, err := os.Stat(p)
-	if err != nil {
+	if err != nil || !st.Mode().IsRegular() {
 		return false
 	}
 	for _, e := range guard.Executable() {
@@ -846,7 +875,46 @@ func isSelf(p string) bool {
 			return true
 		}
 	}
-	return false
+	// A copy under another name: the same size and the same content as the
+	// running binary.
+	self := selfDigest()
+	return self.size > 0 && st.Size() == self.size && fileDigest(p) == self.sum
+}
+
+var selfOnce struct {
+	once sync.Once
+	size int64
+	sum  string
+}
+
+func selfDigest() *struct {
+	once sync.Once
+	size int64
+	sum  string
+} {
+	selfOnce.once.Do(func() {
+		exe, err := os.Executable()
+		if err != nil {
+			return
+		}
+		if fi, err := os.Stat(exe); err == nil {
+			selfOnce.size, selfOnce.sum = fi.Size(), fileDigest(exe)
+		}
+	})
+	return &selfOnce
+}
+
+func fileDigest(p string) string {
+	f, err := os.Open(p)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, io.LimitReader(f, 256<<20)); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // knownProgram reports whether name is a common program whose own
@@ -968,6 +1036,49 @@ func namesGuard(name string, args []shell.Word, dir string, opt Options) string 
 		if changes && (strings.HasSuffix(ft, "/applygate") || strings.HasSuffix(ft, "/seatbelt")) {
 			return t
 		}
+	}
+	return ""
+}
+
+// packageTamper reports a package manager that removes, replaces or
+// downgrades applygate itself: brew uninstall applygate, go install
+// …/cmd/applygate@v0.1.0, pip uninstall applygate. A hook whose binary is
+// gone fails open on several hosts.
+func packageTamper(name string, args []shell.Word) string {
+	mutating := map[string]bool{"uninstall": true, "remove": true, "rm": true, "erase": true, "purge": true, "upgrade": true,
+		"reinstall": true, "install": true, "unlink": true, "link": true, "switch": true, "pin": true, "clean": true, "cleanup": true,
+		"autoremove": true, "update": true, "add": true, "i": true, "un": true, "r": true}
+	switch name {
+	case "brew", "go", "pip", "pip3", "pipx", "npm", "pnpm", "yarn", "cargo", "gem", "port", "apt", "apt-get", "dnf", "yum",
+		"pacman", "apk", "nix-env", "nix", "uv", "mise", "asdf", "scoop", "choco", "winget", "snap", "launchctl":
+	default:
+		return ""
+	}
+	if name == "launchctl" {
+		for _, w := range args {
+			if w.Text == "setenv" || w.Text == "putenv" || w.Text == "unsetenv" {
+				return "launchctl " + w.Text + " changes the environment every later session, and its hook, starts with"
+			}
+		}
+		return ""
+	}
+	sub := ""
+	named := false
+	for _, w := range args {
+		t := strings.ToLower(w.Text)
+		if !w.Resolved {
+			t = strings.ToLower(w.Prefix)
+		}
+		if sub == "" && !strings.HasPrefix(t, "-") {
+			sub = t
+			continue
+		}
+		if strings.Contains(t, "applygate") || strings.Contains(t, "seatbelt") {
+			named = true
+		}
+	}
+	if named && mutating[sub] {
+		return name + " " + sub + " changes the applygate binary the hook runs, which only a person may do"
 	}
 	return ""
 }

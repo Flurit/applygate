@@ -783,7 +783,36 @@ func (c *Config) GuardTargets(home string) []string {
 			out = append(out, lit)
 		}
 	}
+	out = append(out, launchTargets(home)...)
 	return append(out, guard.Executable()...)
+}
+
+// launchTargets are the places that decide which applygate binary runs and
+// with which environment: an applygate or seatbelt in any PATH directory or
+// the usual user bin directories (a plant there runs instead of the real
+// hook), and the shell start-up files (an export there, such as
+// APPLYGATE_BIN or XDG_CONFIG_HOME, reaches the next session's hook).
+func launchTargets(home string) []string {
+	dirs := filepath.SplitList(os.Getenv("PATH"))
+	if home != "" {
+		dirs = append(dirs, filepath.Join(home, ".local", "bin"), filepath.Join(home, "bin"), filepath.Join(home, "go", "bin"),
+			filepath.Join(home, ".cargo", "bin"))
+	}
+	dirs = append(dirs, "/usr/local/bin", "/opt/homebrew/bin")
+	var out []string
+	for _, d := range dirs {
+		if d == "" || !filepath.IsAbs(d) {
+			continue
+		}
+		out = append(out, filepath.Join(d, "applygate"), filepath.Join(d, "seatbelt"))
+	}
+	if home != "" {
+		for _, rc := range []string{".zshrc", ".zshenv", ".zprofile", ".zlogin", ".bashrc", ".bash_profile", ".bash_login", ".profile",
+			".config/fish/config.fish", ".config/fish/conf.d", ".config/environment.d", ".pam_environment", "Library/LaunchAgents"} {
+			out = append(out, filepath.Join(home, rc))
+		}
+	}
+	return out
 }
 
 // literalPrefix is the part of a guard pattern before its first segment with
