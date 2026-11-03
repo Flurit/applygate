@@ -56,7 +56,10 @@ func TestHugeCommandIsCut(t *testing.T) {
 	e := Entry{Command: "terraform destroy -auto-approve; : " + strings.Repeat("mysql -pxyz ", 600000)}
 	start := time.Now()
 	redactEntry(&e)
-	if len(e.Command) > 2*maxField || time.Since(start) > 2*time.Second {
+	// The time bound is loose: CI runs with the race detector, which makes
+	// the regular expressions many times slower. Without the cut this input
+	// takes minutes.
+	if len(e.Command) > 2*maxField || time.Since(start) > 20*time.Second {
 		t.Fatalf("command %d bytes, %s", len(e.Command), time.Since(start))
 	}
 }
