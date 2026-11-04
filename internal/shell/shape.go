@@ -68,6 +68,13 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 					}
 				}
 			}
+			// read, mapfile, readarray and getopts assign the names they
+			// are given text read at run time: an upper-case name (one a
+			// program may read, PATH and HOME included) or a zsh special
+			// array is not plain, as NAME=$(...) is not.
+			if why == "" {
+				why = runtimeAssign(x.Args)
+			}
 			// env NAME=value: the same rule as an assignment.
 			if len(x.Args) > 0 {
 				if n, ok := litWord(x.Args[0]); ok && ProgName(n) == "env" {
@@ -334,4 +341,41 @@ func DefinesState(cmd string) string {
 		return why == ""
 	})
 	return why
+}
+
+// runtimeAssign reports a read, mapfile, readarray or getopts call (also
+// through builtin or command) that assigns a variable a program could read.
+func runtimeAssign(args []*syntax.Word) string {
+	var ws []Word
+	for _, a := range args {
+		t, ok := litWord(a)
+		ws = append(ws, Word{Text: t, Resolved: ok, Prefix: t})
+	}
+	for len(ws) > 0 && ws[0].Resolved && (ws[0].Text == "builtin" || ws[0].Text == "command") {
+		ws = ws[1:]
+	}
+	if len(ws) == 0 || !ws[0].Resolved {
+		return ""
+	}
+	bn := ws[0].Text
+	switch bn {
+	case "read", "mapfile", "readarray", "getopts":
+	default:
+		return ""
+	}
+	for _, w := range ws[1:] {
+		if !w.Resolved {
+			return "a " + bn + " whose words cannot be resolved"
+		}
+	}
+	for _, n := range assignedBy(bn, ws[1:]) {
+		switch n {
+		case "REPLY", "MAPFILE", "OPTARG", "OPTIND":
+			continue
+		}
+		if n == strings.ToUpper(n) || zshSpecial(n) {
+			return "the variable " + n + " set by " + bn + " to text read at run time"
+		}
+	}
+	return ""
 }

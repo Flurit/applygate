@@ -187,8 +187,18 @@ func terraformArgs(a *Action, args []shell.Word) {
 			}
 		}
 	}
+	defer func() {
+		// destroy, state surgery and the other calls that do not go
+		// through set: unresolved arguments may retarget them too.
+		if unresolved && a.TargetUnknown == "" && a.Class != ReadOnly && a.Class != Dynamic {
+			a.TargetUnknown = a.Engine + " " + sub + " has arguments that cannot be resolved statically, which may name another state, plan or directory"
+		}
+	}()
 	set := func(c Class, why string) {
 		a.Class, a.Why = c, why
+		if unresolved && c != ReadOnly {
+			a.TargetUnknown = a.Engine + " " + sub + " has arguments that cannot be resolved statically, which may name another state, plan or directory"
+		}
 		if unresolved && severityRank(c) < severityRank(Destroy) {
 			a.Class, a.Why = Dynamic, a.Engine+" "+sub+" has arguments that cannot be resolved statically"
 		}
@@ -216,6 +226,8 @@ func terraformArgs(a *Action, args []shell.Word) {
 		}
 		if resolved {
 			a.BackendConfig = backendCfg
+		} else {
+			a.BackendConfigUnknown = true
 		}
 		switch {
 		case flagOn(flags, "migrate-state") || flagOn(flags, "force-copy"):

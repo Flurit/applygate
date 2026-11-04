@@ -435,11 +435,18 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 	d := Decision{Verdict: Allow, Mode: cfg.Mode, Notes: notes}
 	selected := map[string]string{}            // dir -> workspace selected earlier in this command
 	backendCfg := map[string]classify.Action{} // dir -> an earlier init in this command with -backend-config
+	unknownBackend := map[string]bool{}        // dir -> an earlier init whose -backend-config cannot be resolved
 	for _, a := range actions {
 		if len(a.BackendConfig) > 0 {
 			backendCfg[a.Dir] = a
+			delete(unknownBackend, a.Dir)
+		} else if a.BackendConfigUnknown {
+			unknownBackend[a.Dir] = true
+			delete(backendCfg, a.Dir)
 		} else if init, ok := backendCfg[a.Dir]; ok && isTerraform(a.Engine) {
 			a.BackendConfig, a.BackendConfigWritten = init.BackendConfig, init.BackendConfigWritten
+		} else if unknownBackend[a.Dir] && isTerraform(a.Engine) {
+			a.BackendConfigUnknown = true
 		}
 		if ws, ok := selected[a.Dir]; ok && ws == classify.UnknownWorkspace && a.Env["TF_WORKSPACE"] == "" {
 			a.WorkspaceUnknown = true
@@ -508,6 +515,7 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	for k, v := range a.TargetEnv {
 		env[k] = v
 	}
+	absEnvPaths(env, a.Dir)
 	tf := a.Engine == "terraform" || a.Engine == "tofu" || a.Engine == "terragrunt"
 	// The directory is known when the host reported it or the command
 	// itself moved there (cd, pushd, -chdir); a.Dir then differs from the
@@ -584,6 +592,9 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		}
 		if a.StateUnknown {
 			sig.BackendUnknown = "a -state path cannot be resolved statically"
+		}
+		if a.BackendConfigUnknown && a.Sub != "init" {
+			sig.BackendUnknown = "an earlier init in this command has a -backend-config that cannot be resolved statically"
 		}
 		if a.Engine == "terragrunt" {
 			terragruntSignals(&sig, a, be)
@@ -669,6 +680,10 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		// workspace and backend it records are unknown.
 		r.Tier, r.Env = config.Protected, "unknown"
 		r.Matched = append(r.Matched, "TF_DATA_DIR cannot be resolved statically, so the workspace and backend it selects are unknown; judged as protected")
+	}
+	if why := unknownSignal(a); why != "" && r.Tier.Rank() < config.Protected.Rank() {
+		r.Tier, r.Env = config.Protected, "unknown"
+		r.Matched = append(r.Matched, why+"; judged as protected")
 	}
 	if a.DataDirWritten && r.Tier.Rank() < config.Protected.Rank() {
 		// The workspace and backend this directory records are rewritten by
@@ -1281,4 +1296,47 @@ func subtreeResolve(cfg *config.Config, dir string, sig config.Signals, env map[
 		return cfg.ResolveUnder(dir, sig, "terragrunt runs every unit under "+dir+", and they could not all be listed")
 	}
 	return best
+}
+
+// unknownSignal says why the target of a cloud or Terraform action cannot
+// be told ("" when it can).
+func unknownSignal(a classify.Action) string {
+	if a.Engine == "" {
+		return ""
+	}
+	if a.TargetUnknown != "" {
+		return a.TargetUnknown
+	}
+	for _, k := range shell.TierEnv {
+		if v, set := a.Env[k]; set && v == "" {
+			return k + " is set to a value that cannot be resolved statically, so what it selects is unknown"
+		}
+	}
+	for k, v := range a.Env {
+		if strings.HasPrefix(k, "TF_CLI_ARGS_") && v == "" && a.Engine != "" {
+			return k + " is set to a value that cannot be resolved statically"
+		}
+	}
+	return ""
+}
+
+// absEnvPaths makes the relative config paths in env absolute against the
+// command's directory, where the program resolves them.
+func absEnvPaths(env map[string]string, dir string) {
+	if dir == "" {
+		return
+	}
+	for _, k := range []string{"KUBECONFIG", "CLOUDSDK_CONFIG", "AZURE_CONFIG_DIR", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE"} {
+		v := env[k]
+		if v == "" {
+			continue
+		}
+		parts := filepath.SplitList(v)
+		for i, p := range parts {
+			if p != "" && !filepath.IsAbs(p) && !strings.HasPrefix(p, "~") {
+				parts[i] = shell.PhysicalJoin(dir, p)
+			}
+		}
+		env[k] = strings.Join(parts, string(filepath.ListSeparator))
+	}
 }

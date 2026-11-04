@@ -96,8 +96,13 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 	if ok {
 		if cmd, profile, ok := configWrapper(spec, rest); ok {
 			ws := cmdSt.clone()
-			if profile.Resolved && profile.Text != "" {
+			switch {
+			case profile.Resolved && profile.Text != "":
 				ws.vars["AWS_PROFILE"] = value{text: profile.Text, ok: true}
+				ws.exported["AWS_PROFILE"] = true
+			case profile.Text != "":
+				// A profile that cannot be resolved is unknown, not absent.
+				ws.vars["AWS_PROFILE"] = value{}
 				ws.exported["AWS_PROFILE"] = true
 			}
 			a.call(cmd, redirs, ws, st, append(via, bn+" (configured wrapper)"), depth+1, in)
@@ -422,9 +427,24 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			// The wrapped command runs with the wrapper's credentials; the
 			// profile or role it names is a tier signal like AWS_PROFILE.
 			ws := cmdSt.clone()
-			if profile.Resolved && profile.Text != "" {
+			switch {
+			case profile.Resolved && profile.Text != "":
 				ws.vars["AWS_PROFILE"] = value{text: profile.Text, ok: true}
 				ws.exported["AWS_PROFILE"] = true
+			case profile.Text != "":
+				// A profile that cannot be resolved is unknown, not absent.
+				ws.vars["AWS_PROFILE"] = value{}
+				ws.exported["AWS_PROFILE"] = true
+			}
+			if secretsRunners[bn] {
+				// A secrets runner sets variables from a store the hook
+				// cannot read, any of the tier signals among them.
+				for _, k := range TierEnv {
+					if _, set := ws.vars[k]; !set {
+						ws.vars[k] = value{}
+						ws.exported[k] = true
+					}
+				}
 			}
 			if script != nil {
 				if !script.Resolved {
@@ -1706,16 +1726,16 @@ func credentialWrapper(bn string, rest []Word) (cmd []Word, script *Word, profil
 		case strings.HasPrefix(t, "-"):
 			if profileFlags[name] {
 				if eq {
-					profile = Word{Text: val, Resolved: w.Resolved, Prefix: val}
+					profile = presentWord(Word{Text: val, Resolved: w.Resolved, Prefix: val})
 				} else if i+1 < len(rest) {
-					profile = rest[i+1]
+					profile = presentWord(rest[i+1])
 				}
 			}
 			if !eq && valued[name] {
 				i++
 			}
 		case positionalProfile:
-			profile = w
+			profile = presentWord(w)
 			positionalProfile = false
 		default:
 			return rest[i:], nil, profile, true
@@ -2210,4 +2230,25 @@ func multiplexerCommand(bn string, rest []Word) (cmd []Word, dir *Word, ok bool)
 		}
 	}
 	return nil, nil, false
+}
+
+// TierEnv are the environment variables that select what a cloud or
+// Terraform call acts on. One that is exported with a value that cannot
+// be resolved (empty in the action's environment) makes the target
+// unknown, not absent.
+var TierEnv = []string{"TF_WORKSPACE", "TF_CLI_ARGS", "AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_CONFIG_FILE",
+	"AWS_SHARED_CREDENTIALS_FILE", "AWS_ROLE_ARN", "KUBECONFIG", "HELM_KUBECONTEXT", "CLOUDSDK_CONFIG", "CLOUDSDK_CORE_PROJECT",
+	"CLOUDSDK_ACTIVE_CONFIG_NAME", "AZURE_CONFIG_DIR", "AZURE_SUBSCRIPTION_ID", "ARM_SUBSCRIPTION_ID", "GOOGLE_PROJECT",
+	"GOOGLE_CLOUD_PROJECT", "TG_WORKING_DIR", "TERRAGRUNT_WORKING_DIR"}
+
+// secretsRunners set variables from a secrets store.
+var secretsRunners = toSet("doppler", "op", "chamber", "infisical", "dotenvx")
+
+// presentWord marks a word that is there but resolves to nothing, so that
+// it is not taken for an absent one.
+func presentWord(w Word) Word {
+	if !w.Resolved && w.Text == "" {
+		w.Text = "\x00"
+	}
+	return w
 }

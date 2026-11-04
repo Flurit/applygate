@@ -100,6 +100,15 @@ type Action struct {
 	// name (absolute); StateUnknown is set when one cannot be resolved.
 	StateFiles   []string
 	StateUnknown bool
+	// TargetUnknown says why the state, plan or directory a changing call
+	// acts on cannot be told: arguments that cannot be resolved may name
+	// another one (-state, -chdir, a planfile, TF_CLI_ARGS). The target is
+	// then judged as protected.
+	TargetUnknown string `json:"-"`
+	// BackendConfigUnknown is set on an init whose -backend-config cannot
+	// be resolved, and on the later calls in its directory, whose backend
+	// is then unknown.
+	BackendConfigUnknown bool `json:"-"`
 	// Source is the terragrunt --source (or TG_SOURCE) as given;
 	// SourceUnknown is set when it cannot be resolved.
 	Source        string
