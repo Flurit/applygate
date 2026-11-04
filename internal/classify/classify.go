@@ -328,6 +328,12 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 			continue
 		}
 		if !r.Target.Resolved {
+			if opt.Guard != nil && r.Target.Prefix != "" && opt.Guard.GlobTouches(absPath(inv.Dir, r.Target.Prefix+"*", opt.Home)) {
+				a := base
+				a.Class, a.Engine, a.Why = Tampering, "file", "redirect writes to "+r.Target.Prefix+"…, which may be a guard file"
+				out = append(out, a)
+				continue
+			}
 			if p := namesGuard("tee", []shell.Word{r.Target}, inv.Dir, opt); p != "" {
 				a := base
 				a.Class, a.Engine, a.Why = Tampering, "file", "redirect writes to "+p+", which may be a guard file"
@@ -1038,6 +1044,41 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 				}
 			}
 		}
+	case name == "sort":
+		if o, ok := flagValue('o', "--output"); ok {
+			out = append(out, abs(o))
+		}
+	case name == "base64" || name == "openssl" || name == "gpg" || name == "age":
+		if o, ok := flagValue('o', "--output"); ok {
+			out = append(out, abs(o))
+		}
+	case name == "xxd" || name == "uniq":
+		// xxd -r IN OUT and uniq IN OUT write the second operand.
+		if ps := paths(args); len(ps) >= 2 {
+			out = append(out, abs(ps[1]))
+		}
+	case name == "yq" || name == "gsed":
+		if has("-i", "--inplace", "--in-place") {
+			for _, p := range paths(args) {
+				out = append(out, abs(p))
+			}
+		}
+	case name == "gzip" || name == "gunzip" || name == "bzip2" || name == "xz" || name == "zstd" || name == "compress":
+		// In place unless -c writes to stdout: the file is replaced.
+		if !has("-c", "--stdout", "--to-stdout") {
+			for _, p := range paths(args) {
+				out = append(out, abs(p))
+			}
+		}
+	case name == "zip":
+		if ps := paths(args); len(ps) > 0 {
+			out = append(out, abs(ps[0]))
+			if has("-m", "--move") {
+				for _, p := range ps[1:] {
+					out = append(out, abs(p))
+				}
+			}
+		}
 	case name == "find":
 		if has("-delete") || execRemoves(args) {
 			for _, w := range args {
@@ -1156,10 +1197,12 @@ func gitTargets(args []shell.Word, dir, home string) []string {
 				out = append(out, abs(w.Text))
 			}
 		}
+	case "clean", "checkout-index", "read-tree", "merge", "pull", "rebase", "cherry-pick", "revert", "switch":
+		out = append(out, abs("."))
 	case "apply", "am":
 		out = append(out, abs("."))
 	case "stash":
-		if len(rest) > 0 && (rest[0].Text == "pop" || rest[0].Text == "apply") {
+		if len(rest) == 0 || rest[0].Text == "pop" || rest[0].Text == "apply" || rest[0].Text == "push" || rest[0].Text == "save" || strings.HasPrefix(rest[0].Text, "-") {
 			out = append(out, abs("."))
 		}
 	}
@@ -1661,6 +1704,34 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 				targets = append(targets, p)
 			}
 		}
+	default:
+		// Any other program that writes or removes what writeTargets
+		// knows: a state file it names, or a directory it extracts into,
+		// cleans or rewrites that holds one.
+		for _, t := range writeTargets(name, args, dir, opt.Home) {
+			if isStateFile(t) {
+				targets = append(targets, t)
+			} else if sf := stateIn(t); sf != "" {
+				targets = append(targets, sf)
+			}
+		}
+		if len(targets) > 0 {
+			var out []Action
+			seen := map[string]bool{}
+			for _, t := range targets {
+				d := filepath.Dir(t)
+				if seen[d] {
+					continue
+				}
+				seen[d] = true
+				a := base
+				a.Dir, a.AnyDir = d, false
+				a.Class, a.Engine, a.TouchesState = StateSurgery, "file", true
+				a.Why = name + " changes or may replace state file " + t
+				out = append(out, a)
+			}
+			return out
+		}
 	}
 	if len(targets) == 0 {
 		return nil
@@ -1737,6 +1808,24 @@ func tfDir(d string) bool {
 		}
 	}
 	return false
+}
+
+// stateIn returns a state file held in directory d (or in its
+// terraform.tfstate.d), "" when d holds none or is not a directory.
+func stateIn(d string) string {
+	ents, err := os.ReadDir(d)
+	if err != nil {
+		return ""
+	}
+	for _, e := range ents {
+		if !e.IsDir() && isStateFile(e.Name()) {
+			return filepath.Join(d, e.Name())
+		}
+		if e.IsDir() && e.Name() == "terraform.tfstate.d" {
+			return filepath.Join(d, e.Name(), "terraform.tfstate")
+		}
+	}
+	return ""
 }
 
 // overwrites reports whether writing p replaces a state in use: an

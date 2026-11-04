@@ -43,14 +43,17 @@ func init() {
 	shapes["terragrunt"] = func(args []Word, _ Invocation) string {
 		for _, w := range args {
 			t := optText(w)
-			if t == "--version" || t == "-version" || t == "version" || t == "hclfmt" || t == "help" || t == "--help" {
+			// version and fmt are terraform's, which the classic CLI runs after
+			// parsing terragrunt.hcl: only the flag forms, hclfmt and help
+			// read nothing.
+			if t == "--version" || t == "-version" || t == "hclfmt" || t == "help" || t == "--help" {
 				return ""
 			}
 			if !strings.HasPrefix(t, "-") {
 				if t == "hcl" {
 					continue
 				}
-				if t == "fmt" {
+				if t == "fmt" && len(args) > 1 && optText(args[0]) == "hcl" {
 					return ""
 				}
 				break
@@ -108,7 +111,15 @@ func init() {
 		}
 		return dockerShape(args, inv)
 	}
-	shapes["podman"] = shapes["docker"]
+	// podman runs the OCI runtime and conmon its options name, and hook
+	// directories and a network helper.
+	podman := shapes["docker"]
+	shapes["podman"] = func(args []Word, inv Invocation) string {
+		if why := denyOpts("--runtime", "--conmon", "--hooks-dir", "--network-cmd-path", "--helper-binaries-dir", "--url", "--identity", "--connection", "-c", "--remote", "--cdi-spec-dir", "--root", "--runroot", "--storage-opt")(args, inv); why != "" {
+			return why
+		}
+		return podman(args, inv)
+	}
 	shapes["kubectl"] = kubectlShape
 	shapes["helm"] = helmShape
 	shapes["kustomize"] = denyOpts("--enable-alpha-plugins", "--enable-exec", "--enable-helm", "--helm-command")
@@ -119,9 +130,26 @@ func init() {
 		if why := checkov(args, inv); why != "" {
 			return why
 		}
-		for _, n := range []string{".checkov.yaml", ".checkov.yml"} {
-			if _, err := os.Stat(filepath.Join(inv.Dir, n)); inv.Dir == "" || err == nil {
-				return "checkov with a " + n + " config"
+		// Its config is read from the working directory, the home
+		// directory and each directory it scans (-d).
+		dirs := []string{inv.Dir, os.Getenv("HOME")}
+		for i, w := range args {
+			t := optText(w)
+			switch {
+			case (t == "-d" || t == "--directory") && i+1 < len(args):
+				if !args[i+1].Resolved {
+					return "a checkov directory that cannot be resolved"
+				}
+				dirs = append(dirs, PhysicalJoin(inv.Dir, args[i+1].Text))
+			case strings.HasPrefix(t, "--directory="):
+				dirs = append(dirs, PhysicalJoin(inv.Dir, strings.TrimPrefix(t, "--directory=")))
+			}
+		}
+		for _, d := range dirs {
+			for _, n := range []string{".checkov.yaml", ".checkov.yml"} {
+				if _, err := os.Stat(filepath.Join(d, n)); d == "" || err == nil {
+					return "checkov with a " + n + " config in " + d
+				}
 			}
 		}
 		return ""

@@ -27,6 +27,9 @@ type Set struct {
 	// directories (PATH plants), without a target for each pair.
 	progDirs  map[string]bool
 	progNames map[string]bool
+	// progPrefixes guard every name that starts with one of them
+	// (git-remote-*, docker-credential-*).
+	progPrefixes []string
 }
 
 // New returns the guard set for patterns (globs, as in the config) and
@@ -70,6 +73,10 @@ func (s *Set) Programs(dirs, names []string) *Set {
 		}
 	}
 	for _, n := range names {
+		if pre, ok := strings.CutSuffix(n, "*"); ok && pre != "" {
+			s.progPrefixes = append(s.progPrefixes, fold(pre))
+			continue
+		}
 		s.progNames[fold(n)] = true
 	}
 	return s
@@ -77,13 +84,25 @@ func (s *Set) Programs(dirs, names []string) *Set {
 
 // program reports whether canonical path c is a guarded program path.
 func (s *Set) program(c string) bool {
-	return s.progDirs[path.Dir(c)] && s.progNames[path.Base(c)]
+	if !s.progDirs[path.Dir(c)] {
+		return false
+	}
+	b := path.Base(c)
+	if s.progNames[b] {
+		return true
+	}
+	for _, pre := range s.progPrefixes {
+		if strings.HasPrefix(b, pre) {
+			return true
+		}
+	}
+	return false
 }
 
 // holdsProgram reports whether canonical directory c is, or holds, a
 // directory of guarded programs.
 func (s *Set) holdsProgram(c string) bool {
-	if len(s.progNames) == 0 {
+	if len(s.progNames) == 0 && len(s.progPrefixes) == 0 {
 		return false
 	}
 	for d := range s.progDirs {
@@ -211,6 +230,11 @@ func (s *Set) GlobTouches(pattern string) bool {
 	if dir := path.Dir(pat); s.progDirs[dir] {
 		for n := range s.progNames {
 			if segMatch(path.Base(pat), n) {
+				return true
+			}
+		}
+		for _, pre := range s.progPrefixes {
+			if segMatch(path.Base(pat), pre+"a") {
 				return true
 			}
 		}

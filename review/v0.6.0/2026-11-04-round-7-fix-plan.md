@@ -58,7 +58,9 @@ The promise is not narrowed.
 
 ### R7-3: the highs and mediums
 
-The remaining 22 highs, and the mediums open since round 6.
+**The 22 highs are built** on branch fix/round-7-highs, with reproductions in `harness/pack_attack` (Y7H*, 35 scenarios; 530 in all). Done: 7H1 to 7H4, 7H6 to 7H13, 7H16, 7H19 to 7H22 (7H5, 7H14, 7H15, 7H17 and 7H18 were fixed in R7-1). The agent trial's verdicts are unchanged in every tier. Four mediums came with them: `helm test`, the judge filter's `/usr/bin/env` and credential-file gaps, and the unsafe-Makefile rule.
+
+Still open, as mediums and lows: the host-file and switch gaps (R2-10), self-approval through a TTY tool (R2-9), the redaction gaps (R5-3, R5-4), the lock-file check under a slow git (R5-5), the release cache and the Action's default version (R5-6, R5-7), `branch --unset-upstream` (R1-24), the read-only classes that have effects (R1-25), unseen writes (R1-26), repository configs claiming outside their tree and shadowing wrappers (R3-21, R3-22), and the lows.
 
 ### Round 8
 

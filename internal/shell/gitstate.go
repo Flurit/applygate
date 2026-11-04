@@ -58,6 +58,7 @@ func gitState(dir, sub string) string {
 		}
 		files = append(files, filepath.Join(xdg, "git", "config"), filepath.Join(home, ".gitconfig"))
 	}
+	allFiles := append([]string(nil), files...)
 	for _, f := range files {
 		if why := gitConfigCheck(f, network, 0); why != "" {
 			return why
@@ -107,12 +108,66 @@ func gitState(dir, sub string) string {
 			return why
 		}
 		for _, f := range []string{filepath.Join(d, "config"), filepath.Join(d, "config.worktree")} {
+			allFiles = append(allFiles, f)
 			if why := gitConfigCheck(f, network, 0); why != "" {
 				return why
 			}
 		}
 	}
+	// A subcommand that writes the working tree runs Git LFS's smudge
+	// filter, which calls the credential helper and the transfer agent:
+	// with LFS configured, the keys only a remote operation uses count too.
+	if !network && gitWorktree[sub] {
+		for _, f := range allFiles {
+			if configHasLFS(f, 0) {
+				for _, f := range allFiles {
+					if why := gitConfigCheck(f, true, 0); why != "" {
+						return why + " (git-lfs runs it when this command writes files)"
+					}
+				}
+				break
+			}
+		}
+	}
 	return ""
+}
+
+// gitWorktree are the subcommands that write the working tree, and so run
+// the smudge filters.
+var gitWorktree = toSet("checkout", "switch", "reset", "restore", "stash", "merge", "rebase", "pull", "cherry-pick", "revert",
+	"clone", "worktree", "am", "apply", "read-tree", "sparse-checkout", "submodule")
+
+var lfsCache sync.Map // path -> bool
+
+// configHasLFS reports whether config file p (or what it includes) sets a
+// filter.lfs.* key.
+func configHasLFS(p string, depth int) bool {
+	if v, ok := lfsCache.Load(p); ok {
+		return v.(bool)
+	}
+	has := false
+	if depth <= 10 {
+		if b, err := readSmall(p); err == nil {
+			if entries, ok := parseGitConfig(string(b)); ok {
+				for _, e := range entries {
+					switch {
+					case strings.HasPrefix(e.key, "filter.lfs."), strings.HasPrefix(e.key, "lfs."):
+						has = true
+					case e.key == "include.path" || strings.HasPrefix(e.key, "includeif.") && strings.HasSuffix(e.key, ".path"):
+						inc := e.value
+						if strings.HasPrefix(inc, "~/") {
+							inc = filepath.Join(gitEnv("HOME"), inc[2:])
+						} else if !filepath.IsAbs(inc) {
+							inc = filepath.Join(filepath.Dir(p), inc)
+						}
+						has = has || configHasLFS(inc, depth+1)
+					}
+				}
+			}
+		}
+	}
+	lfsCache.Store(p, has)
+	return has
 }
 
 // gitSystemConfigs are where git installs read their system config:
@@ -474,6 +529,16 @@ func GitSafeKey(k, v string, network bool) bool {
 			return networkURL(v) || strings.HasPrefix(v, "./") || strings.HasPrefix(v, "../")
 		}
 		return true
+	case "lfs":
+		// Git LFS runs the programs extension and customtransfer entries
+		// name (and standalonetransferagent selects one) from clean, smudge
+		// and transfers; its other keys are URLs, limits and switches.
+		switch {
+		case strings.HasPrefix(sub, "extension"), strings.HasPrefix(sub, "customtransfer"), name == "standalonetransferagent",
+			name == "extension", name == "customtransfer":
+			return false
+		}
+		return true
 	case "filter":
 		// Git LFS's filter, the one most users have.
 		if sub != "lfs" {
@@ -594,6 +659,7 @@ func networkURL(v string) bool {
 func resetConfigCache() {
 	configCache.Range(func(k, _ any) bool { configCache.Delete(k); return true })
 	askCache.Range(func(k, _ any) bool { askCache.Delete(k); return true })
+	lfsCache.Range(func(k, _ any) bool { lfsCache.Delete(k); return true })
 }
 
 // gitAsk asks the hook's own git where the git directory for dir is. It is

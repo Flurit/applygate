@@ -161,3 +161,45 @@ func TestGitStateFindsWhatGitFinds(t *testing.T) {
 		t.Error("a symlinked directory was checked by its logical path")
 	}
 }
+
+// Git LFS runs programs its extension and customtransfer keys name, and its
+// smudge filter calls the credential helper when git writes the tree.
+func TestGitLFSKeys(t *testing.T) {
+	for _, c := range []struct {
+		k, v string
+		safe bool
+	}{
+		{"lfs.url", "https://lfs.example/x", true},
+		{"lfs.locksverify", "true", true},
+		{"lfs.extension.x.smudge", "sh -c x", false},
+		{"lfs.customtransfer.y.path", "/tmp/evil", false},
+		{"lfs.standalonetransferagent", "y", false},
+	} {
+		if got := GitSafeKey(c.k, c.v, false); got != c.safe {
+			t.Errorf("GitSafeKey(%q) = %v, want %v", c.k, got, c.safe)
+		}
+	}
+	home := t.TempDir()
+	old := gitEnv
+	gitEnv = func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return ""
+	}
+	defer func() { gitEnv = old }()
+	resetConfigCache()
+	repo := t.TempDir()
+	for _, d := range []string{"objects", "refs"} {
+		os.MkdirAll(filepath.Join(repo, ".git", d), 0o755)
+	}
+	os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644)
+	os.WriteFile(filepath.Join(repo, ".git", "config"), []byte("[filter \"lfs\"]\n\tclean = git-lfs clean -- %f\n"), 0o644)
+	os.WriteFile(filepath.Join(home, ".gitconfig"), []byte("[credential]\n\thelper = !sh -c x\n"), 0o644)
+	if why := gitState(repo, "status"); why != "" {
+		t.Errorf("status with a custom credential helper: %s", why)
+	}
+	if why := gitState(repo, "checkout"); why == "" {
+		t.Error("checkout with LFS and a custom credential helper was plain")
+	}
+}

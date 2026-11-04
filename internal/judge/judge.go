@@ -91,6 +91,12 @@ func Residual(d policy.Decision) bool {
 		return false
 	}
 	for _, a := range d.Actions {
+		// Strict shapes adds a complex-shape action to any shell command
+		// that is not plain; it classifies nothing (outside a protected
+		// tier it allows), so it is what the judge exists for.
+		if a.Engine == "shell" && a.Class == "complex-shape" {
+			continue
+		}
 		if a.Engine != "" {
 			return false
 		}
