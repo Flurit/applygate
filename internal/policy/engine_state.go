@@ -80,3 +80,7 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 	}
 	return ""
 }
+
+// startsProviders reports whether terraform subcommand sub starts the
+// provider binaries.
+func startsProviders(sub string) bool { return tfStarts[sub] }

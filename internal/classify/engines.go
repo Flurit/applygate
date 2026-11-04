@@ -314,6 +314,13 @@ func terraformArgs(a *Action, args []shell.Word) {
 			a.Class, a.Why = StateSurgery, "workspace delete removes a workspace's state"
 			return
 		}
+		if op == "new" && len(a.StateFiles) > 0 {
+			// The new workspace starts from a copy of that state, so later
+			// calls here act on its resources: judged at its tier.
+			a.TouchesState = true
+			a.Class, a.Why = StateSurgery, "workspace new -state copies another state into this directory"
+			return
+		}
 		set(ReadOnly, "workspace "+op)
 	default:
 		a.Class, a.Why = UnknownWrapper, "unrecognized "+a.Engine+" subcommand "+sub

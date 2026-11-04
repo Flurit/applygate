@@ -404,7 +404,7 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 		actions = classify.Invocations(res, copt)
 		notes = res.Notes
 		if cfg.StrictShapesOn() {
-			actions = append(actions, shapeActions(ev, res, deps)...)
+			actions = append(actions, shapeActions(ev, res, deps, actions)...)
 		}
 		if ev.Persistent {
 			// Each call is judged on its own, so state one call leaves in
@@ -685,6 +685,12 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		r.Tier, r.Env = config.Protected, "unknown"
 		r.Matched = append(r.Matched, why+"; judged as protected")
 	}
+	if a.ConfigWritten && tf && r.Tier.Rank() < config.Protected.Rank() {
+		// The configuration, providers, lock file or state the hook read
+		// are rewritten by an earlier step, so they cannot tell the target.
+		r.Tier, r.Env = config.Protected, "unknown"
+		r.Matched = append(r.Matched, "an earlier step of this command writes the configuration or state in "+a.Dir+", so what this call uses is unknown; judged as protected")
+	}
 	if a.DataDirWritten && r.Tier.Rank() < config.Protected.Rank() {
 		// The workspace and backend this directory records are rewritten by
 		// an earlier step of the command, so they cannot tell the target.
@@ -889,6 +895,16 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 				r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "the saved plan is made in "+a.PlanOrigin)
 			}
 		}
+		for _, d := range a.PlanStateDirs {
+			// plan -state=FILE -out=p: p changes the resources in FILE.
+			if alt := cfg.Resolve(config.Signals{Dir: d, StateDirs: []string{d}}); alt.Unknown || alt.Tier.Rank() > r.Tier.Rank() {
+				t, e := alt.Tier, alt.Env
+				if alt.Unknown && t.Rank() < r.Tier.Rank() {
+					t, e = r.Tier, r.Env
+				}
+				r.Tier, r.Env, r.Matched = t, e, append(r.Matched, "the saved plan is made from the state in "+d)
+			}
+		}
 		r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-unverifiable", Severity: preflight.Critical,
 			Message: "an earlier step of this command writes the saved plan " + a.PlanFile + ", so the plan that would be applied cannot be checked; run the steps separately"})
 		return classify.ApplySavedPlan
@@ -899,7 +915,7 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 		// is in the directory the link's parent is.
 		planPath = shell.PhysicalJoin(a.Dir, planPath)
 	}
-	if p := filepath.ToSlash(planPath); strings.HasPrefix(p, "/dev/") || strings.HasPrefix(p, "/proc/") {
+	if streamPath(planPath) {
 		// A plan read from stdin or a descriptor (apply /dev/stdin <
 		// ../prod/tfplan) has no directory.
 		r.Tier, r.Env = config.Protected, "unknown"
@@ -1230,8 +1246,19 @@ func isTerraform(engine string) bool {
 // plain: one per directory its programs are known to run in, each judged at
 // that directory's tier: ask in protected, allow elsewhere. A part the
 // analysis lost is judged by the command's own actions.
-func shapeActions(ev Event, res *shell.Result, deps Deps) []classify.Action {
+func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action) []classify.Action {
 	ok, why := shell.PlainShape(ev.Command, res)
+	if ok {
+		// The provider, lock-file and data-source checks read the disk
+		// before the command runs; a step that rewrites what they read
+		// comes first.
+		for _, a := range acts {
+			if isTerraform(a.Engine) && (a.ConfigWritten || a.DataDirWritten) && startsProviders(a.Sub) {
+				ok, why = false, "an earlier step writes the configuration or .terraform in "+a.Dir+" that "+a.Engine+" then reads"
+				break
+			}
+		}
+	}
 	if ok {
 		ctx := deps.Ctx
 		if ctx == nil {
@@ -1339,4 +1366,19 @@ func absEnvPaths(env map[string]string, dir string) {
 		}
 		env[k] = strings.Join(parts, string(filepath.ListSeparator))
 	}
+}
+
+// streamPath reports a planfile path that is not a regular file on disk: a
+// device, a pipe or a descriptor, by any spelling (//dev/stdin, /./dev/fd/3)
+// or through a link.
+func streamPath(p string) bool {
+	c := filepath.ToSlash(filepath.Clean(p))
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		c = filepath.ToSlash(r)
+	}
+	if strings.HasPrefix(c, "/dev/") || strings.HasPrefix(c, "/proc/") {
+		return true
+	}
+	fi, err := os.Stat(p)
+	return err == nil && !fi.Mode().IsRegular()
 }
