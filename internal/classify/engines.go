@@ -221,7 +221,32 @@ func terraformArgs(a *Action, args []shell.Word) {
 	case "plan":
 		a.TouchesState = true
 		set(ReadOnly, "plan does not change infrastructure")
-	case "show", "output", "validate", "fmt", "graph", "providers", "version", "get", "console", "modules", "metadata", "query", "login", "logout", "stacks":
+	case "stacks":
+		// stacks manages HCP Terraform stack operations: approving a
+		// deployment's plans applies or destroys infrastructure there.
+		class, why := Mutating, "terraform stacks changes HCP Terraform stack objects"
+		var words []string
+		for _, w := range pos {
+			words = append(words, w.Text)
+		}
+		for _, w := range words {
+			switch {
+			case strings.Contains(w, "approve") || strings.Contains(w, "apply") || strings.Contains(w, "destroy"):
+				class, why = UnreviewedApply, "terraform stacks "+strings.Join(words, " ")+" approves or applies a deployment's plans"
+			case strings.Contains(w, "delete") || strings.Contains(w, "cancel") || strings.Contains(w, "discard"):
+				if class != UnreviewedApply {
+					class, why = Destroy, "terraform stacks "+strings.Join(words, " ")+" deletes or cancels HCP Terraform objects"
+				}
+			}
+		}
+		if class == Mutating && len(words) > 0 {
+			if last := words[len(words)-1]; last == "list" || last == "read" || last == "show" || last == "fetch" || last == "get" || last == "help" {
+				class, why = ReadOnly, "terraform stacks "+strings.Join(words, " ")+" reads"
+			}
+		}
+		a.TouchesState = true
+		set(class, why)
+	case "show", "output", "validate", "fmt", "graph", "providers", "version", "get", "console", "modules", "metadata", "query", "login", "logout":
 		a.TouchesState = sub == "show" || sub == "output" || sub == "console"
 		if sub == "providers" && len(pos) > 0 && pos[0].Text == "lock" {
 			set(ReadOnly, "providers lock updates the lock file only")
@@ -524,6 +549,17 @@ func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 		}
 	}
 	kubeconfigFlag(&a, args)
+	if flagValue(args, "--context") != "" {
+		// --cluster, --server and --user replace what the context names,
+		// so the cluster and credentials the call uses are not the
+		// context's.
+		for _, f := range []string{"--cluster", "--server", "-s", "--user", "--token", "--as"} {
+			if flagValue(args, f) != "" {
+				a.TargetUnknown = "kubectl " + f + " replaces the cluster or credentials the context names, so the cluster it acts on is not the context's"
+				break
+			}
+		}
+	}
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		t := args[i].Text
@@ -599,6 +635,14 @@ func helmArgsOne(base Action, args []shell.Word) (Action, bool) {
 		a.Target = flagValue(args, "--kube-apiserver")
 	}
 	kubeconfigFlag(&a, args)
+	if flagValue(args, "--kube-context") != "" {
+		for _, f := range []string{"--kube-apiserver", "--kube-token", "--kube-as-user", "--kube-ca-file"} {
+			if flagValue(args, f) != "" {
+				a.TargetUnknown = "helm " + f + " replaces the cluster or credentials the context names, so the cluster it acts on is not the context's"
+				break
+			}
+		}
+	}
 	pos, dynamic := positionals(args, helmValueOpts)
 	if dynamic {
 		a.Class, a.Why = Dynamic, "helm subcommand cannot be resolved"
@@ -612,7 +656,7 @@ func helmArgsOne(base Action, args []shell.Word) (Action, bool) {
 	case "uninstall", "delete", "del", "un":
 		a.Class, a.Why = CloudDestructive, "helm "+strings.Join(pos, " ")+" deletes a release and its resources"
 	case "list", "ls", "status", "get", "history", "hist", "show", "inspect", "template", "search", "repo", "version", "lint",
-		"env", "dependency", "dep", "pull", "fetch", "verify", "help", "completion", "create", "package", "plugin", "registry", "test":
+		"env", "dependency", "dep", "pull", "fetch", "verify", "help", "completion", "create", "package", "plugin", "registry":
 		a.Class, a.Why = ReadOnly, "helm "+pos[0]+" does not change the cluster"
 	default:
 		a.Class, a.Why = CloudWrite, "helm "+pos[0]+" changes the cluster"

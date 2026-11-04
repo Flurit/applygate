@@ -403,6 +403,9 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 		res := shell.Analyze(ev.Command, ShellOptions(cfg, copt, ev.Cwd, deps.Env, deps.ReadFile))
 		actions = classify.Invocations(res, copt)
 		notes = res.Notes
+		if why := classify.UnknownGuardChange(res, ev.Command, ev.Cwd, copt); why != "" {
+			actions = append(actions, classify.Action{Class: classify.Tampering, Engine: "file", Command: ev.Command, Dir: ev.Cwd, Why: why})
+		}
 		if cfg.StrictShapesOn() {
 			actions = append(actions, shapeActions(ev, res, deps, actions)...)
 		}
@@ -557,6 +560,7 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		recorded = preflight.InitBackendEnv(a.Dir, env)
 		declared = preflight.DeclaredBackend(a.Dir)
 		sig.ProviderProfiles, sig.ProviderRoles, sig.ProviderUnknown = preflight.ProviderAWS(a.Dir, preflight.Vars{Values: a.Vars, Files: a.VarFiles, Env: env, Unknown: a.VarsUnknown})
+		addProviderTargets(&sig, a.Dir)
 		if len(a.BackendConfig) > 0 {
 			// An init in this command re-points the directory: judge this
 			// command against the backend it will use, not the old one.
@@ -826,6 +830,7 @@ func SavedPlanVerdict(res *plangate.Result, t config.Tier) Verdict {
 func DirSignals(dir string, env map[string]string) (config.Signals, *preflight.Backend) {
 	sig := config.Signals{Dir: dir, Workspace: preflight.Workspace(dir, env)}
 	sig.ProviderProfiles, sig.ProviderRoles, sig.ProviderUnknown = preflight.ProviderAWS(dir, preflight.Vars{Env: env})
+	addProviderTargets(&sig, dir)
 	be := preflight.InitBackendEnv(dir, env)
 	if be == nil {
 		be = preflight.DeclaredBackend(dir)
@@ -1074,6 +1079,13 @@ func findPlanfile(root, rel string) (matches []string, truncated bool) {
 			return nil
 		}
 		if !d.IsDir() {
+			if d.Type()&os.ModeSymlink != 0 {
+				// A link to a directory leads somewhere the search does not
+				// go: a copy of the plan there would be missed.
+				if fi, err := os.Stat(p); err != nil || fi.IsDir() {
+					truncated = true
+				}
+			}
 			return nil
 		}
 		if p != root {
@@ -1410,4 +1422,14 @@ func streamPath(p string) bool {
 	}
 	fi, err := os.Stat(p)
 	return err == nil && !fi.Mode().IsRegular()
+}
+
+// addProviderTargets adds what the google, kubernetes and azurerm provider
+// blocks in dir name to sig.
+func addProviderTargets(sig *config.Signals, dir string) {
+	t := preflight.ProviderTargets(dir)
+	sig.ProviderProjects, sig.ProviderContexts, sig.ProviderSubscriptions = t.GCPProjects, t.KubeContexts, t.AzureSubscriptions
+	if t.Unknown != "" && sig.ProviderUnknown == "" {
+		sig.ProviderUnknown = t.Unknown
+	}
 }

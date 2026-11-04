@@ -514,7 +514,11 @@ var requiredSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "req
 // awsLocalNames returns the local names a terraform block's
 // required_providers gives the AWS provider (source hashicorp/aws, on any
 // registry).
-func awsLocalNames(body hcl.Body) map[string]bool {
+func awsLocalNames(body hcl.Body) map[string]bool { return localNames(body, "hashicorp/aws") }
+
+// localNames returns the local names required_providers gives the provider
+// whose source is source (on any registry).
+func localNames(body hcl.Body, source string) map[string]bool {
 	out := map[string]bool{}
 	top, _, _ := body.PartialContent(terraformSchema)
 	for _, tb := range top.Blocks {
@@ -539,7 +543,7 @@ func awsLocalNames(body hcl.Body) map[string]bool {
 					}
 				}
 				src = strings.ToLower(src)
-				if src == "hashicorp/aws" || strings.HasSuffix(src, "/hashicorp/aws") {
+				if src == source || strings.HasSuffix(src, "/"+source) {
 					out[name] = true
 				}
 			}
@@ -1146,4 +1150,70 @@ func applyConfigFile(be *Backend, path string, src []byte) error {
 		be.Config[k] = v
 	}
 	return nil
+}
+
+// Targets are what the non-AWS provider blocks of a configuration point at.
+type Targets struct {
+	GCPProjects, KubeContexts, AzureSubscriptions []string
+	Unknown                                       string // why one is not known
+}
+
+// ProviderTargets reads the google and google-beta `project`, the
+// kubernetes `config_context` and the azurerm `subscription_id` of dir's
+// provider blocks, under any local name required_providers gives them and
+// in the modules it calls (where a value from the caller is unknown).
+func ProviderTargets(dir string) Targets {
+	var t Targets
+	sets := [][]*hcl.File{parsedFiles(dir)}
+	for _, d := range moduleDirs(dir) {
+		sets = append(sets, parsedFiles(d))
+	}
+	type kind struct {
+		attr    string
+		sources []string
+		add     *[]string
+		what    string
+	}
+	kinds := []kind{
+		{"project", []string{"hashicorp/google", "hashicorp/google-beta"}, &t.GCPProjects, "google provider's project"},
+		{"config_context", []string{"hashicorp/kubernetes"}, &t.KubeContexts, "kubernetes provider's config_context"},
+		{"subscription_id", []string{"hashicorp/azurerm"}, &t.AzureSubscriptions, "azurerm provider's subscription_id"},
+	}
+	for si, set := range sets {
+		for _, k := range kinds {
+			names := map[string]bool{}
+			for _, src := range k.sources {
+				names[filepath.Base(src)] = true
+			}
+			for _, f := range set {
+				for _, src := range k.sources {
+					for n := range localNames(f.Body, src) {
+						names[n] = true
+					}
+				}
+			}
+			for _, f := range set {
+				top, _, _ := f.Body.PartialContent(providerSchema)
+				for _, pb := range top.Blocks {
+					if !names[pb.Labels[0]] {
+						continue
+					}
+					attrs, _ := pb.Body.JustAttributes()
+					a, ok := attrs[k.attr]
+					if !ok {
+						continue
+					}
+					if v, lit := literal(a.Expr); lit {
+						*k.add = append(*k.add, v)
+					} else if t.Unknown == "" {
+						t.Unknown = "the " + k.what + " is computed"
+						if si > 0 {
+							t.Unknown += " (in a module)"
+						}
+					}
+				}
+			}
+		}
+	}
+	return t
 }

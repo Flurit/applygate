@@ -327,6 +327,13 @@ var DefaultProtectedPaths = []string{
 	"**/.local/share/claude/**", "**/.claude/local/**", "**/lib/node_modules/@anthropic-ai/claude-code/**",
 	"**/lib/node_modules/@openai/codex/**", "**/lib/node_modules/@google/gemini-cli/**", "**/lib/node_modules/@github/copilot/**",
 	"**/lib/node_modules/opencode-ai/**", "**/.codex/bin/**",
+	// What the programs strict shapes trusts load and run from their own
+	// install: Homebrew's Cellar (a symlinked program on PATH ends there,
+	// and its libexec holds the interpreter and packages of aws, gcloud
+	// and the like), and the files Python runs at start-up, whichever
+	// interpreter a trusted program uses.
+	"**/Cellar/**", "**/site-packages/*.pth", "**/dist-packages/*.pth", "**/site-packages/sitecustomize.py",
+	"**/site-packages/usercustomize.py", "**/site-packages/sitecustomize/**", "**/site-packages/usercustomize/**",
 }
 
 // pathPrograms are names an agent may not place in a PATH directory: the
@@ -342,7 +349,14 @@ var pathPrograms = []string{"applygate", "seatbelt", "terraform", "tofu", "terra
 	"cp", "mv", "rm", "ln", "chmod", "column", "xxd", "od", "base64", "md5sum", "gzip", "gunzip", "unzip", "zip",
 	"nl", "fold", "comm", "join", "paste", "seq", "id", "whoami", "hostname", "printenv", "printf", "echo", "date",
 	"sleep", "which", "test", "true", "false", "pwd", "wget", "tflint", "tfsec", "terraform-docs", "infracost",
-	"shellcheck", "actionlint", "checkov", "trivy", "conftest", "opa", "python3", "python", "node", "perl", "ruby"}
+	"shellcheck", "actionlint", "checkov", "trivy", "conftest", "opa", "python3", "python", "node", "perl", "ruby",
+	// What a plain git, aws, kubectl, docker or terraform call starts by
+	// name from PATH: ssh and its helpers, git's remote helpers, merge
+	// drivers and credential helpers, Docker's credential helpers, and the
+	// credential plugins of the Kubernetes and AWS clients.
+	"ssh", "scp", "sftp", "ssh-agent", "ssh-add", "ssh-keygen", "git-remote-*", "git-merge-*", "git-credential-*", "git-lfs",
+	"docker-credential-*", "docker-compose", "gke-gcloud-auth-plugin", "kubelogin", "aws-iam-authenticator", "aws-vault", "granted",
+	"saml2aws", "aws-sso", "kubectl-*", "helm-*", "terraform-provider-*", "terraform-credentials-*", "pre-commit", "less", "more", "man"}
 
 // Default returns the built-in configuration.
 func Default() *Config {
@@ -1145,6 +1159,10 @@ type Signals struct {
 	// ProviderUnknown says why a provider's profile or role is not known:
 	// it may target any account.
 	ProviderUnknown string
+	// ProviderProjects, ProviderContexts and ProviderSubscriptions are the
+	// google project, kubernetes context and azurerm subscription the
+	// configuration's provider blocks name.
+	ProviderProjects, ProviderContexts, ProviderSubscriptions []string
 	// WorkspaceUnknown says why the selected workspace is not known.
 	WorkspaceUnknown string
 	// StateDirs are the directories of local state files the command
@@ -1267,7 +1285,9 @@ func (c *Config) Resolve(s Signals) Resolution {
 			}
 		}
 		for _, w := range m.Workspaces {
-			if s.Workspace != "" && globEq(w, s.Workspace) {
+			// A local backend's workspaces are directories, which a case-
+			// insensitive file system does not tell apart: Payments is payments.
+			if s.Workspace != "" && globEq(strings.ToLower(w), strings.ToLower(s.Workspace)) {
 				consider(e.Name, e.Tier, "workspace "+s.Workspace)
 			}
 		}
@@ -1302,15 +1322,25 @@ func (c *Config) Resolve(s Signals) Resolution {
 			if s.KubeContext != "" && globEq(k, s.KubeContext) {
 				consider(e.Name, e.Tier, "kube context "+s.KubeContext)
 			}
+			for _, c := range s.ProviderContexts {
+				if globEq(k, c) {
+					consider(e.Name, e.Tier, "provider kube context "+c)
+				}
+			}
 		}
 		for _, g := range m.GCPProjects {
 			if s.GCPProject != "" && globEq(g, s.GCPProject) {
 				consider(e.Name, e.Tier, "GCP project "+s.GCPProject)
 			}
+			for _, p := range s.ProviderProjects {
+				if globEq(g, p) {
+					consider(e.Name, e.Tier, "provider GCP project "+p)
+				}
+			}
 		}
 		for _, z := range m.AzureSubscriptions {
-			for _, v := range []string{s.AzureSubscription, s.AzureSubscriptionID} {
-				if v != "" && globEq(z, v) {
+			for _, v := range append([]string{s.AzureSubscription, s.AzureSubscriptionID}, s.ProviderSubscriptions...) {
+				if v != "" && globEq(strings.ToLower(z), strings.ToLower(v)) {
 					consider(e.Name, e.Tier, "Azure subscription "+v)
 					break
 				}

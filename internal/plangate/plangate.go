@@ -409,6 +409,23 @@ var exposureAttrs = map[string][]string{
 	"aws_iam_user_policy_attachment":  {"policy_arn"},
 	"aws_iam_group_policy_attachment": {"policy_arn"},
 	"aws_iam_policy_attachment":       {"policy_arn"},
+	// Round 7: the policy attribute of the OpenSearch and Elasticsearch
+	// domains is access_policies; attachment sets, SSO and sharing.
+	"aws_opensearch_domain":                      {"access_policies"},
+	"aws_elasticsearch_domain":                   {"access_policies"},
+	"aws_opensearch_domain_policy":               {"access_policies"},
+	"aws_elasticsearch_domain_policy":            {"access_policies"},
+	"aws_s3_bucket":                              {"policy"},
+	"aws_efs_file_system_policy":                 {"policy"},
+	"aws_api_gateway_rest_api_policy":            {"policy"},
+	"aws_iam_role_policy_attachments_exclusive":  {"policy_arns"},
+	"aws_iam_user_policy_attachments_exclusive":  {"policy_arns"},
+	"aws_iam_group_policy_attachments_exclusive": {"policy_arns"},
+	"aws_ssoadmin_managed_policy_attachment":     {"managed_policy_arn"},
+	"aws_db_snapshot":                            {"shared_accounts"},
+	"aws_db_cluster_snapshot":                    {"shared_accounts"},
+	"aws_ami_launch_permission":                  {"group"},
+	"aws_lambda_layer_version_permission":        {"principal"},
 }
 
 // unknownWatched lists the attributes of a created, updated or replaced
@@ -621,13 +638,50 @@ func exposed(rc *tfjson.ResourceChange, after map[string]any, rules *Rules) []st
 			}
 		}
 	case "aws_s3_bucket_policy", "aws_sqs_queue_policy", "aws_sns_topic_policy", "aws_kms_key_policy", "aws_ecr_repository_policy",
-		"aws_secretsmanager_secret_policy", "aws_glacier_vault_lock", "aws_elasticsearch_domain_policy", "aws_opensearch_domain_policy":
+		"aws_secretsmanager_secret_policy", "aws_glacier_vault_lock", "aws_efs_file_system_policy", "aws_api_gateway_rest_api_policy":
 		if s, _ := after["policy"].(string); policyPublic(s) {
 			out = append(out, rc.Address+": resource policy allows any principal")
 		}
-	case "aws_kms_key", "aws_sqs_queue", "aws_sns_topic", "aws_ecr_repository", "aws_secretsmanager_secret":
+	case "aws_elasticsearch_domain_policy", "aws_opensearch_domain_policy", "aws_elasticsearch_domain", "aws_opensearch_domain":
+		if s, _ := after["access_policies"].(string); policyPublic(s) {
+			out = append(out, rc.Address+": the domain's access policy allows any principal")
+		}
+	case "aws_kms_key", "aws_sqs_queue", "aws_sns_topic", "aws_ecr_repository", "aws_secretsmanager_secret", "aws_s3_bucket":
 		if s, _ := after["policy"].(string); policyPublic(s) {
 			out = append(out, rc.Address+": resource policy allows any principal")
+		}
+	case "aws_lambda_layer_version_permission":
+		if p, _ := after["principal"].(string); p == "*" {
+			out = append(out, rc.Address+": lets any account use the layer")
+		}
+	case "aws_ami_launch_permission":
+		if g, _ := after["group"].(string); g == "all" {
+			out = append(out, rc.Address+": makes the image public")
+		}
+	case "aws_db_snapshot", "aws_db_cluster_snapshot":
+		accts, _ := after["shared_accounts"].([]any)
+		for _, a := range accts {
+			if v, _ := a.(string); v == "all" {
+				out = append(out, rc.Address+": makes the snapshot public")
+			}
+		}
+	case "aws_iam_role_policy_attachments_exclusive", "aws_iam_user_policy_attachments_exclusive", "aws_iam_group_policy_attachments_exclusive":
+		arns, _ := after["policy_arns"].([]any)
+		for _, a := range arns {
+			arn, _ := a.(string)
+			for _, p := range rules.AdminPolicies {
+				if strings.HasSuffix(arn, ":policy/"+p) {
+					out = append(out, rc.Address+": attaches "+p)
+				}
+			}
+		}
+	case "aws_ssoadmin_managed_policy_attachment":
+		if arn, _ := after["managed_policy_arn"].(string); arn != "" {
+			for _, p := range rules.AdminPolicies {
+				if strings.HasSuffix(arn, ":policy/"+p) {
+					out = append(out, rc.Address+": attaches "+p)
+				}
+			}
 		}
 	case "aws_lambda_permission":
 		if p, _ := after["principal"].(string); p == "*" {
@@ -660,11 +714,44 @@ type policyDoc struct {
 }
 
 type statement struct {
-	Effect    string          `json:"Effect"`
-	Action    json.RawMessage `json:"Action"`
-	NotAction json.RawMessage `json:"NotAction"`
-	Principal json.RawMessage `json:"Principal"`
-	Condition json.RawMessage `json:"Condition"`
+	Effect       string          `json:"Effect"`
+	Action       json.RawMessage `json:"Action"`
+	NotAction    json.RawMessage `json:"NotAction"`
+	Principal    json.RawMessage `json:"Principal"`
+	NotPrincipal json.RawMessage `json:"NotPrincipal"`
+	Condition    json.RawMessage `json:"Condition"`
+}
+
+// restrictingKeys are the condition keys that limit who a statement
+// reaches: the caller's account, organization, ARN or network, or the
+// source of a service's request. A condition with none of them (a transport
+// requirement, a tag, a time) leaves a "*" principal public.
+var restrictingKeys = map[string]bool{"aws:principalorgid": true, "aws:principalorgpaths": true, "aws:principalarn": true,
+	"aws:principalaccount": true, "aws:sourcearn": true, "aws:sourceaccount": true, "aws:sourceowner": true, "aws:sourceorgid": true,
+	"aws:sourceorgpaths": true, "aws:sourcevpc": true, "aws:sourcevpce": true, "aws:sourceip": true, "aws:userid": true,
+	"aws:username": true, "aws:resourceaccount": true, "aws:resourceorgid": true, "aws:principalservicename": true,
+	"aws:principalservicenamelist": true, "kms:calleraccount": true, "kms:viaservice": true, "sts:externalid": true,
+	"aws:federatedprovider": true, "cognito-identity.amazonaws.com:aud": true, "aws:vpcsourceip": true, "elasticfilesystem:accesspointarn": true,
+	"lambda:eventsourcetoken": true, "s3:resourceaccount": true}
+
+// restricts reports whether a Condition limits who the statement reaches.
+func restricts(raw json.RawMessage) bool {
+	var cond map[string]map[string]any
+	if json.Unmarshal(raw, &cond) != nil {
+		var any1 map[string]any
+		return json.Unmarshal(raw, &any1) == nil && len(any1) > 0 // an unreadable form: assume it restricts
+	}
+	for op, keys := range cond {
+		if strings.HasPrefix(strings.ToLower(op), "null") {
+			continue // Null tests whether a key is present, not who the caller is
+		}
+		for k := range keys {
+			if restrictingKeys[strings.ToLower(k)] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func statements(doc string) []statement {
@@ -721,12 +808,13 @@ func policyPublic(doc string) bool {
 		if s.Effect != "Allow" {
 			continue
 		}
-		// An empty Condition ({} or null) limits nothing.
-		var cond map[string]any
-		if json.Unmarshal(s.Condition, &cond) == nil && len(cond) > 0 {
+		// A Condition that names no key limiting who is reached (an empty
+		// one, SecureTransport, a tag) leaves the statement public.
+		if len(s.Condition) > 0 && restricts(s.Condition) {
 			continue
 		}
-		if anyPrincipal(s.Principal) {
+		// Allow with NotPrincipal reaches everyone but the listed ones.
+		if anyPrincipal(s.Principal) || len(s.NotPrincipal) > 0 && string(s.NotPrincipal) != "null" {
 			return true
 		}
 	}

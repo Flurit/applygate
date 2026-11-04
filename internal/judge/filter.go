@@ -110,18 +110,37 @@ var writeTools = map[string]bool{"Write": true, "Edit": true, "MultiEdit": true,
 
 // bareEnv matches env run without a command, which prints the environment;
 // the analyzer drops it as a wrapper with nothing to run.
-var bareEnv = regexp.MustCompile(`(^|[|;&(]\s*)env\s*($|[|;&)>])`)
+var bareEnv = regexp.MustCompile(`(^|[|;&(]\s*)(?:\S*/)?env\s*($|[|;&)>])`)
+
+// pushLongAbbrev reports an abbreviation (three characters or more) of a
+// git push long option that rewrites or deletes remote history: git takes
+// any unambiguous prefix, so --mirr is --mirror.
+func pushLongAbbrev(a string) bool {
+	k, _, _ := strings.Cut(a, "=")
+	if len(k) < 5 || !strings.HasPrefix(k, "--") {
+		return false
+	}
+	for _, o := range []string{"--mirror", "--prune", "--delete", "--force", "--force-with-lease", "--force-if-includes"} {
+		if strings.HasPrefix(o, k) {
+			return true
+		}
+	}
+	return false
+}
 
 // secretFile matches file names that usually hold credentials, so reading
 // one goes to the judge even with a local-only program.
 var secretFile = regexp.MustCompile(`(?i)(^|/)(\.env(\.[^/]*)?|\.envrc|\.netrc|\.npmrc|\.pypirc|\.pgpass|\.git-credentials|[^/]*credentials[^/]*|[^/]*\.(pem|key|p12|pfx|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519)|kubeconfig|` +
 	// Terraform state and variable files hold secrets in plain text, and
 	// these are the dotfiles of Vault, MySQL, s3cmd, boto and Terraform.
-	`[^/]*\.tfstate(\.[^/]*)?|[^/]*\.tfvars(\.json)?|\.vault-token|\.my\.cnf|\.s3cfg|\.boto|\.terraformrc|terraform\.rc)$`)
+	`[^/]*\.tfstate(\.[^/]*)?|[^/]*\.tfvars(\.json)?|\.vault-token|\.my\.cnf|\.s3cfg|\.boto|\.terraformrc|terraform\.rc|` +
+	// Maven repository passwords and shell history, which holds typed
+	// secrets.
+	`settings-security\.xml|\.m2/settings\.xml|\.gradle/gradle\.properties|\.(zsh|bash|python|psql|mysql|node_repl|sqlite|rediscli)_history|\.zhistory|\.dbt/profiles\.yml|profiles\.yml)$`)
 
 // credentialDir matches paths inside the directories where CLIs keep
 // credentials and session tokens.
-var credentialDir = regexp.MustCompile(`(^|/)(\.aws|\.ssh|\.kube|\.docker|\.azure|\.gnupg|\.terraform\.d|\.oci|\.vault|\.config/(gcloud|gh|op|doctl|hcloud|rclone|flyctl|linode-cli|scw|exoscale|vultr-cli|helm|kube|sops|age))(/|$)`)
+var credentialDir = regexp.MustCompile(`(^|/)(\.aws|\.ssh|\.kube|\.docker|\.azure|\.gnupg|\.terraform\.d|\.oci|\.vault|\.fly|\.config/(gcloud|gh|op|doctl|hcloud|rclone|flyctl|fly|linode-cli|scw|exoscale|vultr-cli|helm|kube|sops|age))(/|$)`)
 
 // fileWriters are local-only programs that change files.
 var fileWriters = map[string]bool{"rm": true, "cp": true, "mv": true, "ln": true, "tee": true, "chmod": true, "touch": true, "mkdir": true, "tar": true, "unzip": true, "sed": true, "gzip": true, "gunzip": true, "zip": true}
@@ -441,7 +460,7 @@ func safeInvocation(inv shell.Invocation, root string) bool {
 			// judge, which looks at the branch.
 			for _, arg := range rest[1:] {
 				for _, a := range shortFlags(arg) {
-					if a == "-f" || a == "-d" || a == "--delete" || a == "--mirror" || a == "--prune" || strings.HasPrefix(a, "--force") || strings.HasPrefix(a, "+") || strings.HasPrefix(a, ":") {
+					if a == "-f" || a == "-d" || a == "--delete" || a == "--mirror" || a == "--prune" || strings.HasPrefix(a, "--force") || strings.HasPrefix(a, "+") || strings.HasPrefix(a, ":") || pushLongAbbrev(a) {
 						return false
 					}
 				}

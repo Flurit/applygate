@@ -154,6 +154,12 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 		}
 	}
 	mf := parseMakefile(string(src))
+	if mf.unsafe != "" {
+		// A feature that changes which recipe runs, or what it says, in a
+		// way this reader does not follow.
+		a.unbounded(st, via, joinWords(args), "the makefile uses "+mf.unsafe+", which is not analyzed, so what its recipes run and where is unknown")
+		return true
+	}
 	for k, v := range vars {
 		mf.vars[k] = v
 	}
@@ -221,7 +227,14 @@ type makefile struct {
 	rules    map[string]*makeRule
 	first    string
 	oneshell bool // .ONESHELL: each recipe runs in one shell
+	// unsafe names a makefile feature the reader does not follow: define
+	// blocks, conditionals, pattern and default rules, a default goal,
+	// recipe prefix and shell flags, second expansion, eval and call.
+	unsafe string
 }
+
+var makeUnsafe = regexp.MustCompile(`(?m)^\s*(define\s|endef\b|ifeq\b|ifneq\b|ifdef\b|ifndef\b|else\b|endif\b|vpath\b|\.DEFAULT_GOAL\b|\.DEFAULT\s*:|\.RECIPEPREFIX\b|\.SHELLFLAGS\b|\.SECONDEXPANSION\b|export\s*$|unexport\b)`)
+var makeUnsafeFn = regexp.MustCompile(`\$[({]\s*(eval|call|foreach|shell|file|value)\b`)
 
 var (
 	makeInclude = regexp.MustCompile(`(?m)^(-|s)?include\s+(.+)$`)
@@ -232,6 +245,11 @@ var (
 
 func parseMakefile(src string) *makefile {
 	mf := &makefile{vars: map[string]string{}, rules: map[string]*makeRule{}}
+	if m := makeUnsafe.FindStringSubmatch(src); m != nil {
+		mf.unsafe = strings.TrimSpace(m[1])
+	} else if m := makeUnsafeFn.FindStringSubmatch(src); m != nil {
+		mf.unsafe = "$(" + m[1] + ")"
+	}
 	var cur []*makeRule
 	lines := strings.Split(strings.ReplaceAll(src, "\\\n", " "), "\n")
 	for _, line := range lines {
@@ -258,6 +276,9 @@ func parseMakefile(src string) *makefile {
 			cur = nil
 			deps, inline, _ := strings.Cut(m[2], ";")
 			for _, t := range strings.Fields(m[1]) {
+				if strings.Contains(t, "%") && mf.unsafe == "" {
+					mf.unsafe = "a pattern rule"
+				}
 				if t == ".ONESHELL" {
 					mf.oneshell = true
 				}
