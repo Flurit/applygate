@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **The source builds and vets on Windows again** (not a release target): the approvals lock uses `LockFileEx` there and the terminal check the console mode, and CI vets for Windows.
+
 - **Red-team round 5 fixes** (`review/v0.6.0/2026-11-03-red-team-round-5.md`, plan in `2026-11-03-round-5-fix-plan.md`):
   - **Exact shapes.** Strict shapes no longer trusts a list of program names: each program has a shape that says which of its calls can run no other program (subcommands and options), and a call outside it asks in a protected environment. Pagers and editors (`MANPAGER`, `PAGER`, `LESSOPEN`, `EDITOR`), `man -P`, `rg --pre`, `sort --compress-program`, git's `--upload-pack`, `--receive-pack`, `--exec`, `-c`, `ext::` and `filter-branch`, `tar --checkpoint-action` and `--to-command`, `zip -TT`, `sed`'s `e` command, `go generate` and `-toolexec`, `npx`, `brew` and kubectl or helm plugins are no longer plain (5C1, 5C3, 5C5, 5C6, 5H1 to 5H3). A variable set for a program must be on a short safe list. A `make` recipe's programs are checked too.
   - **Repository git state.** A git command is plain only when its repository has no hooks and no config key that runs a command, and a command that writes a git directory's hooks or config is not plain (5C4).

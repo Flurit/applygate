@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 
@@ -33,7 +32,7 @@ func TestReviewA14HeldLockDoesNotHang(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+	if err := tryLock(lock); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
@@ -47,7 +46,7 @@ func TestReviewA14HeldLockDoesNotHang(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		returned = false
 	}
-	syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	unlock(lock)
 	<-done
 	reviewgap.Check(t, "A14", returned, "a held approvals lock blocked Request for more than 2 s")
 }
