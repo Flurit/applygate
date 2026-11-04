@@ -383,6 +383,15 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 				a.Class, a.Engine, a.Why = Tampering, "file", "redirect writes to "+p+", which may be a guard file"
 				out = append(out, a)
 			}
+			// true > terraform.tf*: the shell writes the file the glob matches.
+			for _, m := range globMatches(r.Target, inv.Dir, opt.Home) {
+				if isStateFile(m) {
+					a := base
+					a.Class, a.Engine, a.Why, a.TouchesState = StateSurgery, "file", "redirect writes to state file "+m+" (through a glob)", true
+					out = append(out, a)
+					break
+				}
+			}
 			continue
 		}
 		if r.Target.Resolved {
@@ -1088,10 +1097,7 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 			out = append(out, abs(ps[len(ps)-1]))
 		}
 	case name == "tar" || name == "bsdtar" || name == "gtar":
-		extract := has("-x", "--extract", "--get")
-		if len(args) > 0 && !strings.HasPrefix(args[0].Text, "--") && strings.Contains(strings.TrimPrefix(args[0].Text, "-"), "x") {
-			extract = true
-		}
+		extract, create := tarModes(args)
 		if extract {
 			if d, ok := flagValue('C', "--directory"); ok {
 				out = append(out, abs(d))
@@ -1100,10 +1106,6 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 			}
 		}
 		// Creating an archive writes the file -f names.
-		create := has("-c", "--create")
-		if len(args) > 0 && !strings.HasPrefix(args[0].Text, "--") && strings.Contains(strings.TrimPrefix(args[0].Text, "-"), "c") {
-			create = true
-		}
 		if create {
 			if f, ok := flagValue('f', "--file"); ok && f != "-" {
 				out = append(out, abs(f))
@@ -1248,6 +1250,10 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 // the ones it reads: its report, its dump, its output. The value is the
 // next word or follows "=". A program not listed here may have such an
 // option too; ask for those is the judge's and strict shapes' job.
+// tfOut are the options by which terraform and tofu write a file: a plan
+// over a state file replaces it.
+var tfOut = []string{"-out", "--out", "-generate-config-out", "-state-out", "-backup"}
+
 var outputOpts = map[string][]string{
 	"curl":           {"-o", "--output", "-D", "--dump-header", "-c", "--cookie-jar", "--trace", "--trace-ascii", "--stderr", "--libcurl"},
 	"wget":           {"-O", "--output-document", "-o", "--output-file", "-a", "--append-output"},
@@ -1262,7 +1268,8 @@ var outputOpts = map[string][]string{
 	"gofmt":          {},
 	"git":            {"--output"},
 	"find":           {"-fprint", "-fprint0", "-fprintf", "-fls"},
-	"fd":             {},
+	"terraform":      tfOut, "tofu": tfOut, "terragrunt": tfOut,
+	"fd": {},
 }
 
 // outputTargets returns the files a program's output options name.
@@ -1364,6 +1371,9 @@ func gitTargets(args []shell.Word, dir, home string) []string {
 	}
 	sub, rest := args[i].Text, args[i+1:]
 	abs := func(p string) string { return absPath(base, p, home) }
+	// The commands that rewrite the work tree rewrite all of it, not the
+	// directory they run in: a state file anywhere in the repository.
+	root := func() string { return repoRoot(abs(".")) }
 	var out []string
 	afterDashes := func() []string {
 		var ps []string
@@ -1392,7 +1402,24 @@ func gitTargets(args []shell.Word, dir, home string) []string {
 			// modified state files included.
 			if sub == "reset" && (w.Text == "--hard" || w.Text == "--keep" || w.Text == "--merge") ||
 				sub == "checkout" && (w.Text == "-f" || w.Text == "--force" || w.Text == "-B" || w.Text == "--discard-changes" || w.Text == "--merge") {
-				out = append(out, abs("."))
+				out = append(out, root())
+			}
+		}
+		if sub == "checkout" {
+			// git checkout REV switches the work tree to REV; with -b NEW
+			// only a start point does.
+			pos, newBranch := 0, false
+			for _, w := range rest {
+				switch {
+				case w.Text == "--":
+				case w.Text == "-b" || w.Text == "-B":
+					newBranch = true
+				case !strings.HasPrefix(w.Text, "-"):
+					pos++
+				}
+			}
+			if pos > 0 && (!newBranch || pos > 1) {
+				out = append(out, root())
 			}
 		}
 		out = append(out, afterDashes()...)
@@ -1412,12 +1439,12 @@ func gitTargets(args []shell.Word, dir, home string) []string {
 			}
 		}
 	case "clean", "checkout-index", "read-tree", "merge", "pull", "rebase", "cherry-pick", "revert", "switch":
-		out = append(out, abs("."))
+		out = append(out, root())
 	case "apply", "am":
-		out = append(out, abs("."))
+		out = append(out, root())
 	case "stash":
 		if len(rest) == 0 || rest[0].Text == "pop" || rest[0].Text == "apply" || rest[0].Text == "push" || rest[0].Text == "save" || strings.HasPrefix(rest[0].Text, "-") {
-			out = append(out, abs("."))
+			out = append(out, root())
 		}
 	}
 	return out
@@ -1945,6 +1972,15 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 			ms, _ := filepath.Glob(absPath(dir, w.Text, opt.Home))
 			pos = append([]string(nil), append(pos[:len(pos)-1], append(ms, pos[len(pos)-1])...)...)
 		}
+		if last := args[len(args)-1]; !last.Resolved {
+			// cp x terraform.tf*: the destination is whatever the glob matches.
+			for _, m := range globMatches(last, dir, opt.Home) {
+				if isStateFile(m) {
+					pos = append(pos, m)
+					break
+				}
+			}
+		}
 		if len(pos) < 2 {
 			return nil
 		}
@@ -1952,7 +1988,7 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 		for _, p := range pos[:len(pos)-1] {
 			if isStateFile(p) {
 				sources = append(sources, p)
-			} else if sf := stateIn(p); sf != "" {
+			} else if sf := stateUnder(p); sf != "" {
 				// cp -a ../prod/. . copies the state files in the directory.
 				sources = append(sources, sf)
 			} else if filepath.Base(p) == "terraform.tfstate.d" {
@@ -1972,7 +2008,7 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 			targets = append(targets, sources...)
 			// Moving a directory takes the state files in it along.
 			for _, p := range pos[:len(pos)-1] {
-				if sf := stateIn(p); sf != "" {
+				if sf := stateUnder(p); sf != "" {
 					targets = append(targets, sf)
 				}
 			}
@@ -1983,7 +2019,7 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 				targets = append(targets, p)
 			} else if removers[name] || name == "mv" || name == "rmdir" || name == "shred" {
 				// Removing or moving a directory takes the state files in it.
-				if sf := stateIn(p); sf != "" {
+				if sf := stateUnder(p); sf != "" {
 					targets = append(targets, sf)
 				} else if filepath.Base(p) == "terraform.tfstate.d" {
 					targets = append(targets, filepath.Join(p, "terraform.tfstate"))
@@ -1999,7 +2035,7 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 			for _, m := range ms {
 				if isStateFile(m) {
 					targets = append(targets, m)
-				} else if sf := stateIn(m); (removers[name] || name == "mv") && sf != "" {
+				} else if sf := stateUnder(m); (removers[name] || name == "mv") && sf != "" {
 					targets = append(targets, sf)
 				}
 			}
@@ -2011,8 +2047,24 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 		for _, t := range writeTargets(name, args, dir, opt.Home) {
 			if isStateFile(t) {
 				targets = append(targets, t)
-			} else if sf := stateIn(t); sf != "" {
+			} else if sf := stateUnder(t); sf != "" {
 				targets = append(targets, sf)
+			}
+		}
+		// sort -o terraform.tf* x: a glob that matches a state file stands
+		// for it where the program writes.
+		for i, w := range args {
+			for _, m := range globMatches(w, dir, opt.Home) {
+				if !isStateFile(m) {
+					continue
+				}
+				a2 := append([]shell.Word(nil), args...)
+				a2[i] = shell.Word{Text: m, Resolved: true, Prefix: m}
+				for _, t := range writeTargets(name, a2, dir, opt.Home) {
+					if isStateFile(t) {
+						targets = append(targets, t)
+					}
+				}
 			}
 		}
 		if len(targets) > 0 {
@@ -2110,6 +2162,102 @@ func tfDir(d string) bool {
 		}
 	}
 	return false
+}
+
+// tarModes reports whether a tar command extracts or creates, reading its
+// options as tar does: the old style (xf at the front), clusters (-xvf,
+// -zxf), long options, and an option's value (-C DIR, -f FILE) skipped.
+func tarModes(args []shell.Word) (extract, create bool) {
+	for i := 0; i < len(args); i++ {
+		t := args[i].Text
+		switch {
+		case t == "--extract" || t == "--get":
+			extract = true
+		case t == "--create":
+			create = true
+		case strings.HasPrefix(t, "--"):
+			if k, _, eq := strings.Cut(t, "="); !eq && (k == "--directory" || k == "--file" || k == "--files-from" || k == "--exclude-from" || k == "--transform" || k == "--use-compress-program" || k == "--to-command") {
+				i++
+			}
+		case strings.HasPrefix(t, "-") || i == 0 && t != "":
+			cluster := strings.TrimPrefix(t, "-")
+			for j, ch := range cluster {
+				switch ch {
+				case 'x':
+					extract = true
+				case 'c':
+					create = true
+				case 'C', 'f', 'I', 'T', 'X', 'F', 'K', 'L':
+					if j == len(cluster)-1 {
+						i++
+					}
+				}
+				if strings.ContainsRune("CfITXFKL", ch) {
+					break
+				}
+			}
+		}
+	}
+	return extract, create
+}
+
+// stateUnder returns a state file in directory d or any directory below it
+// ("" when there is none): removing, moving, copying or rewriting the tree
+// takes it along. The walk is bounded, and skips the caches that hold none.
+func stateUnder(d string) string {
+	if filepath.Base(d) == ".terraform" {
+		return "" // the backend cache, not a state
+	}
+	n := 0
+	found := ""
+	var walk func(dir string, depth int)
+	walk = func(dir string, depth int) {
+		if found != "" || depth > 8 || n > 20000 {
+			return
+		}
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		for _, e := range ents {
+			if n++; n > 20000 || found != "" {
+				return
+			}
+			name := e.Name()
+			switch {
+			case !e.IsDir() && isStateFile(name):
+				found = filepath.Join(dir, name)
+			case e.IsDir() && name == "terraform.tfstate.d":
+				found = filepath.Join(dir, name, "terraform.tfstate")
+			case e.IsDir() && name != ".git" && name != ".terraform" && name != "node_modules" && name != ".cache" && name != ".venv":
+				walk(filepath.Join(dir, name), depth+1)
+			}
+		}
+	}
+	walk(d, 0)
+	return found
+}
+
+// repoRoot is the top of the git work tree containing dir, or dir itself.
+func repoRoot(dir string) string {
+	for d := dir; d != "" && d != "/" && d != "."; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			return d
+		}
+		if filepath.Dir(d) == d {
+			break
+		}
+	}
+	return dir
+}
+
+// globMatches expands an unresolved word's glob against the file system.
+func globMatches(w shell.Word, dir, home string) []string {
+	if w.Resolved || !strings.ContainsAny(w.Text, "*?[") {
+		return nil
+	}
+	ms, _ := filepath.Glob(absPath(dir, w.Text, home))
+	return ms
 }
 
 // stateIn returns a state file held in directory d (or in its

@@ -496,9 +496,9 @@ func TestMCPArgumentsCapped(t *testing.T) {
 	if len(ev.Command) > maxMCPArgs+40 || !strings.Contains(ev.Command, "cut for the log") || !utf8.ValidString(ev.Command) {
 		t.Fatalf("arguments not capped cleanly: %d bytes, valid utf8 %v", len(ev.Command), utf8.ValidString(ev.Command))
 	}
-	// A tool that only looks like MCP, and other tools applygate does not
-	// inspect, stay unlogged.
-	for _, tool := range []string{"mcp__", "WebFetch", "Task"} {
+	// The host's bookkeeping and network tools stay unlogged; a tool that
+	// only looks like MCP is an unknown tool, which is looked into.
+	for _, tool := range []string{"WebFetch", "Task"} {
 		ev, _, _ := Claude{}.Parse([]byte(event(tool, "/w", map[string]any{})))
 		if ev.Kind != policy.KindOther {
 			t.Errorf("%s: kind %s", tool, ev.Kind)

@@ -136,7 +136,13 @@ var secretFile = regexp.MustCompile(`(?i)(^|/)(\.env(\.[^/]*)?|\.envrc|\.netrc|\
 	`[^/]*\.tfstate(\.[^/]*)?|[^/]*\.tfvars(\.json)?|\.vault-token|\.my\.cnf|\.s3cfg|\.boto|\.terraformrc|terraform\.rc|` +
 	// Maven repository passwords and shell history, which holds typed
 	// secrets.
-	`settings-security\.xml|\.m2/settings\.xml|\.gradle/gradle\.properties|\.(zsh|bash|python|psql|mysql|node_repl|sqlite|rediscli)_history|\.zhistory|\.dbt/profiles\.yml|profiles\.yml)$`)
+	// Service-account and client keys, kubeconfigs under other names, secret
+	// stores, saved plans (they hold values in the clear) and the process
+	// environment, which is `env` by another path.
+	`[^/]*(service[-_]?account|sa[-_]key|client[-_]secret|apikey|api[-_]key)[^/]*\.(json|ya?ml|txt)|kubeconfig[^/]*|admin\.conf|[^/]*secrets?[^/]*\.(ya?ml|json|txt|env)|secrets?\.txt|[^/]*\.secrets?|[^/]*\.tfplan|plan\.out|` +
+	`\.dockercfg|\.mylogin\.cnf|\.htpasswd|\.pip/pip\.conf|\.databrickscfg|\.snowsql/config|\.sentryclirc|\.ngrok2/ngrok\.yml|\.claude\.json|\.codex/auth\.json|` +
+	`\.gemini/oauth_creds\.json|\.config/github-copilot/hosts\.json|\.local/share/opencode/auth\.json|\.config/vercel/auth\.json|\.config/netlify/config\.json|\.config/stripe/config\.toml|wp-config\.php|config/database\.yml|proc/[^/]+/environ|` +
+	`\.git/config|settings-security\.xml|\.m2/settings\.xml|\.gradle/gradle\.properties|\.(zsh|bash|python|psql|mysql|node_repl|sqlite|rediscli)_history|\.zhistory|\.dbt/profiles\.yml|profiles\.yml)$`)
 
 // credentialDir matches paths inside the directories where CLIs keep
 // credentials and session tokens.
@@ -244,6 +250,19 @@ var execEnv = map[string]bool{"CC": true, "CXX": true, "LD": true, "AR": true, "
 	"DYLD_INSERT_LIBRARIES": true, "DYLD_LIBRARY_PATH": true, "BASH_ENV": true, "ENV": true, "PERL5OPT": true,
 	"PERL5LIB": true, "RUBYOPT": true, "RUBYLIB": true, "GOFLAGS": true, "GOTOOLCHAIN": true, "CGO_CFLAGS": true,
 	"CGO_LDFLAGS": true, "EDITOR": true, "VISUAL": true, "PAGER": true, "SHELL": true, "PATH": true}
+
+// harmlessEnv reports a variable that changes how a program prints or how
+// much it logs, and nothing it runs.
+func harmlessEnv(k string) bool {
+	switch k {
+	case "LANG", "LANGUAGE", "TZ", "TERM", "NO_COLOR", "FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "COLUMNS", "LINES", "CI",
+		"DEBUG", "VERBOSE", "NODE_ENV", "PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE", "GOOS", "GOARCH", "CGO_ENABLED",
+		"GOMAXPROCS", "CARGO_TERM_COLOR", "RUST_BACKTRACE", "RUST_LOG", "LOG_LEVEL", "TF_LOG", "TF_IN_AUTOMATION", "TF_INPUT",
+		"PYTHONHASHSEED", "FORCE", "DRY_RUN", "DOCKER_BUILDKIT", "COMPOSE_DOCKER_CLI_BUILD", "PAGER_OFF", "GIT_PAGER_IN_USE":
+		return true
+	}
+	return strings.HasPrefix(k, "LC_") || strings.HasPrefix(k, "PYTEST_") || strings.HasPrefix(k, "TF_VAR_")
+}
 
 // sedRuns reports whether a sed script runs a command (GNU sed's e
 // command and the s///e flag) or writes a file (w, W, s///w).
@@ -366,6 +385,9 @@ func safeInvocation(inv shell.Invocation, root string) bool {
 	}
 	for _, r := range inv.Redirs {
 		t := r.Target.Text
+		if strings.HasPrefix(t, "/") {
+			t = path.Clean(t) // /tmp/../etc/cron.d/y is not in /tmp
+		}
 		// A file the shell writes goes to the judge, as a Write call does:
 		// a test file or a package script written here runs in the next
 		// step (printf '…' > zz_test.go && go test).
@@ -383,8 +405,11 @@ func safeInvocation(inv shell.Invocation, root string) bool {
 		return false
 	}
 	for k := range inv.Env {
-		if execEnv[k] || strings.HasPrefix(k, "CARGO_TARGET_") || strings.HasPrefix(k, "npm_config_") || strings.HasPrefix(k, "NPM_CONFIG_") || strings.HasPrefix(k, "GIT_") {
-			return false // the variable makes the program start another
+		// A positive list: a variable not known to be harmless can make the
+		// program start another (HOME or XDG_CONFIG_HOME for git, GOCACHEPROG,
+		// GOAUTH, LESSOPEN, JAVA_TOOL_OPTIONS), and the list of those is open.
+		if execEnv[k] || !harmlessEnv(k) {
+			return false
 		}
 	}
 	if (name == "sed" || name == "gsed") && sedRuns(rest) {
@@ -393,14 +418,34 @@ func safeInvocation(inv shell.Invocation, root string) bool {
 	switch name {
 	case "tee":
 		for _, a := range rest {
-			if !strings.HasPrefix(a, "-") && a != "/dev/null" && !strings.HasPrefix(a, "/tmp/") {
+			if !strings.HasPrefix(a, "-") && a != "/dev/null" && !strings.HasPrefix(path.Clean(a), "/tmp/") {
 				return false
 			}
 		}
-	case "sed", "gsed", "perl":
-		for _, a := range rest {
-			if strings.HasPrefix(a, "-i") || a == "--in-place" || strings.HasPrefix(a, "--in-place=") {
-				return false // edits a file in place
+	case "sed", "gsed", "perl", "ruby", "yq":
+		if shell.InPlaceEdit(inv.Args[1:]) {
+			return false // edits a file in place (-i, -Ei, -ni, --in-pl…)
+		}
+	case "cp", "mv", "ln", "install", "rsync", "ditto", "tar", "bsdtar", "gtar", "unzip", "7z", "patch":
+		// These write the files they name or carry: a CI workflow, a
+		// Makefile or an AGENTS.md copied in from a scratch file acts later,
+		// as a Write of it would. Only /tmp is scratch.
+		if name != "tar" && name != "bsdtar" && name != "gtar" || shell.TarWrites(inv.Args[1:]) {
+			scratch := true
+			for _, a := range rest {
+				if strings.HasPrefix(a, "-") {
+					continue
+				}
+				if p := path.Clean(a); !strings.HasPrefix(a, "/") || !strings.HasPrefix(p, "/tmp/") {
+					if name == "tar" || name == "bsdtar" || name == "gtar" || name == "unzip" || name == "7z" {
+						scratch = false
+					} else if !strings.HasPrefix(p, "/tmp/") && len(rest) > 0 && a == rest[len(rest)-1] {
+						scratch = false // the destination
+					}
+				}
+			}
+			if !scratch {
+				return false
 			}
 		}
 	}
@@ -479,7 +524,7 @@ func safeInvocation(inv shell.Invocation, root string) bool {
 			read := false
 			for _, a := range rest[1:] {
 				switch {
-				case a == "--get" || a == "--get-all" || a == "--get-regexp" || a == "--list" || a == "-l" || a == "--show-origin" || a == "--show-scope" || a == "--name-only":
+				case a == "--get" || a == "--get-all" || a == "--get-regexp" || a == "--list" || a == "-l" || a == "--get-urlmatch":
 					read = true
 				case !strings.HasPrefix(a, "-"):
 					pos = append(pos, a)

@@ -750,6 +750,9 @@ func restricts(raw json.RawMessage) bool {
 		if strings.HasPrefix(lop, "null") || strings.Contains(lop, "not") {
 			continue // Null tests whether a key is present; a negative operator excludes, it does not limit
 		}
+		if strings.HasSuffix(lop, "ifexists") || strings.HasPrefix(lop, "forallvalues") {
+			continue // a request without the key passes IfExists, and an empty set passes ForAllValues
+		}
 		for k, vraw := range keys {
 			if !restrictingKeys[strings.ToLower(k)] {
 				continue
@@ -763,15 +766,28 @@ func restricts(raw json.RawMessage) bool {
 				}
 				continue
 			}
+			// The values of one key are ORed: the key limits who is let in
+			// only when every one of them does.
+			limits := true
 			for _, v := range vals {
-				if v == "*" || v == "" || strings.Trim(v, "*?:/") == "" || wideCIDR(v) || strings.HasPrefix(v, "arn:aws:*") || v == "arn:aws:iam::*:*" {
-					continue
+				if v == "*" || v == "" || strings.Trim(v, "*?:/") == "" || wideCIDR(v) || strings.HasPrefix(v, "arn:aws:*") || v == "arn:aws:iam::*:*" || arnAnyAccount(v) {
+					limits = false
+					break
 				}
+			}
+			if limits {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// arnAnyAccount reports an ARN pattern whose account field is a wildcard: it
+// matches the resources of every AWS account.
+func arnAnyAccount(v string) bool {
+	parts := strings.SplitN(v, ":", 6)
+	return len(parts) == 6 && parts[0] == "arn" && strings.Trim(parts[4], "*?") == "" && parts[4] != ""
 }
 
 func statements(doc string) []statement {

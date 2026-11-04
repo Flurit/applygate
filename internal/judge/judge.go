@@ -21,6 +21,7 @@ import (
 
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/policy"
+	"github.com/Flurit/applygate/internal/shell"
 )
 
 // PromptVersion changes whenever System or the input format changes, so
@@ -102,6 +103,43 @@ func Residual(d policy.Decision) bool {
 		}
 	}
 	return true
+}
+
+// ResidualFor is Residual for a call whose text is known. A call in which the
+// rules recognized only read-only actions (terraform fmt, kubectl get) still
+// reaches the judge when it also runs a program they do not classify
+// (terraform fmt && pulumi destroy --yes): the recognized part must not take
+// the rest out of the judge's sight.
+func ResidualFor(d policy.Decision, in Input) bool {
+	if Residual(d) {
+		return true
+	}
+	if d.Verdict != policy.Allow || in.Command == "" {
+		return false
+	}
+	engines := map[string]bool{}
+	for _, a := range d.Actions {
+		if a.Engine == "" || a.Engine == "shell" && a.Class == "complex-shape" {
+			continue
+		}
+		if a.Class != "read-only" {
+			return false
+		}
+		engines[a.Engine] = true
+	}
+	res := shell.Analyze(in.Command, shell.Options{Dir: in.Cwd, ReadFile: noFiles})
+	if len(res.Problems) > 0 {
+		return true
+	}
+	for _, inv := range res.Invocations {
+		if len(inv.Args) > 0 && inv.Args[0].Resolved && engines[shell.ProgName(inv.Args[0].Text)] {
+			continue
+		}
+		if !safeInvocation(inv, in.Cwd) {
+			return true
+		}
+	}
+	return false
 }
 
 // Merge keeps the stricter of the rule verdict and the judge verdict. A

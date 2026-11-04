@@ -320,6 +320,9 @@ var DefaultProtectedPaths = []string{
 	// A repository's own git config and hooks: a hook, an alias that is a
 	// shell command or core.fsmonitor in them runs the next time anything
 	// runs git there, from whichever directory that is.
+	// Provider binaries and modules init installed are code a later plan
+	// runs; an agent must not place its own there.
+	"**/.terraform/providers/**", "**/.terraform/modules/**", "**/.terraform.d/plugins/**",
 	"**/.git/config", "**/.git/config.worktree", "**/.git/hooks/**", "**/.git/modules/**/config", "**/.git/modules/**/hooks/**",
 	// The go environment file sets GOFLAGS (-toolexec) for every later go
 	// command.
@@ -1216,7 +1219,7 @@ var (
 	prodWords      = map[string]bool{"prod": true, "production": true, "prd": true, "live": true}
 	prodNegPrefix  = map[string]bool{"non": true, "not": true, "no": true, "pre": true}
 	prodNegSuffix  = map[string]bool{"like": true, "test": true, "sandbox": true}
-	hintSeparators = "/_.:-"
+	hintSeparators = "/_.:-@+=,~ \t"
 )
 
 // LooksProd reports whether a path, workspace, profile or backend value
@@ -1281,7 +1284,15 @@ func (c *Config) Resolve(s Signals) Resolution {
 			why := ""
 			for i, d := range dirs {
 				for _, q := range pats {
-					if classify.MatchGlob(q, d) || classify.MatchGlob(strings.TrimSuffix(q, "/**"), d) {
+					// Where the file system ignores case, the whole pattern
+					// and path are compared folded: **/Payments/** matches
+					// team/payments, the same directory.
+					fq, fd := q, d
+					if guard.FoldCase {
+						fq, fd = guard.Fold(q), guard.Fold(d)
+					}
+					if classify.MatchGlob(q, d) || classify.MatchGlob(strings.TrimSuffix(q, "/**"), d) ||
+						classify.MatchGlob(fq, fd) || classify.MatchGlob(strings.TrimSuffix(fq, "/**"), fd) {
 						pathMatched[i] = true
 						if why == "" {
 							why = "path " + p
@@ -1406,6 +1417,15 @@ func (c *Config) Resolve(s Signals) Resolution {
 		}
 		for _, v := range s.ProviderRoles {
 			hints = append(hints, struct{ what, v string }{"provider role", v})
+		}
+		for _, v := range s.ProviderContexts {
+			hints = append(hints, struct{ what, v string }{"provider kube context", v})
+		}
+		for _, v := range s.ProviderProjects {
+			hints = append(hints, struct{ what, v string }{"provider GCP project", v})
+		}
+		for _, v := range s.ProviderSubscriptions {
+			hints = append(hints, struct{ what, v string }{"provider Azure subscription", v})
 		}
 		for _, k := range BackendHintKeys {
 			// Values already in the backend URL were checked above.

@@ -276,6 +276,10 @@ func RunsPrograms(dir, dataDir string) string {
 	if why := scan(dir, 0); why != "" {
 		return why
 	}
+	// terraform test reads its files from tests/ as well.
+	if why := scan(filepath.Join(dir, "tests"), 1); why != "" {
+		return why
+	}
 	// The module manifest says where each module's files are: Terraform
 	// loads a module from whatever directory it names.
 	if b, err := os.ReadFile(filepath.Join(dataDir, "modules", "modules.json")); err == nil {
@@ -317,7 +321,10 @@ func configName(n string) bool {
 	if strings.HasPrefix(n, ".") || strings.HasPrefix(n, "#") || strings.HasSuffix(n, "~") {
 		return false
 	}
-	for _, x := range []string{".tf", ".tf.json", ".tofu", ".tofu.json"} {
+	for _, x := range []string{".tf", ".tf.json", ".tofu", ".tofu.json",
+		// terraform query, test and stacks read provider blocks from
+		// their own file kinds.
+		".tfquery.hcl", ".tftest.hcl", ".tftest.json", ".tfmock.hcl", ".tfmock.json", ".tfstack.hcl", ".tfcomponent.hcl", ".tfdeploy.hcl"} {
 		if strings.HasSuffix(n, x) {
 			return true
 		}
@@ -384,7 +391,8 @@ var (
 		{Type: "resource", LabelNames: []string{"type", "name"}},
 	}}
 	runsCheckSchema     = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "data", LabelNames: []string{"type", "name"}}}}
-	runsTerraformSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "backend", LabelNames: []string{"type"}}}}
+	runsTerraformSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "backend", LabelNames: []string{"type"}}, {Type: "encryption"}}}
+	encryptionSchema    = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "key_provider", LabelNames: []string{"type", "name"}}}}
 	// programFiles are the provider and backend attributes that name a
 	// kubeconfig or AWS config file, whose exec and credential_process
 	// entries run programs.
@@ -420,12 +428,134 @@ func RunsBackendPrograms(dir string) string {
 			if b.Type != "terraform" {
 				continue
 			}
-			inner, _, _ := b.Body.PartialContent(runsTerraformSchema)
-			for _, be := range inner.Blocks {
-				if why := runsNested(be.Body, "backend \""+be.Labels[0]+"\"", f, 0); why != "" {
-					return why
+			if why := terraformRuns(b.Body, f); why != "" {
+				return why
+			}
+		}
+	}
+	return ""
+}
+
+// RunsBackendConfig reports what the -backend-config values of an init name
+// that runs a program: a key=value pair or a file that sets a credentials or
+// kubeconfig file (shared_config_files and the like) or exec. Terraform
+// merges them into the backend block, so they are scanned like it.
+func RunsBackendConfig(dir string, specs []string) string {
+	check := func(name string, e hcl.Expression, src string) string {
+		for _, n := range programFiles {
+			if name == n && !userConfigFile(e) {
+				return "-backend-config " + src + " sets " + n + ", whose file can run a program (exec, credential_process)"
+			}
+		}
+		for _, n := range []string{"exec", "ssh_opts", "credential_process", "credentials_process"} {
+			if name == n {
+				return "-backend-config " + src + " sets " + n + ", which runs a program"
+			}
+		}
+		return ""
+	}
+	for _, sp := range specs {
+		if k, v, ok := strings.Cut(sp, "="); ok && !strings.ContainsAny(k, "/\\ ") {
+			var e hcl.Expression
+			pe, d := hclsyntax.ParseExpression([]byte(v), "-backend-config", hcl.Pos{Line: 1, Column: 1})
+			if d.HasErrors() {
+				e = hcl.StaticExpr(cty.StringVal(v), hcl.Range{})
+			} else {
+				e = pe
+			}
+			if why := check(strings.TrimSpace(k), e, sp); why != "" {
+				return why
+			}
+			continue
+		}
+		f := sp
+		if !filepath.IsAbs(f) {
+			f = filepath.Join(dir, f)
+		}
+		src, err := readCapped(f, MaxConfigFile)
+		if err != nil {
+			return "a -backend-config file that cannot be read: " + sp + " (" + err.Error() + ")"
+		}
+		var body hcl.Body
+		if strings.HasSuffix(f, ".json") {
+			file, d := hcljson.Parse(src, f)
+			if d.HasErrors() || file == nil {
+				return "a -backend-config file that does not parse: " + sp
+			}
+			body = file.Body
+		} else {
+			file, d := hclsyntax.ParseConfig(src, f, hcl.Pos{Line: 1, Column: 1})
+			if d.HasErrors() || file == nil {
+				return "a -backend-config file that does not parse: " + sp
+			}
+			body = file.Body
+		}
+		attrs, _ := body.JustAttributes()
+		for name, a := range attrs {
+			if why := check(name, a.Expr, sp); why != "" {
+				return why
+			}
+		}
+	}
+	return ""
+}
+
+// RunsRecordedBackend reports a program the backend configuration recorded by
+// the last init (the data directory's terraform.tfstate) names: a backend
+// configured through -backend-config keeps its values there, and every later
+// state, output or workspace command reads them.
+func RunsRecordedBackend(dataDir string) string {
+	b, err := readCapped(filepath.Join(dataDir, "terraform.tfstate"), MaxConfigFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return ""
+		}
+		return "the recorded backend configuration cannot be read: " + err.Error()
+	}
+	var rec struct {
+		Backend struct {
+			Config map[string]any `json:"config"`
+		} `json:"backend"`
+	}
+	if json.Unmarshal(b, &rec) != nil {
+		return "the recorded backend configuration does not parse"
+	}
+	for k, v := range rec.Backend.Config {
+		for _, n := range programFiles {
+			if k == n && v != nil {
+				if list, ok := v.([]any); ok && len(list) == 0 {
+					continue
+				}
+				if str, ok := v.(string); ok && (str == "" || str == "~/.aws/config" || str == "~/.aws/credentials" || str == "~/.kube/config") {
+					continue
+				}
+				return "the backend recorded by init sets " + k + ", whose file can run a program (exec, credential_process)"
+			}
+		}
+		if k == "exec" || k == "ssh_opts" || k == "credential_process" || k == "credentials_process" {
+			return "the backend recorded by init sets " + k + ", which runs a program"
+		}
+	}
+	return ""
+}
+
+// terraformRuns reports what a terraform block does that runs a program: a
+// backend that names a credentials file or exec, and OpenTofu's external key
+// provider, which runs its command whenever state is read or written.
+func terraformRuns(body hcl.Body, f string) string {
+	inner, _, _ := body.PartialContent(runsTerraformSchema)
+	for _, be := range inner.Blocks {
+		if be.Type == "encryption" {
+			enc, _, _ := be.Body.PartialContent(encryptionSchema)
+			for _, kp := range enc.Blocks {
+				if len(kp.Labels) > 0 && kp.Labels[0] == "external" {
+					return "an encryption key_provider \"external\" in " + f + " runs a program whenever state is read or written"
 				}
 			}
+			continue
+		}
+		if why := runsNested(be.Body, "backend \""+be.Labels[0]+"\"", f, 0); why != "" {
+			return why
 		}
 	}
 	return ""
@@ -457,11 +587,8 @@ func runsIn(body hcl.Body, f string) string {
 				return why
 			}
 		case "terraform":
-			inner, _, _ := b.Body.PartialContent(runsTerraformSchema)
-			for _, be := range inner.Blocks {
-				if why := runsNested(be.Body, "backend \""+be.Labels[0]+"\"", f, 0); why != "" {
-					return why
-				}
+			if why := terraformRuns(b.Body, f); why != "" {
+				return why
 			}
 		}
 	}
@@ -560,6 +687,42 @@ func moduleSources(body hcl.Body) []string {
 	return out
 }
 
+// modulesToFetch reports whether the configuration calls a module that is
+// not local and not listed in the installed module manifest, which init
+// would download.
+func modulesToFetch(dir string) bool {
+	installed := map[string]bool{}
+	if b, err := os.ReadFile(filepath.Join(dir, ".terraform", "modules", "modules.json")); err == nil {
+		var m struct{ Modules []struct{ Source string } }
+		if json.Unmarshal(b, &m) == nil {
+			for _, mod := range m.Modules {
+				installed[mod.Source] = true
+			}
+		}
+	}
+	for _, f := range parsedFiles(dir) {
+		for _, src := range moduleSources(f.Body) {
+			if strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") || installed[src] {
+				continue
+			}
+			return true
+		}
+	}
+	// A module source that is not a literal cannot be matched.
+	for _, f := range parsedFiles(dir) {
+		c, _, _ := f.Body.PartialContent(moduleSchema)
+		for _, mb := range c.Blocks {
+			attrs, _ := mb.Body.JustAttributes()
+			if a, ok := attrs["source"]; ok {
+				if _, lit := literal(a.Expr); !lit {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // InitSafe reports whether a plain terraform init in dir installs only what
 // the committed lock file vouches for: the lock file and the module sources
 // are as committed (no drift since HEAD), and the lock lists every provider
@@ -567,6 +730,11 @@ func moduleSources(body hcl.Body) []string {
 // download against hashes the agent did not choose.
 func InitSafe(ctx context.Context, dir string) bool {
 	if LockfileDrift(dir) != nil {
+		return false
+	}
+	// A module that is not installed already is fetched by init, and what it
+	// holds (providers, data sources) is not known until then.
+	if modulesToFetch(dir) {
 		return false
 	}
 	lock, err := readCapped(filepath.Join(dir, ".terraform.lock.hcl"), MaxConfigFile)

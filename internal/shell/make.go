@@ -19,8 +19,8 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 	// use $(MAKE). -p prints its database and still runs everything.
 	dry := false
 	for _, k := range []string{"MAKEFILES", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS"} {
-		if v, ok := cmdSt.vars[k]; ok && cmdSt.exported[k] && (v.text != "" || !v.ok) {
-			a.problem(st, via, k+"="+v.text+" "+joinWords(args), k+" in the environment changes what make reads or does; it cannot be analyzed")
+		if v, ok := cmdSt.vars[k]; ok && cmdSt.isExp(k) && (v.text != "" || !v.ok) {
+			a.unbounded(st, via, k+"="+v.text+" "+joinWords(args), k+" in the environment changes what make reads or does (MAKEFLAGS=-C DIR changes the directory); it cannot be analyzed")
 			return true
 		}
 	}
@@ -36,12 +36,12 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 			dir = ""
 		}
 	}
-	rest := args[1:]
+	rest := splitMakeShort(args[1:])
 	for i := 0; i < len(rest); i++ {
 		w := rest[i]
 		t := makeLongOption(w.Text)
 		if !w.Resolved {
-			a.problem(st, via, joinWords(args), "make argument cannot be resolved statically")
+			a.unbounded(st, via, joinWords(args), "make argument cannot be resolved statically (it may be -C DIR)")
 			return true
 		}
 		next := func() (string, bool) {
@@ -73,12 +73,12 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 			files = append(files, t[2:])
 		case t == "-j" || t == "-l" || t == "-o" || t == "-W" || t == "-I" || t == "--eval" || t == "-E":
 			if t == "--eval" || t == "-E" {
-				a.problem(st, via, joinWords(args), "make --eval adds makefile text; it cannot be analyzed")
+				a.unbounded(st, via, joinWords(args), "make --eval adds makefile text; it cannot be analyzed")
 				return true
 			}
 			i++
 		case strings.HasPrefix(t, "--eval="):
-			a.problem(st, via, joinWords(args), "make --eval adds makefile text; it cannot be analyzed")
+			a.unbounded(st, via, joinWords(args), "make --eval adds makefile text; it cannot be analyzed")
 			return true
 		case strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && strings.ContainsAny(t[1:], "nqt") && strings.Trim(t[1:], "nqtksiBeSrRwp") == "":
 			dry = true
@@ -196,6 +196,7 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 			}
 			child := cmdSt.childState()
 			child.dir = dir
+			mf.recipeEnv(child, vars)
 			a.source(strings.Join(lines, "\n"), child, append(via, "make "+t), depth+1)
 			return
 		}
@@ -208,6 +209,7 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 			line = mf.expand(line)
 			child := cmdSt.childState()
 			child.dir = dir
+			mf.recipeEnv(child, vars)
 			a.source(line, child, append(via, "make "+t), depth+1)
 		}
 	}
@@ -227,6 +229,10 @@ type makefile struct {
 	rules    map[string]*makeRule
 	first    string
 	oneshell bool // .ONESHELL: each recipe runs in one shell
+	// exports are the variables the makefile exports to its recipes
+	// (export NAME, export NAME=val); exportAll is .EXPORT_ALL_VARIABLES.
+	exports   map[string]bool
+	exportAll bool
 	// unsafe names a makefile feature the reader does not follow: define
 	// blocks, conditionals, pattern and default rules, a default goal,
 	// recipe prefix and shell flags, second expansion, eval and call.
@@ -236,6 +242,34 @@ type makefile struct {
 var makeUnsafe = regexp.MustCompile(`(?m)^\s*(define\s|endef\b|ifeq\b|ifneq\b|ifdef\b|ifndef\b|else\b|endif\b|vpath\b|\.DEFAULT_GOAL\b|\.DEFAULT\s*:|\.RECIPEPREFIX\b|\.SHELLFLAGS\b|\.SECONDEXPANSION\b|export\s*$|unexport\b)`)
 var makeUnsafeFn = regexp.MustCompile(`\$[({]\s*(eval|call|foreach|shell|file|value)\b`)
 
+var makeTargetVar = regexp.MustCompile(`^[^\s:=#][^:=#]*:\s*(export\s+|override\s+|private\s+)*[A-Za-z_][A-Za-z0-9_.-]*\s*(:=|::=|\+=|\?=|=)`)
+
+// recipeEnv sets the environment a recipe starts with: the variables the
+// makefile exports (all of them under .EXPORT_ALL_VARIABLES), and every
+// variable given on the command line, which make passes on to recipes.
+func (mf *makefile) recipeEnv(child *state, cmdline map[string]string) {
+	set := func(name string) {
+		v := mf.expand(mf.vars[name])
+		if strings.Contains(v, "$") {
+			child.vars[name] = value{}
+		} else {
+			child.vars[name] = value{text: v, ok: true}
+		}
+		child.exported[name] = true
+	}
+	for n := range mf.exports {
+		set(n)
+	}
+	if mf.exportAll {
+		for n := range mf.vars {
+			set(n)
+		}
+	}
+	for n := range cmdline {
+		set(n)
+	}
+}
+
 var (
 	makeInclude = regexp.MustCompile(`(?m)^(-|s)?include\s+(.+)$`)
 	makeAssign  = regexp.MustCompile(`^(?:export\s+|override\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*(\?=|:=|::=|\+=|=)\s*(.*)$`)
@@ -244,7 +278,7 @@ var (
 )
 
 func parseMakefile(src string) *makefile {
-	mf := &makefile{vars: map[string]string{}, rules: map[string]*makeRule{}}
+	mf := &makefile{vars: map[string]string{}, rules: map[string]*makeRule{}, exports: map[string]bool{}}
 	if m := makeUnsafe.FindStringSubmatch(src); m != nil {
 		mf.unsafe = strings.TrimSpace(m[1])
 	} else if m := makeUnsafeFn.FindStringSubmatch(src); m != nil {
@@ -262,6 +296,14 @@ func parseMakefile(src string) *makefile {
 		trim := strings.TrimSpace(line)
 		if trim == "" || strings.HasPrefix(trim, "#") {
 			continue
+		}
+		if rest, ok := strings.CutPrefix(trim, "export "); ok {
+			for _, n := range strings.Fields(strings.SplitN(rest, "=", 2)[0]) {
+				mf.exports[strings.TrimRight(n, ":+?")] = true
+			}
+		}
+		if makeTargetVar.MatchString(trim) && mf.unsafe == "" {
+			mf.unsafe = "a target-specific variable"
 		}
 		if m := makeAssign.FindStringSubmatch(trim); m != nil {
 			if m[2] == "+=" {
@@ -281,6 +323,9 @@ func parseMakefile(src string) *makefile {
 				}
 				if t == ".ONESHELL" {
 					mf.oneshell = true
+				}
+				if t == ".EXPORT_ALL_VARIABLES" {
+					mf.exportAll = true
 				}
 				if strings.HasPrefix(t, ".") {
 					continue
@@ -324,6 +369,34 @@ func (mf *makefile) expand(s string) string {
 		s = n
 	}
 	return strings.ReplaceAll(s, "$$", "$")
+}
+
+// splitMakeShort splits a cluster of short options that ends in one taking a
+// value (-sC../prod, -kC dir) into separate words, the way getopt reads it.
+func splitMakeShort(rest []Word) []Word {
+	var out []Word
+	for _, w := range rest {
+		t := w.Text
+		if len(t) < 3 || t[0] != '-' || t[1] == '-' {
+			out = append(out, w)
+			continue
+		}
+		k := strings.IndexAny(t[1:], "CfIoWEjl")
+		if k < 0 {
+			out = append(out, w)
+			continue
+		}
+		k++
+		for _, f := range t[1:k] {
+			out = append(out, Word{Text: "-" + string(f), Resolved: true, Prefix: "-" + string(f)})
+		}
+		opt := "-" + string(t[k])
+		out = append(out, Word{Text: opt, Resolved: true, Prefix: opt})
+		if v := t[k+1:]; v != "" {
+			out = append(out, Word{Text: v, Resolved: w.Resolved, Prefix: v})
+		}
+	}
+	return out
 }
 
 // makeLong are the long options of GNU make that matter to the analysis;

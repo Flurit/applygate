@@ -43,6 +43,22 @@ func lits(ss ...string) []Word {
 // call handles one simple command. cmdSt carries prefix assignments; st is
 // the enclosing shell state (mutated by cd, alias, and similar builtins).
 func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []string, depth int, in stdin) {
+	if len(redirs) > 0 {
+		// Redirections are applied by the shell before the command runs, so a
+		// command that reduces to no program the analyzer records (env with
+		// no command, cd, set, eval, trap, a wrapper with nothing to run)
+		// still opens its targets: they are recorded as a write of their own
+		// unless the call recorded them itself.
+		n0, dir, env := len(a.res.Invocations), cmdSt.dir, cmdSt.env()
+		defer func() {
+			for _, inv := range a.res.Invocations[n0:] {
+				if len(inv.Redirs) > 0 {
+					return
+				}
+			}
+			a.res.Invocations = append(a.res.Invocations, Invocation{Dir: dir, Env: env, Redirs: redirs, Via: append([]string(nil), via...)})
+		}()
+	}
 	if len(args) == 0 {
 		// exec 5<>file: the redirections apply to the shell itself.
 		if len(redirs) > 0 && len(via) > 0 && via[len(via)-1] == "exec" {
@@ -115,6 +131,15 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 	}
 
 	a.noteWrites(bn, rest, cmdSt)
+	a.callbackBuiltin(bn, rest, st, via, depth)
+	if subscriptBuiltins[bn] {
+		for _, w := range rest {
+			if subscriptRuns(w) {
+				a.unbounded(st, via, bn+" "+w.Text, bn+" names a variable whose subscript holds a command substitution; the shell evaluates the subscript, which runs it")
+				break
+			}
+		}
+	}
 
 	if name != bn && shellBuiltins[bn] && !strings.Contains(name, "/") {
 		// Builtins are matched exactly: CD or Source is a program lookup,
@@ -325,8 +350,22 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		for i := 0; i < len(rest); i++ {
 			t := rest[i].Text
 			if t == "-o" || t == "+o" {
+				if i+1 < len(rest) && rest[i+1].Text == "allexport" {
+					st.allexport = t == "-o"
+				}
+				if i+1 < len(rest) && rest[i+1].Text == "keyword" && t == "-o" {
+					a.unbounded(st, via, "set -o keyword", "set -k turns words after a command into environment, which the analyzer does not follow")
+				}
 				i++
 				continue
+			}
+			if rest[i].Resolved && len(t) > 1 && (t[0] == '-' || t[0] == '+') && t[1] != '-' {
+				if strings.Contains(t[1:], "a") {
+					st.allexport = t[0] == '-'
+				}
+				if t[0] == '-' && strings.Contains(t[1:], "k") {
+					a.unbounded(st, via, "set "+t, "set -k turns words after a command into environment, which the analyzer does not follow")
+				}
 			}
 			if t == "--" || !strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "+") || !rest[i].Resolved {
 				if t == "--" && rest[i].Resolved {
@@ -467,7 +506,33 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		a.backstop(bn, rest, redirs, cmdSt, st, via, depth)
 		return
 	case "sudo", "doas":
-		a.call(skipFlags(rest, map[string]bool{"-u": true, "-g": true, "-C": true, "-D": true, "-h": true, "-p": true, "-r": true, "-t": true, "-U": true}), redirs, cmdSt, st, append(via, bn), depth+1, in)
+		// sudo -D DIR and --chdir=DIR run the command in DIR (when sudoers
+		// allows it): the directory is DIR, or unknown when DIR is not.
+		ss := cmdSt
+		for i, w := range rest {
+			t := w.Text
+			if !strings.HasPrefix(t, "-") {
+				break
+			}
+			var dir Word
+			switch {
+			case t == "-D" && i+1 < len(rest):
+				dir = rest[i+1]
+			case strings.HasPrefix(t, "--chdir="):
+				dir = Word{Text: strings.TrimPrefix(t, "--chdir="), Resolved: w.Resolved, Prefix: strings.TrimPrefix(t, "--chdir=")}
+			case strings.HasPrefix(t, "-D") && len(t) > 2 && !strings.HasPrefix(t, "--"):
+				dir = Word{Text: t[2:], Resolved: w.Resolved, Prefix: t[2:]}
+			default:
+				continue
+			}
+			ss = cmdSt.clone()
+			if dir.Resolved {
+				ss.dir = a.abs(ss, dir.Text)
+			} else {
+				ss.dir = ""
+			}
+		}
+		a.call(skipFlags(rest, map[string]bool{"-u": true, "-g": true, "-C": true, "-D": true, "-h": true, "-p": true, "-r": true, "-t": true, "-U": true}), redirs, ss, st, append(via, bn), depth+1, in)
 		return
 	case "nice", "ionice", "stdbuf", "taskset":
 		valued := map[string]bool{"-n": true, "-c": true, "-p": true, "-i": true, "-o": true, "-e": true, "-w": true}
@@ -480,7 +545,19 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		a.call(r, redirs, cmdSt, st, append(via, bn), depth+1, in)
 		return
 	case "flock":
-		// flock [opts] FILE -c 'command line' | flock [opts] FILE command...
+		// flock [opts] FILE -c 'command line' | flock -c 'command line' FILE |
+		// flock [opts] FILE command...
+		for i, w := range rest {
+			t := w.Text
+			if cmd, ok := strings.CutPrefix(t, "--command="); ok {
+				a.reparseIn([]Word{{Text: cmd, Resolved: w.Resolved, Prefix: cmd}}, cmdSt.childState(), via, "flock -c", depth)
+				return
+			}
+			if (t == "-c" || t == "--command" || strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && strings.HasSuffix(t, "c")) && i+1 < len(rest) {
+				a.reparseIn(rest[i+1:i+2], cmdSt.childState(), via, "flock -c", depth)
+				return
+			}
+		}
 		r := skipFlags(rest, toSet("-w", "--timeout", "-E", "--conflict-exit-code"))
 		if len(r) > 0 {
 			r = r[1:]
@@ -538,6 +615,28 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		a.sshOptions(bn, rest, cmdSt, via, depth)
 		record()
 		return
+	case "repeat":
+		// zsh: repeat N command... runs the command N times, a cd included.
+		if len(rest) >= 2 {
+			a.call(rest[1:], redirs, cmdSt, st, append(via, "repeat"), depth+1, in)
+			return
+		}
+	case "terragrunt", "tg":
+		// terragrunt exec [--] CMD ARGS...: CMD runs in the unit's directory.
+		if len(rest) > 0 && rest[0].Text == "exec" {
+			r := rest[1:]
+			for len(r) > 0 && r[0].Resolved && strings.HasPrefix(r[0].Text, "-") && r[0].Text != "--" {
+				r = r[1:]
+			}
+			if len(r) > 0 && r[0].Text == "--" {
+				r = r[1:]
+			}
+			if len(r) > 0 {
+				record()
+				a.call(r, redirs, cmdSt, st, append(via, "terragrunt exec"), depth+1, in)
+				return
+			}
+		}
 	case "timeout":
 		r := skipFlags(rest, map[string]bool{"-s": true, "-k": true, "--signal": true, "--kill-after": true})
 		if len(r) > 0 {
@@ -639,6 +738,11 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 	record()
 	a.backstop(bn, rest, redirs, cmdSt, st, via, depth)
 }
+
+// subscriptBuiltins take variable names, whose subscripts the shell
+// evaluates as arithmetic.
+var subscriptBuiltins = map[string]bool{"read": true, "mapfile": true, "readarray": true, "getopts": true, "declare": true,
+	"typeset": true, "local": true, "export": true, "readonly": true, "unset": true, "printf": true, "test": true, "[": true, "let": true}
 
 func (a *analyzer) env(rest []Word, redirs []Redir, cmdSt, st *state, via []string, depth int, in stdin) {
 	es := cmdSt.clone()
@@ -792,6 +896,9 @@ func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string,
 			continue
 		}
 		if t == "-o" || t == "+o" || t == "-O" || t == "+O" {
+			if t == "-o" && i+1 < len(rest) && rest[i+1].Text == "allexport" {
+				child.allexport = true
+			}
 			i += 2
 			continue
 		}
@@ -806,6 +913,9 @@ func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string,
 		if (strings.HasPrefix(t, "-") || strings.HasPrefix(t, "+")) && len(t) > 1 {
 			if strings.Contains(t[1:], "c") {
 				hasC = true
+			}
+			if t[0] == '-' && strings.Contains(t[1:], "a") {
+				child.allexport = true
 			}
 			i++
 			continue
@@ -934,11 +1044,11 @@ func (a *analyzer) cdPathDir(st *state, target string) string {
 func (a *analyzer) startupFiles(bn string, rcfiles []Word, cmdSt, child, st *state, via []string, depth int) {
 	var files []Word
 	for _, k := range []string{"BASH_ENV", "ENV"} {
-		if v, ok := cmdSt.vars[k]; ok && cmdSt.exported[k] && (v.text != "" || !v.ok) {
+		if v, ok := cmdSt.vars[k]; ok && cmdSt.isExp(k) && (v.text != "" || !v.ok) {
 			files = append(files, Word{Text: v.text, Resolved: v.ok, Prefix: v.text})
 		}
 	}
-	if v, ok := cmdSt.vars["ZDOTDIR"]; ok && cmdSt.exported["ZDOTDIR"] && strings.HasPrefix(strings.TrimRight(bn, "0123456789.-"), "zsh") {
+	if v, ok := cmdSt.vars["ZDOTDIR"]; ok && cmdSt.isExp("ZDOTDIR") && strings.HasPrefix(strings.TrimRight(bn, "0123456789.-"), "zsh") {
 		if !v.ok {
 			files = append(files, Word{})
 		} else {
@@ -1598,11 +1708,11 @@ func (a *analyzer) container(args []Word, redirs []Redir, cmdSt, st *state, via 
 		}
 		cs := cmdSt.clone()
 		var toHost func(string) (string, bool)
-		cs.dir, toHost = a.containerDir(args[1:i], cmdSt)
+		opts := splitShortOpts(args[1:i])
+		cs.dir, toHost = a.containerDir(opts, cmdSt)
 		// The container's environment: -e NAME=VALUE sets a variable,
 		// -e NAME passes the host's (unknown here), and --env-file sets
 		// what a file says, any tier signal among them.
-		opts := args[1:i]
 		for k := 0; k < len(opts); k++ {
 			t := opts[k].Text
 			f, v, eq := strings.Cut(t, "=")
@@ -1666,6 +1776,37 @@ func (a *analyzer) container(args []Word, redirs []Redir, cmdSt, st *state, via 
 		a.call(append(lits(engine), r...), redirs, cs, st, append(via, args[0].Text+" image "+w.Text), depth+1, stdin{})
 		return
 	}
+}
+
+// splitShortOpts rewrites a short option glued to its value, alone or at the
+// end of a cluster of flags (-eNAME=val, -ieNAME=val, -w/dir, -vSRC:DST), into
+// the option and its value as two words, the way the program reads them.
+func splitShortOpts(opts []Word) []Word {
+	const flags, valued = "itdqPD", "evwupl"
+	var out []Word
+	for _, w := range opts {
+		t := w.Text
+		if len(t) < 3 || t[0] != '-' || t[1] == '-' {
+			out = append(out, w)
+			continue
+		}
+		k := 1
+		for k < len(t) && strings.IndexByte(flags, t[k]) >= 0 {
+			k++
+		}
+		if k >= len(t) || strings.IndexByte(valued, t[k]) < 0 {
+			out = append(out, w)
+			continue
+		}
+		for _, f := range t[1:k] {
+			out = append(out, Word{Text: "-" + string(f), Resolved: true, Prefix: "-" + string(f)})
+		}
+		out = append(out, Word{Text: "-" + string(t[k]), Resolved: true, Prefix: "-" + string(t[k])})
+		if rest := t[k+1:]; rest != "" {
+			out = append(out, Word{Text: rest, Resolved: w.Resolved, Prefix: rest})
+		}
+	}
+	return out
 }
 
 // containerDir is the host directory a container's command runs in: the
@@ -2117,8 +2258,23 @@ func (a *analyzer) git(rest []Word, cmdSt, st *state, via []string, depth int) {
 	run := func(w Word, label string) {
 		a.reparseIn([]Word{w}, child.clone(), via, label, depth)
 	}
+	// Options that name a program git runs: the transport's upload-pack and
+	// receive-pack, archive's --exec, and filter-branch's filters.
+	for i := 0; i < len(rest); i++ {
+		k, v, eq := strings.Cut(rest[i].Text, "=")
+		switch k {
+		case "--upload-pack", "--receive-pack", "--exec", "--upload-archive", "--tree-filter", "--index-filter", "--msg-filter",
+			"--env-filter", "--commit-filter", "--tag-name-filter", "--parent-filter", "--subdirectory-filter":
+			if eq {
+				run(Word{Text: v, Resolved: rest[i].Resolved, Prefix: v}, "git "+k)
+			} else if i+1 < len(rest) {
+				run(rest[i+1], "git "+k)
+				i++
+			}
+		}
+	}
 	for _, k := range gitExecEnv {
-		if v, ok := cmdSt.vars[k]; ok && cmdSt.exported[k] && (v.text != "" || !v.ok) {
+		if v, ok := cmdSt.vars[k]; ok && cmdSt.isExp(k) && (v.text != "" || !v.ok) {
 			run(Word{Text: v.text, Resolved: v.ok, Prefix: v.text}, "git "+k)
 		}
 	}
@@ -2126,11 +2282,11 @@ func (a *analyzer) git(rest []Word, cmdSt, st *state, via []string, depth int) {
 	// -c pairs; GIT_CONFIG_PARAMETERS and other config files may hold any.
 	envVal := func(k string) (value, bool) {
 		v, ok := cmdSt.vars[k]
-		return v, ok && cmdSt.exported[k]
+		return v, ok && cmdSt.isExp(k)
 	}
 	for k := range cmdSt.vars {
 		n, ok := strings.CutPrefix(k, "GIT_CONFIG_KEY_")
-		if !ok || !cmdSt.exported[k] {
+		if !ok || !cmdSt.isExp(k) {
 			continue
 		}
 		key, val := cmdSt.vars[k], value{}
@@ -2265,6 +2421,24 @@ func (a *analyzer) sshOptions(bn string, rest []Word, cmdSt *state, via []string
 			a.reparseIn([]Word{rest[i+1]}, child.clone(), via, "rsync "+t, depth)
 			i++
 			continue
+		case bn == "rsync" && strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && len(t) > 2 && strings.Contains(t[1:], "e"):
+			// -e'cmd', -ze 'cmd': e takes the rest of the cluster, else the next word.
+			k := strings.IndexByte(t, 'e')
+			if v := t[k+1:]; v != "" {
+				a.reparseIn([]Word{{Text: v, Resolved: w.Resolved, Prefix: v}}, child.clone(), via, "rsync -e", depth)
+			} else if i+1 < len(rest) {
+				a.reparseIn([]Word{rest[i+1]}, child.clone(), via, "rsync -e", depth)
+				i++
+			}
+			continue
+		case (bn == "scp" || bn == "sftp") && t == "-S" && i+1 < len(rest):
+			// -S names the program that makes the connection.
+			a.reparseIn([]Word{rest[i+1]}, child.clone(), via, bn+" -S", depth)
+			i++
+			continue
+		case (bn == "scp" || bn == "sftp") && strings.HasPrefix(t, "-S") && len(t) > 2:
+			a.reparseIn([]Word{{Text: t[2:], Resolved: w.Resolved, Prefix: t[2:]}}, child.clone(), via, bn+" -S", depth)
+			continue
 		case bn == "rsync" && strings.HasPrefix(t, "--rsh="):
 			v := strings.TrimPrefix(t, "--rsh=")
 			a.reparseIn([]Word{{Text: v, Resolved: w.Resolved, Prefix: v}}, child.clone(), via, "rsync --rsh", depth)
@@ -2281,9 +2455,13 @@ func (a *analyzer) sshOptions(bn string, rest []Word, cmdSt *state, via []string
 		if !opt.Resolved {
 			text = opt.Prefix
 		}
-		k, v, ok := strings.Cut(text, "=")
-		if !ok {
-			k, v, _ = strings.Cut(text, " ")
+		// ssh splits keyword and value at the first space, tab or =:
+		// "ProxyCommand terraform -chdir=../prod destroy" is a space form.
+		var k, v string
+		if i := strings.IndexAny(text, " \t="); i >= 0 {
+			k, v = text[:i], strings.TrimLeft(text[i+1:], " \t=")
+		} else {
+			k = text
 		}
 		switch strings.ToLower(strings.TrimSpace(k)) {
 		case "proxycommand", "localcommand", "knownhostscommand":
@@ -2306,7 +2484,7 @@ func (a *analyzer) alias(name, rep string, rest []Word, redirs []Redir, cmdSt, s
 			st.aliases[name] = rep
 		}
 	}()
-	if nestingDepth(rep) > maxNesting {
+	if nestingDepth(rep) > maxNesting || chainLength(rep) > maxChain {
 		a.unbounded(st, via, rep, "alias "+name+" nests deeper than the analyzer parses")
 		return
 	}

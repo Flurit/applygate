@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -20,6 +21,9 @@ import (
 func PlainShape(cmd string, res *Result) (ok bool, why string) {
 	if nestingDepth(cmd) > maxNesting {
 		return false, "nesting deeper than the analyzer parses"
+	}
+	if chainLength(cmd) > maxChain {
+		return false, "a chain of more than " + strconv.Itoa(maxChain) + " commands or operands"
 	}
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(cmd), "")
 	if err != nil {
@@ -310,6 +314,9 @@ var stateBuiltins = toSet("alias", "unalias", "hash", "enable", "disable", "shop
 // it ("" when nothing does): a function, an alias or other state builtin, or
 // a variable assignment on its own.
 func DefinesState(cmd string) string {
+	if chainLength(cmd) > maxChain || nestingDepth(cmd) > maxNesting {
+		return "input too long or too deep to read"
+	}
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(cmd), "")
 	if err != nil {
 		return "input that does not parse"

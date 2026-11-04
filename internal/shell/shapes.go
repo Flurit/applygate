@@ -851,7 +851,10 @@ func GitConfigOp(args []Word) (op GitConfig, why string) {
 		case t == "--rename-section":
 			return op, "git config --rename-section"
 		case t == "--get" || t == "--get-all" || t == "--get-regexp" || t == "--get-urlmatch" || t == "--get-color" ||
-			t == "--get-colorbool" || t == "-l" || t == "--list" || t == "--show-origin" || t == "--show-scope" || t == "--name-only":
+			t == "--get-colorbool" || t == "-l" || t == "--list":
+			// Only an action reads. --show-origin, --show-scope and
+			// --name-only change how a value prints, not whether KEY VALUE
+			// sets it.
 			read = true
 		case t == "--unset" || t == "--unset-all" || t == "--remove-section":
 			unset = true

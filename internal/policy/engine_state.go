@@ -26,14 +26,8 @@ var tfNoStart = map[string]bool{"fmt": true, "version": true, "output": true, "i
 // startsProviders reports whether terraform subcommand sub (with its
 // arguments after the subcommand word) may start the provider binaries.
 func startsProviders(sub string, args []string) bool {
-	if sub == "graph" {
-		for _, a := range args {
-			if a == "-type=plan" {
-				return false
-			}
-		}
-		return true
-	}
+	// graph starts the providers whatever its -type (terraform 1.14 started
+	// one for -type=plan).
 	return !tfNoStart[sub]
 }
 
@@ -81,7 +75,7 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 			if dir == "" {
 				return "terraform " + sub + " in a directory that cannot be followed"
 			}
-			bkey := dir + "\x00backend"
+			bkey := dir + "\x00backend\x00" + strings.Join(backendConfigs(rest), "\x00")
 			if v, ok := engineCache.Load(bkey); ok {
 				if w := v.(string); w != "" {
 					return w
@@ -91,6 +85,12 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 			why := ""
 			if r := preflight.RunsBackendPrograms(dir); r != "" {
 				why = "terraform " + sub + ": " + r
+			} else if r := preflight.RunsRecordedBackend(preflight.DataDir(dir, mergeEnv(env, inv.Env))); r != "" {
+				why = "terraform " + sub + ": " + r
+			} else if sub == "init" {
+				if r := preflight.RunsBackendConfig(dir, backendConfigs(rest)); r != "" {
+					why = "terraform init: " + r
+				}
 			}
 			engineCache.Store(bkey, why)
 			if why != "" {
@@ -130,6 +130,21 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 		}
 	}
 	return ""
+}
+
+// backendConfigs are the -backend-config values in an init's arguments.
+func backendConfigs(args []string) []string {
+	var out []string
+	for i := 0; i < len(args); i++ {
+		a := strings.TrimLeft(args[i], "-")
+		if v, ok := strings.CutPrefix(a, "backend-config="); ok {
+			out = append(out, v)
+		} else if a == "backend-config" && i+1 < len(args) {
+			i++
+			out = append(out, args[i])
+		}
+	}
+	return out
 }
 
 // tfNoBackend are the subcommands that neither start providers nor
