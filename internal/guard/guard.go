@@ -237,18 +237,29 @@ func (s *Set) Protected(p string) bool {
 	if s == nil || !filepath.IsAbs(p) {
 		return false
 	}
+	// The path is checked as resolved and as written (its directory
+	// resolved, its last part as it is): a symlink on PATH, which is how
+	// Homebrew installs every program, resolves into the Cellar, and a
+	// guard file may itself be a link to the file that holds its content.
 	c := Canonical(p)
-	for _, pat := range s.patterns {
-		if MatchGlob(pat, c) {
+	w := Canonical(filepath.Dir(filepath.Clean(p))) + "/" + fold(filepath.Base(filepath.Clean(p)))
+	w = strings.Replace(w, "//", "/", 1)
+	for _, x := range []string{c, w} {
+		for _, pat := range s.patterns {
+			if MatchGlob(pat, x) {
+				return true
+			}
+		}
+		for _, t := range s.targets {
+			if x == t {
+				return true
+			}
+		}
+		if s.program(x) {
 			return true
 		}
 	}
-	for _, t := range s.targets {
-		if c == t {
-			return true
-		}
-	}
-	return s.program(c)
+	return false
 }
 
 // Touches reports whether writing, moving, removing or extracting into p

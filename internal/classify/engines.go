@@ -33,7 +33,7 @@ func splitTF(args []shell.Word) (flags []tfFlag, pos []shell.Word, unresolved bo
 			// dynamic word could be any flag, including -destroy.
 			if strings.HasPrefix(w.Prefix, "-") && strings.Contains(w.Prefix, "=") {
 				name, _, _ := strings.Cut(strings.TrimLeft(w.Prefix, "-"), "=")
-				flags = append(flags, tfFlag{name: name, has: true})
+				flags = append(flags, tfFlag{name: name, value: "<?>", has: true})
 				i++
 				continue
 			}
@@ -140,6 +140,20 @@ func terraformArgs(a *Action, args []shell.Word) {
 			}
 		}
 		switch sub {
+		case "stack":
+			// terragrunt stack run CMD runs CMD in units generated from
+			// terragrunt.stack.hcl at run time, which the hook cannot list.
+			if len(rest) > 0 && rest[0].Text == "run" {
+				a.Subtree, a.UnitsUnknown = true, true
+				a.Via = append(a.Via, "terragrunt stack run")
+				terraformArgs(a, rest[1:])
+				return
+			}
+			a.Class, a.Sub, a.Why = ReadOnly, "stack "+firstText(rest), "terragrunt stack "+firstText(rest)
+			if len(rest) > 0 && rest[0].Text != "generate" && rest[0].Text != "output" && rest[0].Text != "clean" {
+				a.Class, a.Why = UnknownWrapper, "unrecognized terragrunt stack subcommand "+firstText(rest)
+			}
+			return
 		case "run-all", "run":
 			// terragrunt run-all <cmd>, terragrunt run [--all] -- <cmd>
 			r := rest
@@ -1061,4 +1075,11 @@ func packageAgent(name string, args []shell.Word) (string, []shell.Word, bool) {
 		return "", nil, false
 	}
 	return "", nil, false
+}
+
+func firstText(ws []shell.Word) string {
+	if len(ws) == 0 {
+		return ""
+	}
+	return ws[0].Text
 }

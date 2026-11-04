@@ -644,6 +644,8 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	}
 	var res config.Resolution
 	switch {
+	case a.Subtree && a.Dir != "" && a.UnitsUnknown:
+		res = cfg.ResolveUnder(a.Dir, sig, "terragrunt stack run runs units generated from terragrunt.stack.hcl, which cannot be listed before it runs")
 	case a.Subtree && a.Dir != "":
 		res = subtreeResolve(cfg, a.Dir, sig, deps.Env)
 	case a.AnyDir && rootOf(cfg, ev) != "":
@@ -680,6 +682,12 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		// workspace and backend it records are unknown.
 		r.Tier, r.Env = config.Protected, "unknown"
 		r.Matched = append(r.Matched, "TF_DATA_DIR cannot be resolved statically, so the workspace and backend it selects are unknown; judged as protected")
+	}
+	if ev.Persistent && r.Tier.Rank() < config.Protected.Rank() {
+		// A shell that keeps running between calls keeps its directory: a
+		// cd typed in one call moves the next, which is judged on its own.
+		r.Tier, r.Env = config.Protected, "unknown"
+		r.Matched = append(r.Matched, "typed into a shell that keeps running between calls, whose directory an earlier call may have changed; judged as protected")
 	}
 	if why := unknownSignal(a); why != "" && r.Tier.Rank() < config.Protected.Rank() {
 		r.Tier, r.Env = config.Protected, "unknown"
@@ -833,6 +841,11 @@ func DirSignals(dir string, env map[string]string) (config.Signals, *preflight.B
 	}
 	if p := awsProfileEnv(env); p != "" {
 		sig.AWSProfile = p
+	}
+	if _, err := os.Stat(filepath.Join(dir, "terragrunt.hcl")); err == nil {
+		// A Terragrunt unit: its remote_state and local source are
+		// signals too (terragrunt run --all, plan-check in a unit).
+		terragruntSignals(&sig, classify.Action{Dir: dir, Engine: "terragrunt"}, be)
 	}
 	return sig, be
 }
@@ -1257,6 +1270,12 @@ func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action
 				ok, why = false, "an earlier step writes the configuration or .terraform in "+a.Dir+" that "+a.Engine+" then reads"
 				break
 			}
+			if isTerraform(a.Engine) && ev.Persistent && startsProviders(a.Sub, nil) {
+				// The provider check needs the directory, which a shell that
+				// keeps running between calls may have left.
+				ok, why = false, a.Engine+" typed into a shell that keeps running between calls, whose directory the hook cannot follow"
+				break
+			}
 		}
 	}
 	if ok {
@@ -1280,6 +1299,16 @@ func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action
 			Why: "strict shapes: the command is not a plain list or pipeline of known programs (" + why + ")"})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Dir < out[j].Dir })
+	// A command run over every unit under a directory (terragrunt
+	// --all) runs what each unit's configuration names: the shape is
+	// judged at the most protected unit's tier too.
+	for _, a := range acts {
+		if a.Subtree && a.Dir != "" {
+			out = append(out, classify.Action{Class: classify.ComplexShape, Engine: "shell", Command: ev.Command, Dir: a.Dir,
+				Subtree: true, UnitsUnknown: a.UnitsUnknown,
+				Why: "strict shapes: the command is not a plain list or pipeline of known programs (" + why + ")"})
+		}
+	}
 	return out
 }
 

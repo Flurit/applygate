@@ -483,6 +483,9 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			t := st.clone()
 			t.dir = ""
 			a.stmt(c.Body, t, append(via, n), depth+1, stdin{})
+			// It runs in this shell (TRAPDEBUG before every command), so
+			// a cd in it moves what follows.
+			st.dir, st.dirStack = "", nil
 		}
 	case *syntax.DeclClause:
 		a.declClause(c, st, via, depth)

@@ -132,6 +132,9 @@ type Action struct {
 	// (terragrunt run --all, run-all, destroy-all): it is judged at the most
 	// protected tier under Dir.
 	Subtree bool
+	// UnitsUnknown is set when those units cannot be listed before the
+	// command runs (terragrunt stack run generates them).
+	UnitsUnknown bool `json:"-"`
 }
 
 // Options configure classification.
@@ -405,6 +408,11 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		return append(out, a)
 	}
 
+	if why := hostInstall(name, args); why != "" {
+		a := base
+		a.Class, a.Engine, a.Why = Tampering, "agent", why
+		return append(out, a)
+	}
 	if e, ok := engines[name]; ok {
 		a := base
 		a.Engine = e
@@ -1739,4 +1747,48 @@ func overwrites(p string) bool {
 	}
 	_, err := os.Lstat(p)
 	return err == nil || !os.IsNotExist(err)
+}
+
+// hostPackages are the agent CLIs' packages in npm and Homebrew.
+var hostPackages = map[string]bool{"@anthropic-ai/claude-code": true, "@openai/codex": true, "@google/gemini-cli": true,
+	"@github/copilot": true, "opencode-ai": true, "claude-code": true, "codex": true, "gemini-cli": true, "copilot-cli": true,
+	"opencode": true}
+
+// hostInstall reports a command that installs, updates or replaces an
+// agent CLI: the program that reads the hook settings, managed ones
+// included. A wrapper or an older release in its place can start sessions
+// without the hook.
+func hostInstall(name string, args []shell.Word) string {
+	pos := positional(args)
+	switch name {
+	case "claude", "codex", "gemini", "copilot", "opencode", "cursor-agent":
+		if len(pos) > 0 {
+			switch pos[0] {
+			case "install", "update", "upgrade", "migrate-installer":
+				return name + " " + pos[0] + " replaces the agent CLI, which reads the hook settings"
+			}
+		}
+		return ""
+	case "npm", "pnpm", "yarn", "bun", "brew":
+	default:
+		return ""
+	}
+	if len(pos) == 0 {
+		return ""
+	}
+	switch pos[0] {
+	case "install", "i", "add", "update", "upgrade", "up", "reinstall", "link", "global":
+	default:
+		return ""
+	}
+	for _, p := range pos[1:] {
+		pkg := p
+		if j := strings.LastIndex(pkg, "@"); j > 0 {
+			pkg = pkg[:j]
+		}
+		if hostPackages[strings.TrimPrefix(pkg, "--cask=")] {
+			return name + " " + pos[0] + " " + p + " replaces an agent CLI, which reads the hook settings"
+		}
+	}
+	return ""
 }
