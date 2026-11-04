@@ -12,6 +12,12 @@ The promise is not narrowed.
 
 ### R7-1: the four rules, and the criticals they do not cover
 
+**Built** on branch fix/round-7, with reproductions in `harness/pack_attack` (Y7*: 45 reproductions, 9 benign controls):
+- `go test -race ./...` passes, including the attack pack (495 scenarios).
+- Selftest: 163/163 exact. Replays: Claude 163/163, Codex 161/161. Decision latency p95 12.3 ms.
+- Agent trial against main: in a protected directory 54 of 162 calls are asked about or blocked, against 51. The three new asks are two terraform calls after the same command wrote their configuration (one in a scratch directory) and `sed -i 's/…/' eks.tf` on macOS. Staging and dev: 13, against 12, the scratch-directory call. No new blocks.
+- Two choices made while building, both recorded in docs/limits.md: input to a persistent shell is judged as protected rather than making every `cd` there tampering, and `sed -i` is read as this machine's sed reads it.
+
 | Rule or area | Findings | Fix |
 |---|---|---|
 | **Unknown, not absent** | 7C10, 7C11, 7C17 | An unresolved value in a tier signal makes the target protected. This covers a workspace, profile, kube context, project or subscription, a backend config, `-state`, `-backup`, a planfile, `TF_CLI_ARGS*`, `KUBECONFIG`, `CLOUDSDK_CONFIG`, `AZURE_CONFIG_DIR` and a credential runner's profile. Variables that `read`, `mapfile`, `readarray`, `getopts` and `printf -v` assign go through the same check as `NAME=`. Relative config paths are joined with the command's directory. |

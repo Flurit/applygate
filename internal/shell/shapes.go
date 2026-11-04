@@ -380,6 +380,7 @@ func sedShape(args []Word, _ Invocation) string {
 	// after -l and --line-length as a number. Operands start after --.
 	operands := 0
 	opts := true
+	gnuStyle := false
 	for i := 0; i < len(args); i++ {
 		w := args[i]
 		t := optText(w)
@@ -394,6 +395,12 @@ func sedShape(args []Word, _ Invocation) string {
 		case t == "--":
 			opts = false
 		case (t == "-i" || t == "-I") && bsdSed:
+			if i+1 < len(args) && !explicit && sedScript(optText(args[i+1])) == "" && strings.ContainsAny(args[i+1].Text, "/") {
+				// GNU usage (sed -i 's/a/b/' f): BSD sed takes the script as
+				// the suffix and the file as the script, which then fails
+				// to compile unless the file name is itself a script.
+				gnuStyle = true
+			}
 			i++
 		case t == "-l" || t == "--line-length":
 			i++
@@ -422,10 +429,25 @@ func sedShape(args []Word, _ Invocation) string {
 			return "a sed script that cannot be resolved"
 		}
 		if why := sedScript(s.Text); why != "" {
+			if gnuStyle && sedRejects(s.Text, why) {
+				continue
+			}
 			return why
 		}
 	}
 	return ""
+}
+
+// sedRejects reports whether sed refuses to run script s, a file name read
+// as a script: sed compiles the whole script first, and the checker
+// stopped at a character that is no command, before any e or w. Only a
+// single word that looks like a file name counts.
+func sedRejects(s, why string) bool {
+	c, ok := strings.CutPrefix(why, "the sed command ")
+	if !ok || c == "e" || c == "w" || c == "W" || strings.ContainsAny(s, " \t\n;{}") {
+		return false
+	}
+	return strings.ContainsAny(s, "./") && len(c) == 1 && !strings.Contains("aibcdDeFgGhHlnNpPqQrRstTvwWxyz=#:{}!", c)
 }
 
 // sedScript reads a sed script command by command.
