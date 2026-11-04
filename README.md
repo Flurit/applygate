@@ -43,7 +43,7 @@ On the same 17 dangerous Terraform scenarios:
 
 The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 495 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
 
-applygate is a check, not a sandbox. Pair it with plan-only credentials for agents; see [the threat model](docs/threat-model.md). Its self-protection, which stops an agent from turning it off, is a guarantee only under a managed install (`sudo applygate install --managed`, [docs/managed.md](docs/managed.md)); without one it is best-effort.
+applygate is a check, not a sandbox. Pair it with plan-only credentials for agents and writes behind MFA, which `applygate doctor --creds` checks ([docs/credentials.md](docs/credentials.md)); see [the threat model](docs/threat-model.md). Its self-protection, which stops an agent from turning it off, is a guarantee only under a managed install (`sudo applygate install --managed`, [docs/managed.md](docs/managed.md)); without one it is best-effort.
 
 ## What it decides
 
@@ -114,6 +114,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 | `applygate plan-check plan.json` | Judge `terraform show -json` output |
 | `applygate report` / `suggest` | Summarize the decision log / propose a config from it |
 | `applygate doctor` | Check config, hooks and versions |
+| `applygate doctor --creds` | Ask AWS and the clusters whether the credentials here can change production without MFA ([docs/credentials.md](docs/credentials.md)) |
 | `applygate hook install\|remove --agent NAME` | Manage one agent's hook |
 | `applygate hosts` | What each agent supports |
 | `applygate selftest` | Run the scenario pack against this binary |

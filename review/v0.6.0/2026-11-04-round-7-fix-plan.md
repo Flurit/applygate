@@ -49,7 +49,9 @@ The promise is not narrowed.
 - **B** is the product version of A for teams that want the agent to plan against production with read-only credentials and to apply with one approval. It needs a managed install and its own red-team round.
 - **C** re-creates the enumeration problem at the OS layer.
 
-**Choices for the user:**
+**Decided on 2026-11-04: A.** Built on branch fix/round-7: `applygate doctor --creds` (AWS: identity, tier, and `iam simulate-principal-policy` over 16 destructive actions with MFA absent; Kubernetes: `kubectl auth can-i` over 4 destructive verbs per context), tested with stubbed CLIs, and `docs/credentials.md`. Not tested against a real AWS account or cluster. B stays the next step if the user wants the agent to apply with one approval.
+
+**Choices that were put to the user:**
 1. A, B or both, and in which order.
 2. For B: the approval channel (Touch ID on macOS and polkit on Linux; or a phone push, which needs a service), and the clouds after AWS.
 3. Whether a production write without the backstop in place should be refused by default under a managed install, or only reported by `doctor`.

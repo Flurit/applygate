@@ -63,6 +63,7 @@ Usage:
   applygate hook install|remove --agent AGENT [--scope project|user]
                                       install defaults to project scope; remove cleans both scopes
   applygate doctor                     check config, hooks, launch directory and versions (exit 1 on a problem)
+  applygate doctor --creds             ask AWS and the clusters whether the credentials here can change production without MFA (exit 1 if so)
   applygate hosts [--markdown]         what each agent host can do with the hook (same table as docs/hosts.md)
   applygate telemetry status|on|off|send
                                       anonymous usage counts, off unless you turn them on (docs/telemetry.md)
@@ -107,6 +108,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "init":
 		return cmdInit(args[1:], stdout, stderr)
 	case "doctor":
+		if len(args) > 1 && args[1] == "--creds" {
+			return cmdDoctorCreds(stdout, stderr)
+		}
 		return cmdDoctor(stdout, stderr)
 	case "telemetry":
 		return cmdTelemetry(args[1:], stdout, stderr)

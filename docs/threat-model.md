@@ -39,4 +39,11 @@ A **mistaken or manipulated agent** running with the developer's privileges. For
 
 ## Recommended pairing
 
-Plan-only credentials for the agent. Apply credentials only for a human or a CI runner. An isolated runner for anything protected.
+The hook judges calls before they run, and a judgment can be wrong. What a wrong judgment can reach is set by the agent's credentials, so the boundary that holds whatever the hook decides is there ([credentials.md](credentials.md)):
+
+- plan-only credentials for the agent;
+- apply credentials only for a person (behind MFA) or a CI runner;
+- the person's own sessions (SSO tokens, cached role credentials) kept out of the agent's OS user;
+- an isolated runner for anything protected.
+
+`applygate doctor --creds` asks AWS and the clusters whether the credentials on the machine can change production without MFA.
