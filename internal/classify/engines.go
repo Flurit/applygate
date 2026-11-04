@@ -33,7 +33,7 @@ func splitTF(args []shell.Word) (flags []tfFlag, pos []shell.Word, unresolved bo
 			// dynamic word could be any flag, including -destroy.
 			if strings.HasPrefix(w.Prefix, "-") && strings.Contains(w.Prefix, "=") {
 				name, _, _ := strings.Cut(strings.TrimLeft(w.Prefix, "-"), "=")
-				flags = append(flags, tfFlag{name: name, has: true})
+				flags = append(flags, tfFlag{name: name, value: "<?>", has: true})
 				i++
 				continue
 			}
@@ -140,6 +140,20 @@ func terraformArgs(a *Action, args []shell.Word) {
 			}
 		}
 		switch sub {
+		case "stack":
+			// terragrunt stack run CMD runs CMD in units generated from
+			// terragrunt.stack.hcl at run time, which the hook cannot list.
+			if len(rest) > 0 && rest[0].Text == "run" {
+				a.Subtree, a.UnitsUnknown = true, true
+				a.Via = append(a.Via, "terragrunt stack run")
+				terraformArgs(a, rest[1:])
+				return
+			}
+			a.Class, a.Sub, a.Why = ReadOnly, "stack "+firstText(rest), "terragrunt stack "+firstText(rest)
+			if len(rest) > 0 && rest[0].Text != "generate" && rest[0].Text != "output" && rest[0].Text != "clean" {
+				a.Class, a.Why = UnknownWrapper, "unrecognized terragrunt stack subcommand "+firstText(rest)
+			}
+			return
 		case "run-all", "run":
 			// terragrunt run-all <cmd>, terragrunt run [--all] -- <cmd>
 			r := rest
@@ -187,8 +201,18 @@ func terraformArgs(a *Action, args []shell.Word) {
 			}
 		}
 	}
+	defer func() {
+		// destroy, state surgery and the other calls that do not go
+		// through set: unresolved arguments may retarget them too.
+		if unresolved && a.TargetUnknown == "" && a.Class != ReadOnly && a.Class != Dynamic {
+			a.TargetUnknown = a.Engine + " " + sub + " has arguments that cannot be resolved statically, which may name another state, plan or directory"
+		}
+	}()
 	set := func(c Class, why string) {
 		a.Class, a.Why = c, why
+		if unresolved && c != ReadOnly {
+			a.TargetUnknown = a.Engine + " " + sub + " has arguments that cannot be resolved statically, which may name another state, plan or directory"
+		}
 		if unresolved && severityRank(c) < severityRank(Destroy) {
 			a.Class, a.Why = Dynamic, a.Engine+" "+sub+" has arguments that cannot be resolved statically"
 		}
@@ -216,6 +240,8 @@ func terraformArgs(a *Action, args []shell.Word) {
 		}
 		if resolved {
 			a.BackendConfig = backendCfg
+		} else {
+			a.BackendConfigUnknown = true
 		}
 		switch {
 		case flagOn(flags, "migrate-state") || flagOn(flags, "force-copy"):
@@ -300,6 +326,13 @@ func terraformArgs(a *Action, args []shell.Word) {
 		if op == "delete" {
 			a.TouchesState = true
 			a.Class, a.Why = StateSurgery, "workspace delete removes a workspace's state"
+			return
+		}
+		if op == "new" && len(a.StateFiles) > 0 {
+			// The new workspace starts from a copy of that state, so later
+			// calls here act on its resources: judged at its tier.
+			a.TouchesState = true
+			a.Class, a.Why = StateSurgery, "workspace new -state copies another state into this directory"
 			return
 		}
 		set(ReadOnly, "workspace "+op)
@@ -1042,4 +1075,11 @@ func packageAgent(name string, args []shell.Word) (string, []shell.Word, bool) {
 		return "", nil, false
 	}
 	return "", nil, false
+}
+
+func firstText(ws []shell.Word) string {
+	if len(ws) == 0 {
+		return ""
+	}
+	return ws[0].Text
 }

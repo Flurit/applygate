@@ -21,7 +21,7 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true
 func base(name string) string { return ProgName(name) }
 
 // shellBuiltins act only inside the shell; their names are case-sensitive.
-var shellBuiltins = toSet("cd", "pushd", "popd", "dirs", "alias", "unalias", "eval", "source", ".", "trap", "read", "mapfile",
+var shellBuiltins = toSet("cd", "chdir", "pushd", "popd", "dirs", "alias", "unalias", "eval", "source", ".", "trap", "read", "mapfile",
 	"readarray", "getopts", "shift", "set", "declare", "typeset", "local", "export", "readonly", "nameref", "builtin")
 
 // ProgName returns the program name a command word runs, as every engine,
@@ -96,8 +96,13 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 	if ok {
 		if cmd, profile, ok := configWrapper(spec, rest); ok {
 			ws := cmdSt.clone()
-			if profile.Resolved && profile.Text != "" {
+			switch {
+			case profile.Resolved && profile.Text != "":
 				ws.vars["AWS_PROFILE"] = value{text: profile.Text, ok: true}
+				ws.exported["AWS_PROFILE"] = true
+			case profile.Text != "":
+				// A profile that cannot be resolved is unknown, not absent.
+				ws.vars["AWS_PROFILE"] = value{}
 				ws.exported["AWS_PROFILE"] = true
 			}
 			a.call(cmd, redirs, ws, st, append(via, bn+" (configured wrapper)"), depth+1, in)
@@ -137,7 +142,7 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			}
 		}
 		return
-	case "cd", "pushd":
+	case "cd", "chdir", "pushd":
 		if bn == "pushd" {
 			n := len(st.dirStack)
 			switch {
@@ -389,7 +394,7 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		}
 		a.source(string(b), st, append(via, "source "+rest[0].Text), depth+1)
 		return
-	case "exec", "command", "builtin", "nohup", "time", "chronic", "unbuffer", "setsid", "caffeinate", "noglob":
+	case "exec", "command", "builtin", "nohup", "time", "chronic", "unbuffer", "setsid", "caffeinate", "noglob", "nocorrect", "-":
 		if bn == "command" || bn == "type" {
 			for _, w := range rest {
 				if w.Text == "-v" || w.Text == "-V" {
@@ -422,9 +427,24 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			// The wrapped command runs with the wrapper's credentials; the
 			// profile or role it names is a tier signal like AWS_PROFILE.
 			ws := cmdSt.clone()
-			if profile.Resolved && profile.Text != "" {
+			switch {
+			case profile.Resolved && profile.Text != "":
 				ws.vars["AWS_PROFILE"] = value{text: profile.Text, ok: true}
 				ws.exported["AWS_PROFILE"] = true
+			case profile.Text != "":
+				// A profile that cannot be resolved is unknown, not absent.
+				ws.vars["AWS_PROFILE"] = value{}
+				ws.exported["AWS_PROFILE"] = true
+			}
+			if secretsRunners[bn] {
+				// A secrets runner sets variables from a store the hook
+				// cannot read, any of the tier signals among them.
+				for _, k := range TierEnv {
+					if _, set := ws.vars[k]; !set {
+						ws.vars[k] = value{}
+						ws.exported[k] = true
+					}
+				}
 			}
 			if script != nil {
 				if !script.Resolved {
@@ -1443,8 +1463,9 @@ func (a *analyzer) findExec(rest []Word, redirs []Redir, cmdSt, st *state, via [
 		}
 		sub := append([]Word(nil), rest[i+1:j]...)
 		for k := range sub {
-			if sub[k].Text == "{}" {
-				sub[k] = Word{Resolved: false}
+			// find replaces {} anywhere in an argument (-chdir={}).
+			if pre, _, found := strings.Cut(sub[k].Text, "{}"); found {
+				sub[k] = Word{Resolved: false, Prefix: pre, Text: pre}
 			}
 		}
 		es := cmdSt
@@ -1461,8 +1482,22 @@ func (a *analyzer) findExec(rest []Word, redirs []Redir, cmdSt, st *state, via [
 // container unwraps "docker run ... <image> args" when the image is a
 // Terraform or OpenTofu image, so the arguments are classified as such.
 func (a *analyzer) container(args []Word, redirs []Redir, cmdSt, st *state, via []string, depth int) {
+	skip := false
 	for i, w := range args {
 		if i < 2 {
+			continue
+		}
+		if skip {
+			skip = false
+			continue
+		}
+		// An option's value (-e TF_DATA_DIR=..., -v ...:/terraform) is not
+		// the image; an image name has no "=".
+		if t := w.Text; strings.HasPrefix(t, "-") {
+			skip = !strings.Contains(t, "=") && containerValued[t]
+			continue
+		}
+		if strings.Contains(w.Text, "=") {
 			continue
 		}
 		img := strings.ToLower(w.Text)
@@ -1483,7 +1518,72 @@ func (a *analyzer) container(args []Word, redirs []Redir, cmdSt, st *state, via 
 			r = r[1:]
 		}
 		cs := cmdSt.clone()
-		cs.dir = a.containerDir(args[1:i], cmdSt)
+		var toHost func(string) (string, bool)
+		cs.dir, toHost = a.containerDir(args[1:i], cmdSt)
+		// The container's environment: -e NAME=VALUE sets a variable,
+		// -e NAME passes the host's (unknown here), and --env-file sets
+		// what a file says, any tier signal among them.
+		opts := args[1:i]
+		for k := 0; k < len(opts); k++ {
+			t := opts[k].Text
+			f, v, eq := strings.Cut(t, "=")
+			switch f {
+			case "-e", "--env":
+				var e Word
+				if eq {
+					e = Word{Text: v, Resolved: opts[k].Resolved}
+				} else if k+1 < len(opts) {
+					k++
+					e = opts[k]
+				}
+				name, val, has := strings.Cut(e.Text, "=")
+				switch {
+				case name == "":
+				case !e.Resolved || !has:
+					cs.vars[name] = value{}
+				default:
+					if hp, ok := toHost(val); ok {
+						val = hp
+					} else if strings.HasPrefix(val, "/") {
+						cs.vars[name] = value{}
+						cs.exported[name] = true
+						continue
+					}
+					cs.vars[name] = value{text: val, ok: true}
+				}
+				cs.exported[name] = true
+			case "--env-file":
+				if !eq {
+					k++
+				}
+				for _, n := range TierEnv {
+					cs.vars[n] = value{}
+					cs.exported[n] = true
+				}
+			}
+		}
+		// Absolute paths in the arguments are the container's: those under
+		// a mount are the host paths it maps, others are not on the host.
+		r = append([]Word(nil), r...)
+		for k, x := range r {
+			name, val, eq := strings.Cut(x.Text, "=")
+			p := x.Text
+			if eq && strings.HasPrefix(name, "-") {
+				p = val
+			}
+			if !x.Resolved || !strings.HasPrefix(p, "/") {
+				continue
+			}
+			if hp, ok := toHost(p); ok {
+				if eq && strings.HasPrefix(name, "-") {
+					r[k] = Word{Text: name + "=" + hp, Resolved: true, Prefix: name + "=" + hp}
+				} else {
+					r[k] = Word{Text: hp, Resolved: true, Prefix: hp}
+				}
+			} else {
+				r[k] = Word{Text: strings.TrimSuffix(x.Text, p), Prefix: strings.TrimSuffix(x.Text, p)}
+			}
+		}
 		a.call(append(lits(engine), r...), redirs, cs, st, append(via, args[0].Text+" image "+w.Text), depth+1, stdin{})
 		return
 	}
@@ -1494,7 +1594,7 @@ func (a *analyzer) container(args []Word, redirs []Redir, cmdSt, st *state, via 
 // (unknown) when that cannot be followed. Without both a mount and a
 // working directory the command runs in the image's own directory, which is
 // not the host's either.
-func (a *analyzer) containerDir(opts []Word, cmdSt *state) string {
+func (a *analyzer) containerDir(opts []Word, cmdSt *state) (string, func(string) (string, bool)) {
 	type mount struct{ src, dst string }
 	var mounts []mount
 	wd, ok := "", true
@@ -1540,26 +1640,33 @@ func (a *analyzer) containerDir(opts []Word, cmdSt *state) string {
 			wd, i = val(i, f)
 		}
 	}
-	if !ok || wd == "" || !path.IsAbs(wd) {
-		return ""
-	}
-	best := -1
-	for k, m := range mounts {
-		if m.src == "" || m.dst == "" {
-			continue
+	toHost := func(p string) (string, bool) {
+		if !ok {
+			return "", false
 		}
-		if wd == m.dst || strings.HasPrefix(wd, strings.TrimSuffix(m.dst, "/")+"/") {
-			if best < 0 || len(m.dst) > len(mounts[best].dst) {
-				best = k
+		best := -1
+		for k, m := range mounts {
+			if m.src == "" || m.dst == "" {
+				continue
+			}
+			if p == m.dst || strings.HasPrefix(p, strings.TrimSuffix(m.dst, "/")+"/") {
+				if best < 0 || len(m.dst) > len(mounts[best].dst) {
+					best = k
+				}
 			}
 		}
+		if best < 0 {
+			return "", false
+		}
+		m := mounts[best]
+		rel := strings.TrimPrefix(strings.TrimPrefix(p, m.dst), "/")
+		return a.abs(cmdSt, filepath.Join(m.src, rel)), true
 	}
-	if best < 0 {
-		return ""
+	if !ok || wd == "" || !path.IsAbs(wd) {
+		return "", toHost
 	}
-	m := mounts[best]
-	rel := strings.TrimPrefix(strings.TrimPrefix(wd, m.dst), "/")
-	return a.abs(cmdSt, filepath.Join(m.src, rel))
+	d, _ := toHost(wd)
+	return d, toHost
 }
 
 // skipFlags drops leading options; valued names consume the next word.
@@ -1706,16 +1813,16 @@ func credentialWrapper(bn string, rest []Word) (cmd []Word, script *Word, profil
 		case strings.HasPrefix(t, "-"):
 			if profileFlags[name] {
 				if eq {
-					profile = Word{Text: val, Resolved: w.Resolved, Prefix: val}
+					profile = presentWord(Word{Text: val, Resolved: w.Resolved, Prefix: val})
 				} else if i+1 < len(rest) {
-					profile = rest[i+1]
+					profile = presentWord(rest[i+1])
 				}
 			}
 			if !eq && valued[name] {
 				i++
 			}
 		case positionalProfile:
-			profile = w
+			profile = presentWord(w)
 			positionalProfile = false
 		default:
 			return rest[i:], nil, profile, true
@@ -2211,3 +2318,32 @@ func multiplexerCommand(bn string, rest []Word) (cmd []Word, dir *Word, ok bool)
 	}
 	return nil, nil, false
 }
+
+// TierEnv are the environment variables that select what a cloud or
+// Terraform call acts on. One that is exported with a value that cannot
+// be resolved (empty in the action's environment) makes the target
+// unknown, not absent.
+var TierEnv = []string{"TF_WORKSPACE", "TF_CLI_ARGS", "AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_CONFIG_FILE",
+	"AWS_SHARED_CREDENTIALS_FILE", "AWS_ROLE_ARN", "KUBECONFIG", "HELM_KUBECONTEXT", "CLOUDSDK_CONFIG", "CLOUDSDK_CORE_PROJECT",
+	"CLOUDSDK_ACTIVE_CONFIG_NAME", "AZURE_CONFIG_DIR", "AZURE_SUBSCRIPTION_ID", "ARM_SUBSCRIPTION_ID", "GOOGLE_PROJECT",
+	"GOOGLE_CLOUD_PROJECT", "TG_WORKING_DIR", "TERRAGRUNT_WORKING_DIR"}
+
+// secretsRunners set variables from a secrets store.
+var secretsRunners = toSet("doppler", "op", "chamber", "infisical", "dotenvx")
+
+// presentWord marks a word that is there but resolves to nothing, so that
+// it is not taken for an absent one.
+func presentWord(w Word) Word {
+	if !w.Resolved && w.Text == "" {
+		w.Text = "\x00"
+	}
+	return w
+}
+
+// containerValued are docker's and podman's run options that take the next
+// word as their value.
+var containerValued = toSet("-e", "--env", "--env-file", "-v", "--volume", "--mount", "-w", "--workdir", "--name", "-p",
+	"--publish", "--network", "--net", "--entrypoint", "-u", "--user", "--platform", "-l", "--label", "--label-file",
+	"-h", "--hostname", "--add-host", "--dns", "--cap-add", "--cap-drop", "--device", "-m", "--memory", "--cpus",
+	"--pull", "--restart", "--log-driver", "--log-opt", "--tmpfs", "--ulimit", "--security-opt", "--volumes-from",
+	"--secret", "--ssh", "--userns", "--pid", "--ipc", "--uts", "--cgroupns", "--runtime", "-a", "--attach", "--cidfile")

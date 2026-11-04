@@ -33,7 +33,7 @@ jq -c --arg model "$model" '{
 		]
 	}]
 }' |
-	curl -sS --max-time 25 "$url" \
+	curl -q -sS --max-time 25 "$url" \
 		-H @/dev/fd/3 -H 'Content-Type: application/json' --data-binary @- 3<<EOF |
 Authorization: Bearer $OPENAI_API_KEY
 EOF

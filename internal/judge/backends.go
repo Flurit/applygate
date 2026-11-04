@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -33,13 +34,22 @@ func New(cfg *config.Config, env map[string]string) (Judge, error) {
 		if err != nil {
 			return nil, err
 		}
-		return Command{Argv: argv, Env: judgeEnv(env)}, nil
+		return Command{Argv: argv, Env: judgeEnv(env), Dir: "/"}, nil
 	case "", config.JudgeBackendOpenAI:
 		// No provider or model is chosen for the user (docs/judge.md).
 		if j.BaseURL == "" || j.Model == "" {
 			return nil, errors.New("no endpoint chosen: set judge.base_url and judge.model, or use backend: command (docs/judge.md compares the options)")
 		}
 		o := OpenAI{BaseURL: j.BaseURL, Model: j.Model, ReasoningEffort: j.ReasoningEffort}
+		if config.Managed() {
+			// The agent's user can answer on a plain-HTTP or local port, and
+			// sets the proxy variables: a managed judge talks HTTPS to the
+			// endpoint itself.
+			if !strings.HasPrefix(strings.ToLower(j.BaseURL), "https://") {
+				return nil, errors.New("under a managed install the judge's base_url must be https://, which the agent's user cannot answer for")
+			}
+			o.Client = &http.Client{Transport: &http.Transport{Proxy: nil, ForceAttemptHTTP2: true, TLSHandshakeTimeout: 10 * time.Second}}
+		}
 		if j.APIKeyEnv != "" {
 			// A local server may need no key; a configured key must exist.
 			if o.Key = env[j.APIKeyEnv]; o.Key == "" {
@@ -59,23 +69,33 @@ type Command struct {
 	Argv []string
 	// Env, when set, is the program's whole environment.
 	Env []string
+	// Dir, when set, is the directory the program runs in.
+	Dir string
 }
 
 // judgeEnv is the environment a managed judge program gets: a fixed PATH,
-// the locale and home, and the variables named like a judge's own settings
-// or credentials (APPLYGATE_JUDGE_*, *_API_KEY, *_TOKEN).
+// a home and temporary directory the agent's user cannot write (so no
+// start-up file of theirs is read: .curlrc, Python's user site, a shell
+// rc, Claude Code's user settings), Python's user site turned off, the
+// locale, and the variables named like credentials (*_API_KEY, *_TOKEN).
+// The judge's own settings (APPLYGATE_JUDGE_*) and the proxy variables
+// are not passed: the agent's user would choose who answers.
 func judgeEnv(env map[string]string) []string {
-	out := []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin"}
+	out := []string{"PATH=/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + judgeHome, "TMPDIR=" + judgeHome, "PYTHONNOUSERSITE=1",
+		"PYTHONDONTWRITEBYTECODE=1", "CURL_HOME=" + judgeHome, "XDG_CONFIG_HOME=" + judgeHome}
 	for k, v := range env {
 		switch {
-		case k == "HOME", k == "USER", k == "LOGNAME", k == "TMPDIR", k == "LANG", k == "TZ", strings.HasPrefix(k, "LC_"),
-			strings.HasPrefix(k, "APPLYGATE_JUDGE_"), strings.HasSuffix(k, "_API_KEY"), strings.HasSuffix(k, "_TOKEN"):
+		case k == "USER", k == "LOGNAME", k == "LANG", k == "TZ", strings.HasPrefix(k, "LC_"),
+			strings.HasSuffix(k, "_API_KEY"), strings.HasSuffix(k, "_TOKEN"):
 			out = append(out, k+"="+v)
 		}
 	}
-	sort.Strings(out[1:])
+	sort.Strings(out[7:]) // after the fixed entries
 	return out
 }
+
+// judgeHome is a directory root owns on every supported system.
+const judgeHome = "/var/empty"
 
 // Name is the program's file name, or the script's when the program is an
 // interpreter ("sh judge.sh" is "judge.sh").
@@ -96,6 +116,9 @@ func (c Command) Judge(ctx context.Context, in Input) Result {
 	cmd.Stdin = bytes.NewReader(req)
 	if c.Env != nil {
 		cmd.Env = c.Env
+	}
+	if c.Dir != "" {
+		cmd.Dir = c.Dir
 	}
 	cmd.WaitDelay = time.Second
 	var out, errb bytes.Buffer

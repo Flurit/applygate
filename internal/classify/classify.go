@@ -86,6 +86,13 @@ type Action struct {
 	// .terraform (workspace, backend): the workspace and backend recorded
 	// there now are not the ones the command will use.
 	DataDirWritten bool
+	// PlanStateDirs are the directories of the -state files the plan -out
+	// that wrote PlanFile read.
+	PlanStateDirs []string `json:"-"`
+	// ConfigWritten is set when an earlier step of the same command writes
+	// the configuration, .terraform, lock file, state or a tree under this
+	// directory: what the hook read on disk is not what the call will use.
+	ConfigWritten bool `json:"-"`
 	// BackendConfigWritten is set when an earlier step of the same command
 	// wrote one of the -backend-config files: what the init reads is then
 	// not what is there now.
@@ -100,6 +107,15 @@ type Action struct {
 	// name (absolute); StateUnknown is set when one cannot be resolved.
 	StateFiles   []string
 	StateUnknown bool
+	// TargetUnknown says why the state, plan or directory a changing call
+	// acts on cannot be told: arguments that cannot be resolved may name
+	// another one (-state, -chdir, a planfile, TF_CLI_ARGS). The target is
+	// then judged as protected.
+	TargetUnknown string `json:"-"`
+	// BackendConfigUnknown is set on an init whose -backend-config cannot
+	// be resolved, and on the later calls in its directory, whose backend
+	// is then unknown.
+	BackendConfigUnknown bool `json:"-"`
 	// Source is the terragrunt --source (or TG_SOURCE) as given;
 	// SourceUnknown is set when it cannot be resolved.
 	Source        string
@@ -116,6 +132,9 @@ type Action struct {
 	// (terragrunt run --all, run-all, destroy-all): it is judged at the most
 	// protected tier under Dir.
 	Subtree bool
+	// UnitsUnknown is set when those units cannot be listed before the
+	// command runs (terragrunt stack run generates them).
+	UnitsUnknown bool `json:"-"`
 }
 
 // Options configure classification.
@@ -180,6 +199,9 @@ func Invocations(res *shell.Result, opt Options) []Action {
 	// origin maps a path an earlier step wrote to the directory of the
 	// plan -out that wrote it, or "" for any other writer.
 	origin := map[string]string{}
+	// originState maps a plan -out to the directories of the -state files
+	// that plan read: the plan acts on their resources.
+	originState := map[string][]string{}
 	// seeded holds, per directory, the state files an earlier workspace new
 	// -state=PATH copied into the workspace it selected: later commands
 	// there run on that state.
@@ -203,6 +225,7 @@ func Invocations(res *shell.Result, opt Options) []Action {
 				a.PlanWritten = slices.Contains(written, writtenUnknown) || writtenAt(written, plan) || namedExactly(named, plan)
 				if a.PlanWritten && !slices.Contains(written, writtenUnknown) && !namedExactly(named, plan) {
 					a.PlanOrigin = origin[guard.Fold(filepath.Clean(plan))]
+					a.PlanStateDirs = originState[guard.Fold(filepath.Clean(plan))]
 				}
 			}
 			if a.Engine == "terraform" || a.Engine == "tofu" || a.Engine == "terragrunt" {
@@ -211,6 +234,7 @@ func Invocations(res *shell.Result, opt Options) []Action {
 					dataDir = d
 				}
 				if a.Dir != "" {
+					a.ConfigWritten = slices.Contains(written, writtenUnknown) || configWritten(written, origin, a.Dir)
 					a.DataDirWritten = writtenAt(written, absPath(a.Dir, dataDir, opt.Home))
 					for _, c := range a.BackendConfig {
 						if backendConfigFile(c) && (slices.Contains(written, writtenUnknown) || writtenAt(written, absPath(a.Dir, c, opt.Home))) {
@@ -223,11 +247,15 @@ func Invocations(res *shell.Result, opt Options) []Action {
 		out = append(out, acts...)
 		ws := stepWrites(inv, opt)
 		planDir := ""
+		var planState []string
 		if len(inv.Args) > 0 && inv.Args[0].Resolved {
 			if _, ok := engines[shell.ProgName(inv.Args[0].Text)]; ok {
 				for _, a := range acts {
 					if a.Engine == "terraform" || a.Engine == "tofu" {
 						planDir = a.Dir
+						for _, f := range a.StateFiles {
+							planState = append(planState, filepath.Dir(f))
+						}
 						break
 					}
 				}
@@ -235,6 +263,9 @@ func Invocations(res *shell.Result, opt Options) []Action {
 		}
 		for _, w := range ws {
 			origin[guard.Fold(filepath.Clean(w))] = planDir
+			if len(planState) > 0 {
+				originState[guard.Fold(filepath.Clean(w))] = planState
+			}
 		}
 		written = append(written, ws...)
 		named = append(named, stepNames(inv, opt)...)
@@ -377,6 +408,11 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		return append(out, a)
 	}
 
+	if why := hostInstall(name, args); why != "" {
+		a := base
+		a.Class, a.Engine, a.Why = Tampering, "agent", why
+		return append(out, a)
+	}
 	if e, ok := engines[name]; ok {
 		a := base
 		a.Engine = e
@@ -557,6 +593,7 @@ func fileOps(base Action, name string, args []shell.Word, dir string, opt Option
 		a.Class, a.Engine, a.Why = Tampering, "file", why
 		out = append(out, a)
 	}
+	out = append(out, stateWrites(base, name, args, dir, opt)...)
 	// Places the program writes, moves, removes or extracts into; a
 	// directory that holds a guard file counts.
 	for _, t := range writeTargets(name, args, dir, opt.Home) {
@@ -594,10 +631,6 @@ func fileOps(base Action, name string, args []shell.Word, dir string, opt Option
 			tamper(name + " modifies guard file " + p)
 		case isWriter && opt.relGuard(dir, t):
 			tamper(name + " modifies " + t + ", which has a guard file's name, in a directory the host does not report")
-		case isWriter && name != "cp" && isStateFile(p) && name != "rm":
-			a := base
-			a.Class, a.Engine, a.Why, a.TouchesState = StateSurgery, "file", name+" modifies state file "+p, true
-			out = append(out, a)
 		case readers[name] && IsCredentialPath(p):
 			a := base
 			a.Class, a.Engine, a.Why = CredentialAccess, "file", name+" reads credential file "+p
@@ -647,6 +680,19 @@ func stepWrites(inv shell.Invocation, opt Options) []string {
 			sub, rest = rest[0].Text, rest[1:]
 		}
 		words := append(append([]shell.Word(nil), rest...), cliArgs(inv.Env, sub)...)
+		if sub == "init" {
+			for _, w := range words {
+				if strings.HasPrefix(strings.TrimLeft(w.Text, "-"), "from-module") {
+					// init -from-module copies a module's files into the
+					// directory before anything else.
+					if dir == "" {
+						out = append(out, writtenUnknown)
+					} else {
+						out = append(out, dir)
+					}
+				}
+			}
+		}
 		for i, w := range words {
 			t, v := w.Text, ""
 			switch {
@@ -669,6 +715,9 @@ func stepWrites(inv shell.Invocation, opt Options) []string {
 		return out
 	}
 	out = append(out, writeTargets(name, args, inv.Dir, opt.Home)...)
+	if name == "git" {
+		out = append(out, gitTreeWrites(args, inv.Dir, opt.Home)...)
+	}
 	// cp, mv, ln and tee write their last argument even when it is a file.
 	switch name {
 	case "cp", "mv", "ln", "install", "tee", "touch", "truncate", "dd":
@@ -1494,6 +1543,252 @@ func packageTamper(name string, args []shell.Word) string {
 	}
 	if named && mutating[sub] {
 		return name + " " + sub + " changes the applygate binary the hook runs, which only a person may do"
+	}
+	return ""
+}
+
+// configWritten reports whether an earlier write covers Terraform directory
+// dir: the directory or one above it (a tree extracted, copied, checked
+// out), or a file under it that Terraform reads (configuration, variables,
+// .terraform, the lock file, state) or a path with no extension, which may
+// be a directory of modules. A plan -out is left to the plan gate.
+func configWritten(written []string, origin map[string]string, dir string) bool {
+	d := guard.Fold(filepath.Clean(dir))
+	for _, w := range written {
+		if w == writtenUnknown {
+			continue
+		}
+		w = guard.Fold(filepath.Clean(w))
+		if origin[w] != "" {
+			continue // a plan -out: the plan gate follows where it came from
+		}
+		if w == d || strings.HasPrefix(d, w+string(filepath.Separator)) {
+			return true
+		}
+		rel, ok := strings.CutPrefix(w, d+string(filepath.Separator))
+		if !ok {
+			continue
+		}
+		b := filepath.Base(rel)
+		if strings.HasPrefix(rel, ".terraform"+string(filepath.Separator)) || rel == ".terraform" || !strings.Contains(b, ".") || tfFile(b) {
+			return true
+		}
+	}
+	return false
+}
+
+// tfFile reports a file name Terraform or OpenTofu reads in a directory.
+func tfFile(b string) bool {
+	for _, s := range []string{".tf", ".tofu", ".tf.json", ".tofu.json", ".tfvars", ".tfvars.json", ".tfstate", ".tfstate.backup", ".hcl"} {
+		if strings.HasSuffix(b, s) {
+			return true
+		}
+	}
+	return b == ".terraformrc" || b == "terraform.rc"
+}
+
+// gitTreeWrites returns the working tree a git command rewrites without
+// naming paths: switching branches, merging, resetting, rebasing, pulling,
+// cherry-picking and reverting.
+func gitTreeWrites(args []shell.Word, dir, home string) []string {
+	base := dir
+	i := 0
+	for i < len(args) {
+		t := args[i].Text
+		switch {
+		case t == "-C" && i+1 < len(args):
+			if !args[i+1].Resolved {
+				return []string{writtenUnknown}
+			}
+			base = absPath(base, args[i+1].Text, home)
+			i += 2
+			continue
+		case (t == "-c" || t == "--git-dir" || t == "--work-tree") && i+1 < len(args):
+			i += 2
+			continue
+		case strings.HasPrefix(t, "-"):
+			i++
+			continue
+		}
+		break
+	}
+	if i >= len(args) || base == "" {
+		return nil
+	}
+	switch args[i].Text {
+	case "checkout", "switch", "merge", "reset", "rebase", "pull", "cherry-pick", "revert", "am", "apply", "stash", "restore", "worktree", "read-tree", "clean":
+		return []string{base}
+	}
+	return nil
+}
+
+// stateWrites classifies a program that overwrites, removes or copies a
+// Terraform state file as state surgery, once in the directory it writes
+// and once in the directory of each state file it copies from: a state
+// copied out of a protected directory carries that tier.
+func stateWrites(base Action, name string, args []shell.Word, dir string, opt Options) []Action {
+	var targets, sources []string
+	var pos []string
+	for _, w := range args {
+		if w.Resolved && w.Text != "" && !strings.HasPrefix(w.Text, "-") {
+			pos = append(pos, absPath(dir, w.Text, opt.Home))
+		}
+	}
+	switch {
+	case copiers[name] || name == "mv" || name == "ln":
+		if len(pos) < 2 {
+			return nil
+		}
+		dst := pos[len(pos)-1]
+		for _, p := range pos[:len(pos)-1] {
+			if isStateFile(p) {
+				sources = append(sources, p)
+			}
+		}
+		if isStateFile(dst) {
+			targets = append(targets, dst)
+		} else if fi, err := os.Stat(dst); len(sources) > 0 && err == nil && fi.IsDir() {
+			targets = append(targets, filepath.Join(dst, filepath.Base(sources[0])))
+		} else if len(sources) > 0 && name == "mv" {
+			targets = append(targets, sources...)
+		}
+		if name == "mv" {
+			targets = append(targets, sources...)
+		}
+	case writers[name] || (name == "sed" || name == "perl") && inPlaceEdit(args):
+		for _, p := range pos {
+			if isStateFile(p) {
+				targets = append(targets, p)
+			}
+		}
+	}
+	if len(targets) == 0 {
+		return nil
+	}
+	// A new copy (a backup) changes no state in use. Overwriting a state
+	// file, or copying one from another directory into a Terraform
+	// directory, does: the copy carries the source's tier.
+	var all []string
+	if len(sources) > 0 && name != "mv" {
+		dst := targets[0]
+		into := filepath.Dir(dst) != filepath.Dir(sources[0]) && tfDir(filepath.Dir(dst))
+		switch {
+		case into:
+			all = append(all, dst)
+			all = append(all, sources...)
+		case overwrites(dst):
+			all = append(all, dst)
+		}
+		if len(all) == 0 {
+			return nil
+		}
+	} else {
+		for _, t := range targets {
+			if name == "mv" || removers[name] || overwrites(t) {
+				all = append(all, t)
+			}
+		}
+		if name == "mv" {
+			all = append(all, sources...)
+		}
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	var out []Action
+	seen := map[string]bool{}
+	for _, p := range all {
+		d := filepath.Dir(p)
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
+		a := base
+		a.Dir, a.AnyDir = d, false
+		a.Class, a.Engine, a.TouchesState = StateSurgery, "file", true
+		a.Why = name + " changes state file " + targets[0]
+		if len(sources) > 0 && name != "mv" {
+			a.Why = name + " writes " + targets[0] + " from state file " + sources[0]
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
+// inPlaceEdit reports sed's or perl's -i.
+func inPlaceEdit(args []shell.Word) bool {
+	for _, w := range args {
+		if strings.HasPrefix(w.Text, "-i") || w.Text == "--in-place" || strings.HasPrefix(w.Text, "--in-place=") || strings.HasPrefix(w.Text, "-pi") {
+			return true
+		}
+	}
+	return false
+}
+
+// tfDir reports whether d holds Terraform or OpenTofu configuration.
+func tfDir(d string) bool {
+	ents, err := os.ReadDir(d)
+	if err != nil {
+		return !os.IsNotExist(err)
+	}
+	for _, e := range ents {
+		if n := e.Name(); tfFile(n) && !strings.Contains(n, ".tfstate") || n == ".terraform" || n == "terragrunt.hcl" {
+			return true
+		}
+	}
+	return false
+}
+
+// overwrites reports whether writing p replaces a state in use: an
+// existing file, or the default local state file.
+func overwrites(p string) bool {
+	if filepath.Base(p) == "terraform.tfstate" {
+		return true
+	}
+	_, err := os.Lstat(p)
+	return err == nil || !os.IsNotExist(err)
+}
+
+// hostPackages are the agent CLIs' packages in npm and Homebrew.
+var hostPackages = map[string]bool{"@anthropic-ai/claude-code": true, "@openai/codex": true, "@google/gemini-cli": true,
+	"@github/copilot": true, "opencode-ai": true, "claude-code": true, "codex": true, "gemini-cli": true, "copilot-cli": true,
+	"opencode": true}
+
+// hostInstall reports a command that installs, updates or replaces an
+// agent CLI: the program that reads the hook settings, managed ones
+// included. A wrapper or an older release in its place can start sessions
+// without the hook.
+func hostInstall(name string, args []shell.Word) string {
+	pos := positional(args)
+	switch name {
+	case "claude", "codex", "gemini", "copilot", "opencode", "cursor-agent":
+		if len(pos) > 0 {
+			switch pos[0] {
+			case "install", "update", "upgrade", "migrate-installer":
+				return name + " " + pos[0] + " replaces the agent CLI, which reads the hook settings"
+			}
+		}
+		return ""
+	case "npm", "pnpm", "yarn", "bun", "brew":
+	default:
+		return ""
+	}
+	if len(pos) == 0 {
+		return ""
+	}
+	switch pos[0] {
+	case "install", "i", "add", "update", "upgrade", "up", "reinstall", "link", "global":
+	default:
+		return ""
+	}
+	for _, p := range pos[1:] {
+		pkg := p
+		if j := strings.LastIndex(pkg, "@"); j > 0 {
+			pkg = pkg[:j]
+		}
+		if hostPackages[strings.TrimPrefix(pkg, "--cask=")] {
+			return name + " " + pos[0] + " " + p + " replaces an agent CLI, which reads the hook settings"
+		}
 	}
 	return ""
 }

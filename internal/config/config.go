@@ -317,6 +317,16 @@ var DefaultProtectedPaths = []string{
 	// Start-up and login files outside the shell rc files.
 	"**/Library/LaunchAgents/**", "**/.config/fish/**", "**/.config/environment.d/*", "**/.config/systemd/user/**",
 	"**/.oh-my-zsh/custom/**",
+	// The go environment file sets GOFLAGS (-toolexec) for every later go
+	// command.
+	"**/Library/Application Support/go/env", "**/.config/go/env",
+	// The agent CLIs themselves, which read the hook settings (managed
+	// ones included): a wrapper or an older release put in their place
+	// starts sessions without the hook. The names on PATH are guarded with
+	// the trusted programs below.
+	"**/.local/share/claude/**", "**/.claude/local/**", "**/lib/node_modules/@anthropic-ai/claude-code/**",
+	"**/lib/node_modules/@openai/codex/**", "**/lib/node_modules/@google/gemini-cli/**", "**/lib/node_modules/@github/copilot/**",
+	"**/lib/node_modules/opencode-ai/**", "**/.codex/bin/**",
 }
 
 // pathPrograms are names an agent may not place in a PATH directory: the
@@ -324,6 +334,7 @@ var DefaultProtectedPaths = []string{
 // launcher and its documented commands run, and the engines the plan gate
 // runs (a plant could answer show -json with any plan).
 var pathPrograms = []string{"applygate", "seatbelt", "terraform", "tofu", "terragrunt", "sh", "bash", "zsh", "dash",
+	"claude", "codex", "gemini", "copilot", "opencode", "cursor-agent",
 	"env", "sudo", "su", "doas", "awk", "sha256sum", "shasum", "cut", "uname", "tar", "curl", "git", "aws", "gcloud",
 	"az", "gsutil", "kubectl", "helm", "kustomize", "gh", "glab", "go", "gofmt", "docker", "podman", "make", "vault",
 	"jq", "yq", "sed", "grep", "egrep", "rg", "find", "ls", "cat", "head", "tail", "wc", "sort", "uniq", "tr", "tee",

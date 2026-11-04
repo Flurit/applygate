@@ -259,10 +259,12 @@ func TestCredentialWrappersAndScriptIdioms(t *testing.T) {
 			}
 		}
 	}
-	// A secrets runner's -p names its own project, not an AWS profile.
+	// A secrets runner's -p names its own project, not an AWS profile; the
+	// variables it sets come from its store, so the tier signals are
+	// unknown (exported, with no value the hook can read).
 	for _, inv := range Analyze("doppler run -p infra -- terraform destroy", Options{Dir: "/repo", ReadFile: fs}).Invocations {
-		if p, set := inv.Env["AWS_PROFILE"]; set {
-			t.Errorf("doppler -p set AWS_PROFILE to %q", p)
+		if p, set := inv.Env["AWS_PROFILE"]; !set || p != "" {
+			t.Errorf("doppler -p: AWS_PROFILE = %q (set %v), want unknown", p, set)
 		}
 	}
 	// Other subcommands of the same tools run nothing.

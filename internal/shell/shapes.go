@@ -3,6 +3,7 @@ package shell
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -68,6 +69,34 @@ func init() {
 		"repo", "run", "ruleset", "search", "secret", "status", "variable", "workflow", "config get", "config list")
 	shapes["glab"] = valuedSubcommands(toSet("-R", "--repo"), "api", "auth status", "ci", "issue", "label", "mr", "release", "repo", "variable",
 		"config get")
+	// gh and glab run git in the repository for some subcommands (pr
+	// checkout, pr merge, repo sync, repo fork --clone, mr checkout), and
+	// pass words after -- to git clone: the same state check as git's.
+	for _, n := range []string{"gh", "glab"} {
+		base := shapes[n]
+		shapes[n] = func(args []Word, inv Invocation) string {
+			if why := base(args, inv); why != "" {
+				return why
+			}
+			pos := positional(args, 2, toSet("-R", "--repo"))
+			sub := strings.Join(pos, " ")
+			switch sub {
+			case "repo clone", "repo fork":
+				for _, w := range args {
+					if w.Text == "--" {
+						return "words passed through to git clone"
+					}
+				}
+				if sub == "repo fork" && !hasOpt(args, "--clone") {
+					return ""
+				}
+				return gitState(inv.Dir, "clone")
+			case "pr checkout", "pr merge", "repo sync", "mr checkout", "mr merge", "pr create", "mr create":
+				return gitState(inv.Dir, "fetch")
+			}
+			return ""
+		}
+	}
 	shapes["go"] = valuedSubcommands(toSet("-C"), "version", "env", "doc", "help", "list", "mod graph", "mod why", "mod verify")
 	shapes["docker"] = valuedSubcommands(toSet("-H", "--host", "--context", "-c", "-l", "--log-level"), "ps", "images", "image ls", "image inspect", "version", "info", "logs", "inspect",
 		"context ls", "context show", "compose ps", "compose ls", "compose config", "compose logs", "compose version")
@@ -97,7 +126,14 @@ func init() {
 		}
 		return ""
 	}
-	shapes["trivy"] = subcommands("config", "fs", "filesystem", "repo", "repository", "image", "version", "sbom", "k8s")
+	trivy := subcommands("config", "fs", "filesystem", "repo", "repository", "image", "version", "sbom", "k8s")
+	shapes["trivy"] = func(args []Word, inv Invocation) string {
+		// Another kubeconfig: its users may run an exec credential plugin.
+		if hasOpt(args, "--kubeconfig") {
+			return "the option --kubeconfig"
+		}
+		return trivy(args, inv)
+	}
 	shapes["conftest"] = subcommands("test", "verify", "parse", "fmt", "version")
 	shapes["opa"] = subcommands("eval", "test", "fmt", "check", "version", "inspect", "parse", "build")
 	shapes["aws"] = awsShape
@@ -113,8 +149,9 @@ func init() {
 		if len(args) > 0 && args[0].Text == "env" {
 			return denyOpts("-w", "-u")(args, inv)
 		}
-		// go list -export builds, and -toolexec runs a program for each tool.
-		return denyOpts("-toolexec", "-exec")(args, inv)
+		// go list -export and -compiled build, and -toolexec runs a
+		// program for each tool.
+		return denyOpts("-toolexec", "-exec", "-export", "-compiled")(args, inv)
 	}
 }
 
@@ -337,13 +374,37 @@ func tarShape(args []Word, _ Invocation) string {
 func sedShape(args []Word, _ Invocation) string {
 	var scripts []Word
 	explicit := false
+	// The script is the first operand unless -e or -f gave one. Options
+	// are read as the sed on this machine reads them: BSD sed (macOS) takes
+	// the word after -i and -I as the backup suffix; GNU sed takes the word
+	// after -l and --line-length as a number. Operands start after --.
+	operands := 0
+	opts := true
+	gnuStyle := false
 	for i := 0; i < len(args); i++ {
 		w := args[i]
 		t := optText(w)
+		if !opts || !strings.HasPrefix(t, "-") || t == "-" {
+			if !explicit && operands == 0 {
+				scripts = append(scripts, w)
+			}
+			operands++
+			continue
+		}
 		switch {
 		case t == "--":
-			i = len(args)
-		case t == "-f" || strings.HasPrefix(t, "--f") || strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && strings.ContainsRune(t[1:], 'f'):
+			opts = false
+		case (t == "-i" || t == "-I") && bsdSed:
+			if i+1 < len(args) && !explicit && sedScript(optText(args[i+1])) == "" && strings.ContainsAny(args[i+1].Text, "/") {
+				// GNU usage (sed -i 's/a/b/' f): BSD sed takes the script as
+				// the suffix and the file as the script, which then fails
+				// to compile unless the file name is itself a script.
+				gnuStyle = true
+			}
+			i++
+		case t == "-l" || t == "--line-length":
+			i++
+		case t == "-f" || strings.HasPrefix(t, "--f") || !strings.HasPrefix(t, "--") && strings.ContainsRune(t[1:], 'f'):
 			// -f, -nf, --file, --fil: a script from a file.
 			return "a sed script from a file"
 		case strings.HasPrefix(t, "--") && !strings.HasPrefix(t, "--expression") && len(t) > 3 && strings.HasPrefix("--expression", strings.SplitN(t, "=", 2)[0]):
@@ -361,11 +422,6 @@ func sedShape(args []Word, _ Invocation) string {
 		case strings.HasPrefix(t, "-e") && !strings.HasPrefix(t, "--"):
 			explicit = true
 			scripts = append(scripts, Word{Text: w.Text[2:], Resolved: w.Resolved})
-		case strings.HasPrefix(t, "-"):
-		default:
-			if !explicit && len(scripts) == 0 {
-				scripts = append(scripts, w)
-			}
 		}
 	}
 	for _, s := range scripts {
@@ -373,10 +429,25 @@ func sedShape(args []Word, _ Invocation) string {
 			return "a sed script that cannot be resolved"
 		}
 		if why := sedScript(s.Text); why != "" {
+			if gnuStyle && sedRejects(s.Text, why) {
+				continue
+			}
 			return why
 		}
 	}
 	return ""
+}
+
+// sedRejects reports whether sed refuses to run script s, a file name read
+// as a script: sed compiles the whole script first, and the checker
+// stopped at a character that is no command, before any e or w. Only a
+// single word that looks like a file name counts.
+func sedRejects(s, why string) bool {
+	c, ok := strings.CutPrefix(why, "the sed command ")
+	if !ok || c == "e" || c == "w" || c == "W" || strings.ContainsAny(s, " \t\n;{}") {
+		return false
+	}
+	return strings.ContainsAny(s, "./") && len(c) == 1 && !strings.Contains("aibcdDeFgGhHlnNpPqQrRstTvwWxyz=#:{}!", c)
 }
 
 // sedScript reads a sed script command by command.
@@ -503,7 +574,7 @@ func gitShape(args []Word, inv Invocation) string {
 		case "-C":
 			i += 2
 			continue
-		case "--no-pager", "--no-optional-locks", "--bare", "--literal-pathspecs", "--no-replace-objects":
+		case "--no-pager", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects":
 		default:
 			// -c, -p, --git-dir, --exec-path and the rest.
 			return "the git option " + t
@@ -536,9 +607,27 @@ func gitShape(args []Word, inv Invocation) string {
 	case sub == "clone" && (hasOpt(rest, "-c") || hasOpt(rest, "--config")):
 		return "the git option -c"
 	}
-	if gitNetwork[sub] {
-		// A local repository as the remote runs its hooks (push) and its
-		// git (fetch, clone).
+	dir := inv.Dir
+	for j := 0; j+1 < i; j++ {
+		if args[j].Text == "-C" {
+			if !args[j+1].Resolved {
+				return "a git -C directory that cannot be resolved"
+			}
+			if dir != "" {
+				dir = PhysicalJoin(dir, args[j+1].Text)
+			}
+		}
+	}
+	switch sub {
+	case "fetch", "pull", "push", "ls-remote", "clone", "archive":
+		// The repository these name is a network URL, an scp-like
+		// address or a configured remote; anything else is a local
+		// repository, whose hooks (push), upload-archive config
+		// (archive --remote) or git (fetch, clone) runs here.
+		if why := gitRemoteArg(sub, rest, dir); why != "" {
+			return why
+		}
+	case "remote", "submodule":
 		for _, w := range rest {
 			t := optText(w)
 			if !w.Resolved && !strings.HasPrefix(t, "-") {
@@ -561,18 +650,68 @@ func gitShape(args []Word, inv Invocation) string {
 			return why
 		}
 	}
-	dir := inv.Dir
-	for j := 0; j+1 < i; j++ {
-		if args[j].Text == "-C" {
-			if !args[j+1].Resolved {
-				return "a git -C directory that cannot be resolved"
+	return gitState(dir, sub)
+}
+
+// gitValued are the options of git's network subcommands that take their
+// value as the next word.
+var gitValued = toSet("--depth", "--deepen", "--shallow-since", "--shallow-exclude", "-j", "--jobs", "--negotiation-tip",
+	"--server-option", "-o", "--refmap", "--recurse-submodules-default", "--submodule-prefix", "--filter", "--upload-pack",
+	"-X", "--strategy-option", "-s", "--strategy", "--push-option", "--repo", "--receive-pack", "--exec", "--origin", "-b",
+	"--branch", "--reference", "--reference-if-able", "--separate-git-dir", "--template", "-c", "--config",
+	"--bundle-uri", "--sort", "--remote", "--format", "--prefix", "-O", "--output")
+
+// gitRemoteArg reports a network subcommand whose repository is not known
+// to be remote.
+func gitRemoteArg(sub string, rest []Word, dir string) string {
+	var repos []Word
+	first := true
+	for k := 0; k < len(rest); k++ {
+		w := rest[k]
+		t := optText(w)
+		if !w.Resolved && !strings.HasPrefix(t, "-") {
+			if sub == "archive" {
+				continue // tree-ish and paths
 			}
-			if dir != "" {
-				dir = PhysicalJoin(dir, args[j+1].Text)
+			if first {
+				return "a git remote that cannot be resolved"
 			}
+			continue
+		}
+		name, val, eq := strings.Cut(t, "=")
+		if strings.HasPrefix(t, "-") && t != "-" {
+			if name == "--remote" || name == "--repo" {
+				switch {
+				case eq:
+					repos = append(repos, Word{Text: val, Resolved: w.Resolved, Prefix: val})
+				case k+1 < len(rest):
+					repos = append(repos, rest[k+1])
+				}
+			}
+			// -u is clone's and ls-remote's --upload-pack, push's and
+			// pull's --set-upstream.
+			if !eq && (gitValued[t] || t == "-u" && (sub == "clone" || sub == "ls-remote")) {
+				k++
+			}
+			continue
+		}
+		if t == "--" {
+			continue
+		}
+		if first && sub != "archive" {
+			repos = append(repos, w)
+		}
+		first = false
+	}
+	for _, r := range repos {
+		if !r.Resolved {
+			return "a git remote that cannot be resolved"
+		}
+		if !networkURL(r.Text) && !gitConfiguredRemote(dir, r.Text) {
+			return "a git repository " + r.Text + " that is not a network URL or a configured remote"
 		}
 	}
-	return gitState(dir, sub)
+	return ""
 }
 
 // gitConfigShape: reading config is plain; setting a key is plain only when
@@ -739,7 +878,8 @@ func kubectlShape(args []Word, inv Invocation) string {
 // kubeValued and cloudValued are the global options of kubectl and helm,
 // and of the cloud CLIs, that take a value.
 var kubeValued = toSet("-n", "--namespace", "--context", "--cluster", "--user", "-s", "--server", "--as", "--as-group",
-	"--request-timeout", "--kube-context", "--token", "--certificate-authority", "--tls-server-name")
+	"--request-timeout", "--kube-context", "--token", "--certificate-authority", "--tls-server-name", "--kubeconfig",
+	"--kube-apiserver", "--kube-as-user", "--kube-as-group", "--kube-token", "--kube-ca-file")
 
 var cloudValued = toSet("--profile", "--region", "--output", "--endpoint-url", "--query", "--project", "--account",
 	"--configuration", "--subscription", "-o", "--format")
@@ -752,6 +892,10 @@ var helmSubs = toSet("completion", "create", "dependency", "env", "get", "help",
 func helmShape(args []Word, _ Invocation) string {
 	if hasOpt(args, "--post-renderer") {
 		return "the option --post-renderer"
+	}
+	if hasOpt(args, "--kubeconfig") {
+		// Another kubeconfig: its users may run an exec credential plugin.
+		return "the option --kubeconfig"
 	}
 	pos := positional(args, 1, kubeValued)
 	if len(pos) == 1 && !helmSubs[pos[0]] {
@@ -769,3 +913,7 @@ func awsShape(args []Word, _ Invocation) string {
 	}
 	return ""
 }
+
+// bsdSed is set where sed is BSD's (macOS and the BSDs), whose -i and -I
+// take the next word as the backup suffix.
+var bsdSed = runtime.GOOS == "darwin" || strings.HasSuffix(runtime.GOOS, "bsd")

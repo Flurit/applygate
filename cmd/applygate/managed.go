@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 
@@ -257,6 +258,26 @@ func doctorManaged(say func(bool, string, ...any)) {
 		check("trust store", tp)
 	} else {
 		say(true, "managed trust store: no repository config trusted yet ("+config.TrustCommand()+")")
+	}
+	// The agent CLIs read the managed settings: one the agent's user can
+	// replace (a native install in the home directory, a user-owned npm or
+	// Homebrew prefix) can be swapped for a wrapper that turns the hook
+	// off. The hook blocks the routes it sees; a root-owned install closes
+	// the rest.
+	for _, name := range []string{"claude", "codex"} {
+		p, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		real, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			real = p
+		}
+		if err := config.CheckSystemFile(real); err != nil {
+			say(false, "%s at %s can be replaced by your user (%v): install it root-owned so the managed settings it reads hold (docs/managed.md)", name, real, err)
+		} else {
+			say(true, "%s: %s, root-owned", name, real)
+		}
 	}
 }
 

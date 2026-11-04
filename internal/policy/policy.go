@@ -404,7 +404,7 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 		actions = classify.Invocations(res, copt)
 		notes = res.Notes
 		if cfg.StrictShapesOn() {
-			actions = append(actions, shapeActions(ev, res, deps)...)
+			actions = append(actions, shapeActions(ev, res, deps, actions)...)
 		}
 		if ev.Persistent {
 			// Each call is judged on its own, so state one call leaves in
@@ -435,11 +435,18 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 	d := Decision{Verdict: Allow, Mode: cfg.Mode, Notes: notes}
 	selected := map[string]string{}            // dir -> workspace selected earlier in this command
 	backendCfg := map[string]classify.Action{} // dir -> an earlier init in this command with -backend-config
+	unknownBackend := map[string]bool{}        // dir -> an earlier init whose -backend-config cannot be resolved
 	for _, a := range actions {
 		if len(a.BackendConfig) > 0 {
 			backendCfg[a.Dir] = a
+			delete(unknownBackend, a.Dir)
+		} else if a.BackendConfigUnknown {
+			unknownBackend[a.Dir] = true
+			delete(backendCfg, a.Dir)
 		} else if init, ok := backendCfg[a.Dir]; ok && isTerraform(a.Engine) {
 			a.BackendConfig, a.BackendConfigWritten = init.BackendConfig, init.BackendConfigWritten
+		} else if unknownBackend[a.Dir] && isTerraform(a.Engine) {
+			a.BackendConfigUnknown = true
 		}
 		if ws, ok := selected[a.Dir]; ok && ws == classify.UnknownWorkspace && a.Env["TF_WORKSPACE"] == "" {
 			a.WorkspaceUnknown = true
@@ -508,6 +515,7 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	for k, v := range a.TargetEnv {
 		env[k] = v
 	}
+	absEnvPaths(env, a.Dir)
 	tf := a.Engine == "terraform" || a.Engine == "tofu" || a.Engine == "terragrunt"
 	// The directory is known when the host reported it or the command
 	// itself moved there (cd, pushd, -chdir); a.Dir then differs from the
@@ -585,6 +593,9 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		if a.StateUnknown {
 			sig.BackendUnknown = "a -state path cannot be resolved statically"
 		}
+		if a.BackendConfigUnknown && a.Sub != "init" {
+			sig.BackendUnknown = "an earlier init in this command has a -backend-config that cannot be resolved statically"
+		}
 		if a.Engine == "terragrunt" {
 			terragruntSignals(&sig, a, be)
 		}
@@ -633,6 +644,8 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	}
 	var res config.Resolution
 	switch {
+	case a.Subtree && a.Dir != "" && a.UnitsUnknown:
+		res = cfg.ResolveUnder(a.Dir, sig, "terragrunt stack run runs units generated from terragrunt.stack.hcl, which cannot be listed before it runs")
 	case a.Subtree && a.Dir != "":
 		res = subtreeResolve(cfg, a.Dir, sig, deps.Env)
 	case a.AnyDir && rootOf(cfg, ev) != "":
@@ -669,6 +682,22 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		// workspace and backend it records are unknown.
 		r.Tier, r.Env = config.Protected, "unknown"
 		r.Matched = append(r.Matched, "TF_DATA_DIR cannot be resolved statically, so the workspace and backend it selects are unknown; judged as protected")
+	}
+	if ev.Persistent && r.Tier.Rank() < config.Protected.Rank() {
+		// A shell that keeps running between calls keeps its directory: a
+		// cd typed in one call moves the next, which is judged on its own.
+		r.Tier, r.Env = config.Protected, "unknown"
+		r.Matched = append(r.Matched, "typed into a shell that keeps running between calls, whose directory an earlier call may have changed; judged as protected")
+	}
+	if why := unknownSignal(a); why != "" && r.Tier.Rank() < config.Protected.Rank() {
+		r.Tier, r.Env = config.Protected, "unknown"
+		r.Matched = append(r.Matched, why+"; judged as protected")
+	}
+	if a.ConfigWritten && tf && r.Tier.Rank() < config.Protected.Rank() {
+		// The configuration, providers, lock file or state the hook read
+		// are rewritten by an earlier step, so they cannot tell the target.
+		r.Tier, r.Env = config.Protected, "unknown"
+		r.Matched = append(r.Matched, "an earlier step of this command writes the configuration or state in "+a.Dir+", so what this call uses is unknown; judged as protected")
 	}
 	if a.DataDirWritten && r.Tier.Rank() < config.Protected.Rank() {
 		// The workspace and backend this directory records are rewritten by
@@ -813,6 +842,11 @@ func DirSignals(dir string, env map[string]string) (config.Signals, *preflight.B
 	if p := awsProfileEnv(env); p != "" {
 		sig.AWSProfile = p
 	}
+	if _, err := os.Stat(filepath.Join(dir, "terragrunt.hcl")); err == nil {
+		// A Terragrunt unit: its remote_state and local source are
+		// signals too (terragrunt run --all, plan-check in a unit).
+		terragruntSignals(&sig, classify.Action{Dir: dir, Engine: "terragrunt"}, be)
+	}
 	return sig, be
 }
 
@@ -874,6 +908,16 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 				r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "the saved plan is made in "+a.PlanOrigin)
 			}
 		}
+		for _, d := range a.PlanStateDirs {
+			// plan -state=FILE -out=p: p changes the resources in FILE.
+			if alt := cfg.Resolve(config.Signals{Dir: d, StateDirs: []string{d}}); alt.Unknown || alt.Tier.Rank() > r.Tier.Rank() {
+				t, e := alt.Tier, alt.Env
+				if alt.Unknown && t.Rank() < r.Tier.Rank() {
+					t, e = r.Tier, r.Env
+				}
+				r.Tier, r.Env, r.Matched = t, e, append(r.Matched, "the saved plan is made from the state in "+d)
+			}
+		}
 		r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-unverifiable", Severity: preflight.Critical,
 			Message: "an earlier step of this command writes the saved plan " + a.PlanFile + ", so the plan that would be applied cannot be checked; run the steps separately"})
 		return classify.ApplySavedPlan
@@ -884,7 +928,7 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 		// is in the directory the link's parent is.
 		planPath = shell.PhysicalJoin(a.Dir, planPath)
 	}
-	if p := filepath.ToSlash(planPath); strings.HasPrefix(p, "/dev/") || strings.HasPrefix(p, "/proc/") {
+	if streamPath(planPath) {
 		// A plan read from stdin or a descriptor (apply /dev/stdin <
 		// ../prod/tfplan) has no directory.
 		r.Tier, r.Env = config.Protected, "unknown"
@@ -1215,8 +1259,25 @@ func isTerraform(engine string) bool {
 // plain: one per directory its programs are known to run in, each judged at
 // that directory's tier: ask in protected, allow elsewhere. A part the
 // analysis lost is judged by the command's own actions.
-func shapeActions(ev Event, res *shell.Result, deps Deps) []classify.Action {
+func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action) []classify.Action {
 	ok, why := shell.PlainShape(ev.Command, res)
+	if ok {
+		// The provider, lock-file and data-source checks read the disk
+		// before the command runs; a step that rewrites what they read
+		// comes first.
+		for _, a := range acts {
+			if isTerraform(a.Engine) && (a.ConfigWritten || a.DataDirWritten) && startsProviders(a.Sub, nil) {
+				ok, why = false, "an earlier step writes the configuration or .terraform in "+a.Dir+" that "+a.Engine+" then reads"
+				break
+			}
+			if isTerraform(a.Engine) && ev.Persistent && startsProviders(a.Sub, nil) {
+				// The provider check needs the directory, which a shell that
+				// keeps running between calls may have left.
+				ok, why = false, a.Engine+" typed into a shell that keeps running between calls, whose directory the hook cannot follow"
+				break
+			}
+		}
+	}
 	if ok {
 		ctx := deps.Ctx
 		if ctx == nil {
@@ -1238,6 +1299,16 @@ func shapeActions(ev Event, res *shell.Result, deps Deps) []classify.Action {
 			Why: "strict shapes: the command is not a plain list or pipeline of known programs (" + why + ")"})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Dir < out[j].Dir })
+	// A command run over every unit under a directory (terragrunt
+	// --all) runs what each unit's configuration names: the shape is
+	// judged at the most protected unit's tier too.
+	for _, a := range acts {
+		if a.Subtree && a.Dir != "" {
+			out = append(out, classify.Action{Class: classify.ComplexShape, Engine: "shell", Command: ev.Command, Dir: a.Dir,
+				Subtree: true, UnitsUnknown: a.UnitsUnknown,
+				Why: "strict shapes: the command is not a plain list or pipeline of known programs (" + why + ")"})
+		}
+	}
 	return out
 }
 
@@ -1281,4 +1352,62 @@ func subtreeResolve(cfg *config.Config, dir string, sig config.Signals, env map[
 		return cfg.ResolveUnder(dir, sig, "terragrunt runs every unit under "+dir+", and they could not all be listed")
 	}
 	return best
+}
+
+// unknownSignal says why the target of a cloud or Terraform action cannot
+// be told ("" when it can).
+func unknownSignal(a classify.Action) string {
+	if a.Engine == "" {
+		return ""
+	}
+	if a.TargetUnknown != "" {
+		return a.TargetUnknown
+	}
+	for _, k := range shell.TierEnv {
+		if v, set := a.Env[k]; set && v == "" {
+			return k + " is set to a value that cannot be resolved statically, so what it selects is unknown"
+		}
+	}
+	for k, v := range a.Env {
+		if strings.HasPrefix(k, "TF_CLI_ARGS_") && v == "" && a.Engine != "" {
+			return k + " is set to a value that cannot be resolved statically"
+		}
+	}
+	return ""
+}
+
+// absEnvPaths makes the relative config paths in env absolute against the
+// command's directory, where the program resolves them.
+func absEnvPaths(env map[string]string, dir string) {
+	if dir == "" {
+		return
+	}
+	for _, k := range []string{"KUBECONFIG", "CLOUDSDK_CONFIG", "AZURE_CONFIG_DIR", "AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE"} {
+		v := env[k]
+		if v == "" {
+			continue
+		}
+		parts := filepath.SplitList(v)
+		for i, p := range parts {
+			if p != "" && !filepath.IsAbs(p) && !strings.HasPrefix(p, "~") {
+				parts[i] = shell.PhysicalJoin(dir, p)
+			}
+		}
+		env[k] = strings.Join(parts, string(filepath.ListSeparator))
+	}
+}
+
+// streamPath reports a planfile path that is not a regular file on disk: a
+// device, a pipe or a descriptor, by any spelling (//dev/stdin, /./dev/fd/3)
+// or through a link.
+func streamPath(p string) bool {
+	c := filepath.ToSlash(filepath.Clean(p))
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		c = filepath.ToSlash(r)
+	}
+	if strings.HasPrefix(c, "/dev/") || strings.HasPrefix(c, "/proc/") {
+		return true
+	}
+	fi, err := os.Stat(p)
+	return err == nil && !fi.Mode().IsRegular()
 }
