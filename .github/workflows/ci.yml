@@ -28,6 +28,9 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: vet
         run: go vet ./...
+      - name: vet for Windows (not a release target; keeps go install working)
+        if: matrix.os == 'ubuntu-latest'
+        run: GOOS=windows GOARCH=amd64 go vet ./...
       - name: govulncheck
         if: matrix.os == 'ubuntu-latest'
         run: |
