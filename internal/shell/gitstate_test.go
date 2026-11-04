@@ -84,7 +84,10 @@ func TestGitState(t *testing.T) {
 	defer func() { gitEnv = old }()
 	resetConfigCache()
 	repo := t.TempDir()
-	os.MkdirAll(filepath.Join(repo, ".git", "hooks"), 0o755)
+	for _, d := range []string{"hooks", "objects", "refs"} {
+		os.MkdirAll(filepath.Join(repo, ".git", d), 0o755)
+	}
+	os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644)
 	os.WriteFile(filepath.Join(repo, ".git", "config"), []byte("[core]\n\tbare = false\n"), 0o644)
 	if why := gitState(repo, "status"); why != "" {
 		t.Fatalf("a clean repository: %s", why)
@@ -114,5 +117,47 @@ func TestGitState(t *testing.T) {
 	os.WriteFile(filepath.Join(bare, "config"), []byte("[core]\n\tsshCommand = x\n"), 0o644)
 	if why := gitState(bare, "ls-remote"); why == "" {
 		t.Fatal("a bare repository's sshCommand was plain")
+	}
+}
+
+// git passes over a .git directory that is not a repository, and walks a
+// symlinked directory physically: the check must find what git finds.
+func TestGitStateFindsWhatGitFinds(t *testing.T) {
+	home := t.TempDir()
+	old := gitEnv
+	gitEnv = func(k string) string {
+		if k == "HOME" {
+			return home
+		}
+		return ""
+	}
+	defer func() { gitEnv = old }()
+	resetConfigCache()
+	mkRepo := func(d, cfg string) {
+		for _, s := range []string{"objects", "refs"} {
+			os.MkdirAll(filepath.Join(d, ".git", s), 0o755)
+		}
+		os.WriteFile(filepath.Join(d, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644)
+		os.WriteFile(filepath.Join(d, ".git", "config"), []byte(cfg), 0o644)
+	}
+	repo := t.TempDir()
+	mkRepo(repo, "[core]\n\tfsmonitor = sh -c x\n")
+	sub := filepath.Join(repo, "sub")
+	os.MkdirAll(filepath.Join(sub, ".git"), 0o755) // an empty .git: not a repository
+	os.WriteFile(filepath.Join(sub, ".git", "description"), []byte("x"), 0o644)
+	if why := gitState(sub, "status"); why == "" {
+		t.Error("an empty .git hid the enclosing repository's fsmonitor")
+	}
+	other := t.TempDir()
+	mkRepo(other, "[core]\n\tfsmonitor = sh -c x\n")
+	clean := t.TempDir()
+	mkRepo(clean, "[core]\n\tbare = false\n")
+	link := filepath.Join(clean, "lnk")
+	if err := os.Symlink(other, link); err != nil {
+		t.Skip(err)
+	}
+	resetConfigCache()
+	if why := gitState(link, "status"); why == "" {
+		t.Error("a symlinked directory was checked by its logical path")
 	}
 }

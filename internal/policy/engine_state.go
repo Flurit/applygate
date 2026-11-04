@@ -9,13 +9,33 @@ import (
 	"github.com/Flurit/applygate/internal/shell"
 )
 
-// tfStarts are the terraform and tofu subcommands that start the provider
-// binaries in .terraform/providers, and with plan the data sources that run
-// programs. A plain one is checked like the plan gate's show: providers
-// that match the committed lock file, a lock file the upstream branch
-// agrees with, and no data source that runs a program.
-var tfStarts = map[string]bool{"plan": true, "validate": true, "console": true, "show": true, "refresh": true, "import": true,
-	"test": true, "providers schema": true, "state show": true, "apply": true, "destroy": true}
+// tfNoStart are the terraform and tofu subcommands known not to start the
+// provider binaries in .terraform/providers or to run what the
+// configuration names. Every other one (plan, validate, console, show,
+// graph, query, test, import, refresh, apply, destroy, state show,
+// providers schema, and any subcommand applygate does not know) is checked
+// like the plan gate's show: providers that match the committed lock
+// file, a lock file the upstream branch agrees with, and no configuration
+// that runs a program.
+var tfNoStart = map[string]bool{"fmt": true, "version": true, "output": true, "init": true, "get": true, "login": true,
+	"logout": true, "modules": true, "providers": true, "providers lock": true, "providers mirror": true, "state list": true,
+	"state pull": true, "workspace list": true, "workspace show": true, "workspace select": true, "workspace new": true,
+	"workspace delete": true, "force-unlock": true, "taint": true, "untaint": true, "metadata functions": true, "-version": true,
+	"-help": true, "help": true}
+
+// startsProviders reports whether terraform subcommand sub (with its
+// arguments after the subcommand word) may start the provider binaries.
+func startsProviders(sub string, args []string) bool {
+	if sub == "graph" {
+		for _, a := range args {
+			if a == "-type=plan" {
+				return false
+			}
+		}
+		return true
+	}
+	return !tfNoStart[sub]
+}
 
 // engineCache holds the verdict per directory for the process.
 var engineCache sync.Map
@@ -40,11 +60,18 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 		if len(args) == 0 {
 			continue
 		}
+		if !args[0].Resolved {
+			return "a terraform subcommand that cannot be resolved"
+		}
 		sub := args[0].Text
-		if (sub == "state" || sub == "providers") && len(args) > 1 {
+		if (sub == "state" || sub == "providers" || sub == "workspace" || sub == "metadata") && len(args) > 1 {
 			sub += " " + args[1].Text
 		}
-		if !tfStarts[sub] {
+		var rest []string
+		for _, w := range args[1:] {
+			rest = append(rest, w.Text)
+		}
+		if !startsProviders(sub, rest) {
 			continue
 		}
 		if dir == "" {
@@ -80,7 +107,3 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 	}
 	return ""
 }
-
-// startsProviders reports whether terraform subcommand sub starts the
-// provider binaries.
-func startsProviders(sub string) bool { return tfStarts[sub] }

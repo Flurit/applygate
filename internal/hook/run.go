@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Flurit/applygate/internal/gitx"
 	"io"
 	"os"
 	"os/exec"
@@ -326,6 +327,8 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		// files named there would let a proxy answer for an HTTPS judge.
 		os.Unsetenv("SSL_CERT_FILE")
 		os.Unsetenv("SSL_CERT_DIR")
+		// The hook's own git must be one the agent's user cannot replace.
+		gitx.RequireRoot = true
 	}
 	if opt.Timeout == 0 {
 		opt.Timeout = 25 * time.Second

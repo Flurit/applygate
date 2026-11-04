@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/hcl/v2"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	hcljson "github.com/hashicorp/hcl/v2/json"
+	"github.com/zclconf/go-cty/cty"
 )
 
 // The plan gate runs terraform show, which starts the provider binaries in
@@ -210,53 +216,58 @@ func UpstreamLock(ctx context.Context, dir string) error {
 	return nil
 }
 
-// programData are data sources that run a program while Terraform plans:
-// the external provider's, the shell providers' and local_command.
-var programData = regexp.MustCompile(`(?m)^\s*data\s+"?(external|local_command|shell_[a-z_]+)"?\s`)
-
-// RunsPrograms reports a data source that runs a program during plan, in
-// dir's configuration, the local modules it calls, and the modules init
-// downloaded into dataDir. "" when there is none. A configuration too large
-// to read in full counts as one that may.
+// RunsPrograms reports configuration that makes Terraform run a program
+// while it plans, in dir's configuration, the local modules it calls, the
+// modules init downloaded into dataDir and every directory the module
+// manifest names: a data source that runs one (external, local_command,
+// shell_*), a provider or backend block with an exec block, or one that
+// reads a kubeconfig or AWS config file other than the user's own (which
+// are guard files), whose exec or credential_process entries run programs.
+// "" when there is none. The files are read with the HCL and JSON parsers
+// Terraform uses, .tofu files included; a file that cannot be read or
+// parsed, or a configuration too large to read in full, counts as one that
+// may.
 func RunsPrograms(dir, dataDir string) string {
 	seen := map[string]bool{}
 	files := 0
 	var scan func(d string, depth int) string
 	scan = func(d string, depth int) string {
 		d = filepath.Clean(d)
-		if seen[d] || depth > 10 {
+		if seen[d] {
 			return ""
+		}
+		if depth > 10 {
+			return "modules nested deeper than applygate reads"
 		}
 		seen[d] = true
 		ents, err := os.ReadDir(d)
 		if err != nil {
-			return ""
+			if os.IsNotExist(err) {
+				return ""
+			}
+			return "a module directory that cannot be read: " + d
 		}
 		for _, e := range ents {
 			n := e.Name()
-			if e.IsDir() || !(strings.HasSuffix(n, ".tf") || strings.HasSuffix(n, ".tf.json")) {
+			if e.IsDir() || !configName(n) {
 				continue
 			}
 			if files++; files > 2000 {
 				return "more configuration files than applygate reads"
 			}
-			b, err := os.ReadFile(filepath.Join(d, n))
-			if err != nil {
-				return "a configuration file that cannot be read: " + filepath.Join(d, n)
+			f := filepath.Join(d, n)
+			file, why := readConfig(f)
+			if why != "" {
+				return why
 			}
-			s := string(b)
-			if strings.HasSuffix(n, ".json") {
-				if strings.Contains(s, `"data"`) && (strings.Contains(s, `"external"`) || strings.Contains(s, `"local_command"`) || strings.Contains(s, `"shell_`)) {
-					return "a data source that runs a program in " + filepath.Join(d, n)
-				}
-				continue
+			if why := runsIn(file.Body, f); why != "" {
+				return why
 			}
-			if m := programData.FindStringSubmatch(s); m != nil {
-				return "data \"" + m[1] + "\" in " + filepath.Join(d, n) + " runs a program during plan"
-			}
-			for _, src := range localSource.FindAllStringSubmatch(s, -1) {
-				if why := scan(filepath.Join(d, src[1]), depth+1); why != "" {
-					return why
+			for _, src := range moduleSources(file.Body) {
+				if strings.HasPrefix(src, "./") || strings.HasPrefix(src, "../") {
+					if why := scan(filepath.Join(d, src), depth+1); why != "" {
+						return why
+					}
 				}
 			}
 		}
@@ -264,6 +275,28 @@ func RunsPrograms(dir, dataDir string) string {
 	}
 	if why := scan(dir, 0); why != "" {
 		return why
+	}
+	// The module manifest says where each module's files are: Terraform
+	// loads a module from whatever directory it names.
+	if b, err := os.ReadFile(filepath.Join(dataDir, "modules", "modules.json")); err == nil {
+		var m struct{ Modules []struct{ Dir string } }
+		if json.Unmarshal(b, &m) != nil {
+			return "a module manifest that cannot be read: " + filepath.Join(dataDir, "modules", "modules.json")
+		}
+		for _, mod := range m.Modules {
+			d := mod.Dir
+			if d == "" {
+				continue
+			}
+			if !filepath.IsAbs(d) {
+				d = filepath.Join(dir, d)
+			}
+			if why := scan(d, 1); why != "" {
+				return why
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return "a module manifest that cannot be read: " + filepath.Join(dataDir, "modules", "modules.json")
 	}
 	var why string
 	_ = filepath.WalkDir(filepath.Join(dataDir, "modules"), func(p string, e os.DirEntry, err error) error {
@@ -278,4 +311,176 @@ func RunsPrograms(dir, dataDir string) string {
 	return why
 }
 
-var localSource = regexp.MustCompile(`(?m)^\s*source\s*=\s*"(\.\.?/[^"]*)"`)
+// configName reports a file name Terraform or OpenTofu reads as
+// configuration.
+func configName(n string) bool {
+	if strings.HasPrefix(n, ".") || strings.HasPrefix(n, "#") || strings.HasSuffix(n, "~") {
+		return false
+	}
+	for _, x := range []string{".tf", ".tf.json", ".tofu", ".tofu.json"} {
+		if strings.HasSuffix(n, x) {
+			return true
+		}
+	}
+	return false
+}
+
+// MaxConfigFile is the largest configuration file the hook parses: the
+// parser takes hundreds of times a file's size in memory.
+const MaxConfigFile = 1 << 20
+
+// readConfig parses one configuration file, or says why it cannot.
+func readConfig(f string) (*hcl.File, string) {
+	src, err := readCapped(f, MaxConfigFile)
+	if err != nil {
+		return nil, "a configuration file that cannot be read: " + f + " (" + err.Error() + ")"
+	}
+	var file *hcl.File
+	var diags hcl.Diagnostics
+	if strings.HasSuffix(f, ".json") {
+		file, diags = hcljson.Parse(src, f)
+	} else {
+		file, diags = hclsyntax.ParseConfig(src, f, hcl.Pos{Line: 1, Column: 1})
+	}
+	if diags.HasErrors() || file == nil {
+		return nil, "a configuration file that does not parse: " + f
+	}
+	return file, ""
+}
+
+// readCapped reads a regular file of at most max bytes.
+func readCapped(f string, max int64) ([]byte, error) {
+	fi, err := os.Stat(f)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("not a regular file")
+	}
+	if fi.Size() > max {
+		return nil, fmt.Errorf("larger than %d bytes", max)
+	}
+	fh, err := os.Open(f)
+	if err != nil {
+		return nil, err
+	}
+	defer fh.Close()
+	b, err := io.ReadAll(io.LimitReader(fh, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > max {
+		return nil, fmt.Errorf("larger than %d bytes", max)
+	}
+	return b, nil
+}
+
+var (
+	runsTopSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{
+		{Type: "data", LabelNames: []string{"type", "name"}},
+		{Type: "provider", LabelNames: []string{"name"}},
+		{Type: "terraform"},
+	}}
+	runsTerraformSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "backend", LabelNames: []string{"type"}}}}
+	// programFiles are the provider and backend attributes that name a
+	// kubeconfig or AWS config file, whose exec and credential_process
+	// entries run programs.
+	programFiles     = []string{"config_path", "config_paths", "shared_config_files", "shared_credentials_files"}
+	runsNestedSchema = &hcl.BodySchema{
+		Attributes: []hcl.AttributeSchema{{Name: "config_path"}, {Name: "config_paths"}, {Name: "shared_config_files"}, {Name: "shared_credentials_files"}},
+		Blocks:     []hcl.BlockHeaderSchema{{Type: "exec"}, {Type: "kubernetes"}},
+	}
+	moduleSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "module", LabelNames: []string{"name"}}}}
+)
+
+// runsIn reports what in one file's body makes Terraform run a program.
+func runsIn(body hcl.Body, f string) string {
+	top, _, _ := body.PartialContent(runsTopSchema)
+	for _, b := range top.Blocks {
+		switch b.Type {
+		case "data":
+			if t := b.Labels[0]; t == "external" || t == "local_command" || strings.HasPrefix(t, "shell_") {
+				return "data \"" + t + "\" in " + f + " runs a program during plan"
+			}
+		case "provider":
+			if why := runsNested(b.Body, "provider \""+b.Labels[0]+"\"", f, 0); why != "" {
+				return why
+			}
+		case "terraform":
+			inner, _, _ := b.Body.PartialContent(runsTerraformSchema)
+			for _, be := range inner.Blocks {
+				if why := runsNested(be.Body, "backend \""+be.Labels[0]+"\"", f, 0); why != "" {
+					return why
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func runsNested(body hcl.Body, what, f string, depth int) string {
+	c, _, _ := body.PartialContent(runsNestedSchema)
+	for _, n := range programFiles {
+		if a, ok := c.Attributes[n]; ok && !userConfigFile(a.Expr) {
+			return what + " in " + f + " sets " + n + ", whose file can run a program (exec, credential_process)"
+		}
+	}
+	for _, nb := range c.Blocks {
+		if nb.Type == "exec" {
+			return what + " in " + f + " has an exec block, which runs a program"
+		}
+		if depth < 3 {
+			if why := runsNested(nb.Body, what, f, depth+1); why != "" {
+				return why
+			}
+		}
+	}
+	return ""
+}
+
+// userConfigFile reports an attribute that names only the user's own
+// kubeconfig or AWS config (guard files the agent cannot write).
+func userConfigFile(e hcl.Expression) bool {
+	v, d := e.Value(emptyCtx)
+	if d.HasErrors() || !v.IsWhollyKnown() || v.IsNull() {
+		return false
+	}
+	var paths []string
+	switch {
+	case v.Type() == cty.String:
+		paths = []string{v.AsString()}
+	case v.Type().IsListType() || v.Type().IsTupleType() || v.Type().IsSetType():
+		for it := v.ElementIterator(); it.Next(); {
+			_, ev := it.Element()
+			if ev.Type() != cty.String || ev.IsNull() {
+				return false
+			}
+			paths = append(paths, ev.AsString())
+		}
+	default:
+		return false
+	}
+	for _, p := range paths {
+		switch p {
+		case "~/.kube/config", "~/.aws/config", "~/.aws/credentials", "$HOME/.kube/config", "$HOME/.aws/config":
+		default:
+			return false
+		}
+	}
+	return len(paths) > 0
+}
+
+// moduleSources returns the literal source of each module block.
+func moduleSources(body hcl.Body) []string {
+	c, _, _ := body.PartialContent(moduleSchema)
+	var out []string
+	for _, mb := range c.Blocks {
+		attrs, _ := mb.Body.JustAttributes()
+		if a, ok := attrs["source"]; ok {
+			if v, ok := literal(a.Expr); ok {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}

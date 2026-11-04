@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Flurit/applygate/internal/gitx"
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	hcljson "github.com/hashicorp/hcl/v2/json"
@@ -26,7 +27,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -119,7 +119,7 @@ func DataDir(dir string, env map[string]string) string {
 // InitBackendEnv reads the backend recorded by the last init in the data
 // directory TF_DATA_DIR names, else .terraform.
 func InitBackendEnv(dir string, env map[string]string) *Backend {
-	b, err := os.ReadFile(filepath.Join(DataDir(dir, env), "terraform.tfstate"))
+	b, err := readCapped(filepath.Join(DataDir(dir, env), "terraform.tfstate"), MaxConfigFile)
 	if err != nil {
 		return nil
 	}
@@ -248,8 +248,11 @@ var (
 func backendFrom(files []string) *Backend {
 	var found *Backend
 	for _, f := range files {
-		src, err := os.ReadFile(f)
+		src, err := readCapped(f, MaxConfigFile)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				found = &Backend{Type: "unknown", Config: map[string]string{}, Declared: true, Unreadable: filepath.Base(f) + " cannot be read (" + err.Error() + ")"}
+			}
 			continue
 		}
 		var file *hcl.File
@@ -435,10 +438,45 @@ func ProviderAWS(dir string, vars Vars) (profiles, roles []string, unknown strin
 		}
 		return got
 	}
+	// A module's provider values come from its caller, so in a module any
+	// value that is not literal is unknown.
+	inModule := false
+	modValues := func(what string, e hcl.Expression) []string {
+		if v, ok := literal(e); ok {
+			return []string{v}
+		}
+		unknown = "the aws provider's " + what + " in a module is computed"
+		return nil
+	}
+	sets := [][]*hcl.File{files}
+	for _, d := range moduleDirs(dir) {
+		sets = append(sets, parsedFiles(d))
+	}
+	for si, set := range sets {
+		inModule = si > 0
+		val := values
+		if inModule {
+			val = modValues
+		}
+		profiles, roles = awsProviders(set, val, profiles, roles, &unknown)
+	}
+	return profiles, roles, unknown
+}
+
+// awsProviders adds the profile and role_arn values of the aws provider
+// blocks in files, under any local name required_providers gives the
+// hashicorp/aws provider.
+func awsProviders(files []*hcl.File, values func(string, hcl.Expression) []string, profiles, roles []string, unknown *string) ([]string, []string) {
+	names := map[string]bool{"aws": true}
+	for _, file := range files {
+		for n := range awsLocalNames(file.Body) {
+			names[n] = true
+		}
+	}
 	for _, file := range files {
 		top, _, _ := file.Body.PartialContent(providerSchema)
 		for _, pb := range top.Blocks {
-			if pb.Labels[0] != "aws" {
+			if !names[pb.Labels[0]] {
 				continue
 			}
 			inner, rest, _ := pb.Body.PartialContent(nestedSchema)
@@ -454,7 +492,7 @@ func ProviderAWS(dir string, vars Vars) (profiles, roles []string, unknown strin
 						}
 					}
 				} else {
-					unknown = "the aws provider's assume_role is computed"
+					*unknown = "the aws provider's assume_role is computed"
 				}
 			}
 			for _, nb := range inner.Blocks {
@@ -468,7 +506,99 @@ func ProviderAWS(dir string, vars Vars) (profiles, roles []string, unknown strin
 			}
 		}
 	}
-	return profiles, roles, unknown
+	return profiles, roles
+}
+
+var requiredSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "required_providers"}}}
+
+// awsLocalNames returns the local names a terraform block's
+// required_providers gives the AWS provider (source hashicorp/aws, on any
+// registry).
+func awsLocalNames(body hcl.Body) map[string]bool {
+	out := map[string]bool{}
+	top, _, _ := body.PartialContent(terraformSchema)
+	for _, tb := range top.Blocks {
+		if tb.Type != "terraform" {
+			continue
+		}
+		rp, _, _ := tb.Body.PartialContent(requiredSchema)
+		for _, b := range rp.Blocks {
+			attrs, _ := b.Body.JustAttributes()
+			for name, a := range attrs {
+				v, d := a.Expr.Value(emptyCtx)
+				if d.HasErrors() || !v.IsWhollyKnown() {
+					continue
+				}
+				src := ""
+				switch {
+				case v.Type() == cty.String:
+					src = v.AsString()
+				case (v.Type().IsObjectType() && v.Type().HasAttribute("source")) || v.Type().IsMapType():
+					if sv := v.GetAttr("source"); sv.Type() == cty.String && !sv.IsNull() {
+						src = sv.AsString()
+					}
+				}
+				src = strings.ToLower(src)
+				if src == "hashicorp/aws" || strings.HasSuffix(src, "/hashicorp/aws") {
+					out[name] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// moduleDirs are the directories of the modules dir's configuration calls:
+// local sources, and the modules init downloaded.
+func moduleDirs(dir string) []string {
+	var out []string
+	seen := map[string]bool{filepath.Clean(dir): true}
+	var walk func(d string, depth int)
+	walk = func(d string, depth int) {
+		if depth > 10 {
+			return
+		}
+		for _, f := range parsedFiles(d) {
+			for _, src := range moduleSources(f.Body) {
+				if !strings.HasPrefix(src, "./") && !strings.HasPrefix(src, "../") {
+					continue
+				}
+				m := filepath.Clean(filepath.Join(d, src))
+				if !seen[m] {
+					seen[m] = true
+					out = append(out, m)
+					walk(m, depth+1)
+				}
+			}
+		}
+	}
+	walk(dir, 0)
+	if b, err := os.ReadFile(filepath.Join(dir, ".terraform", "modules", "modules.json")); err == nil {
+		var m struct{ Modules []struct{ Dir string } }
+		if json.Unmarshal(b, &m) == nil {
+			for _, mod := range m.Modules {
+				d := mod.Dir
+				if d == "" {
+					continue
+				}
+				if !filepath.IsAbs(d) {
+					d = filepath.Join(dir, d)
+				}
+				if d = filepath.Clean(d); !seen[d] {
+					seen[d] = true
+					out = append(out, d)
+				}
+			}
+		}
+	}
+	_ = filepath.WalkDir(filepath.Join(dir, ".terraform", "modules"), func(p string, e os.DirEntry, err error) error {
+		if err == nil && e.IsDir() && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+		return nil
+	})
+	return out
 }
 
 // parsedFiles parses dir's configuration files, Terraform's and OpenTofu's,
@@ -490,7 +620,7 @@ func parsedFiles(dir string) []*hcl.File {
 }
 
 func parseFile(f string) *hcl.File {
-	src, err := os.ReadFile(f)
+	src, err := readCapped(f, MaxConfigFile)
 	if err != nil {
 		return nil
 	}
@@ -690,38 +820,7 @@ func archiveStates(path string) []string {
 // programs (fsmonitor, hooks, pagers) overridden; callers use plumbing that
 // runs no filters, diff drivers or textconv.
 func gitCommand(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	base := []string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat",
-		"-c", "core.sshCommand=false", "-c", "core.askPass=", "--no-pager"}
-	cmd := exec.CommandContext(ctx, gitPath(), append(base, args...)...)
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + os.Getenv("HOME"), "TMPDIR=" + os.TempDir(), "LANG=C", "GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1"}
-	return cmd
-}
-
-var gitBin struct {
-	once sync.Once
-	path string
-}
-
-// gitPath is git from the system directories first, so a git the agent
-// put earlier on PATH is not the one the hook runs.
-func gitPath() string {
-	gitBin.once.Do(func() {
-		// On macOS /usr/bin/git is a shim that looks the real one up with
-		// xcrun, which can be slow; the real binaries come first.
-		for _, p := range []string{"/Library/Developer/CommandLineTools/usr/bin/git", "/Applications/Xcode.app/Contents/Developer/usr/bin/git",
-			"/usr/bin/git", "/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"} {
-			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
-				gitBin.path = p
-				return
-			}
-		}
-		gitBin.path, _ = exec.LookPath("git")
-		if gitBin.path == "" {
-			gitBin.path = "git"
-		}
-	})
-	return gitBin.path
+	return gitx.Command(ctx, dir, args...)
 }
 
 // LockfileDrift reports lock-file and provider/module source changes since
@@ -735,7 +834,7 @@ func LockfileDrift(dir string) *Finding {
 	files = append([]string{filepath.Join(dir, ".terraform.lock.hcl")}, files...)
 	var ev []string
 	for _, f := range files {
-		now, err := os.ReadFile(f)
+		now, err := readCapped(f, MaxConfigFile)
 		if err != nil {
 			continue
 		}
@@ -954,7 +1053,7 @@ func LineageMismatch(dir string, states []string, remote []byte) *Finding {
 	}
 	var ev []string
 	for _, n := range states {
-		b, err := os.ReadFile(filepath.Join(dir, n))
+		b, err := readCapped(filepath.Join(dir, n), 64<<20) // state can be large; JSON parsing is linear
 		if err != nil {
 			continue
 		}

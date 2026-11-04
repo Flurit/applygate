@@ -1253,7 +1253,7 @@ func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action
 		// before the command runs; a step that rewrites what they read
 		// comes first.
 		for _, a := range acts {
-			if isTerraform(a.Engine) && (a.ConfigWritten || a.DataDirWritten) && startsProviders(a.Sub) {
+			if isTerraform(a.Engine) && (a.ConfigWritten || a.DataDirWritten) && startsProviders(a.Sub, nil) {
 				ok, why = false, "an earlier step writes the configuration or .terraform in "+a.Dir+" that "+a.Engine+" then reads"
 				break
 			}

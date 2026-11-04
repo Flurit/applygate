@@ -503,7 +503,7 @@ func gitShape(args []Word, inv Invocation) string {
 		case "-C":
 			i += 2
 			continue
-		case "--no-pager", "--no-optional-locks", "--bare", "--literal-pathspecs", "--no-replace-objects":
+		case "--no-pager", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects":
 		default:
 			// -c, -p, --git-dir, --exec-path and the rest.
 			return "the git option " + t
@@ -536,9 +536,27 @@ func gitShape(args []Word, inv Invocation) string {
 	case sub == "clone" && (hasOpt(rest, "-c") || hasOpt(rest, "--config")):
 		return "the git option -c"
 	}
-	if gitNetwork[sub] {
-		// A local repository as the remote runs its hooks (push) and its
-		// git (fetch, clone).
+	dir := inv.Dir
+	for j := 0; j+1 < i; j++ {
+		if args[j].Text == "-C" {
+			if !args[j+1].Resolved {
+				return "a git -C directory that cannot be resolved"
+			}
+			if dir != "" {
+				dir = PhysicalJoin(dir, args[j+1].Text)
+			}
+		}
+	}
+	switch sub {
+	case "fetch", "pull", "push", "ls-remote", "clone", "archive":
+		// The repository these name is a network URL, an scp-like
+		// address or a configured remote; anything else is a local
+		// repository, whose hooks (push), upload-archive config
+		// (archive --remote) or git (fetch, clone) runs here.
+		if why := gitRemoteArg(sub, rest, dir); why != "" {
+			return why
+		}
+	case "remote", "submodule":
 		for _, w := range rest {
 			t := optText(w)
 			if !w.Resolved && !strings.HasPrefix(t, "-") {
@@ -561,18 +579,68 @@ func gitShape(args []Word, inv Invocation) string {
 			return why
 		}
 	}
-	dir := inv.Dir
-	for j := 0; j+1 < i; j++ {
-		if args[j].Text == "-C" {
-			if !args[j+1].Resolved {
-				return "a git -C directory that cannot be resolved"
+	return gitState(dir, sub)
+}
+
+// gitValued are the options of git's network subcommands that take their
+// value as the next word.
+var gitValued = toSet("--depth", "--deepen", "--shallow-since", "--shallow-exclude", "-j", "--jobs", "--negotiation-tip",
+	"--server-option", "-o", "--refmap", "--recurse-submodules-default", "--submodule-prefix", "--filter", "--upload-pack",
+	"-X", "--strategy-option", "-s", "--strategy", "--push-option", "--repo", "--receive-pack", "--exec", "--origin", "-b",
+	"--branch", "--reference", "--reference-if-able", "--separate-git-dir", "--template", "-c", "--config",
+	"--bundle-uri", "--sort", "--remote", "--format", "--prefix", "-O", "--output")
+
+// gitRemoteArg reports a network subcommand whose repository is not known
+// to be remote.
+func gitRemoteArg(sub string, rest []Word, dir string) string {
+	var repos []Word
+	first := true
+	for k := 0; k < len(rest); k++ {
+		w := rest[k]
+		t := optText(w)
+		if !w.Resolved && !strings.HasPrefix(t, "-") {
+			if sub == "archive" {
+				continue // tree-ish and paths
 			}
-			if dir != "" {
-				dir = PhysicalJoin(dir, args[j+1].Text)
+			if first {
+				return "a git remote that cannot be resolved"
 			}
+			continue
+		}
+		name, val, eq := strings.Cut(t, "=")
+		if strings.HasPrefix(t, "-") && t != "-" {
+			if name == "--remote" || name == "--repo" {
+				switch {
+				case eq:
+					repos = append(repos, Word{Text: val, Resolved: w.Resolved, Prefix: val})
+				case k+1 < len(rest):
+					repos = append(repos, rest[k+1])
+				}
+			}
+			// -u is clone's and ls-remote's --upload-pack, push's and
+			// pull's --set-upstream.
+			if !eq && (gitValued[t] || t == "-u" && (sub == "clone" || sub == "ls-remote")) {
+				k++
+			}
+			continue
+		}
+		if t == "--" {
+			continue
+		}
+		if first && sub != "archive" {
+			repos = append(repos, w)
+		}
+		first = false
+	}
+	for _, r := range repos {
+		if !r.Resolved {
+			return "a git remote that cannot be resolved"
+		}
+		if !networkURL(r.Text) && !gitConfiguredRemote(dir, r.Text) {
+			return "a git repository " + r.Text + " that is not a network URL or a configured remote"
 		}
 	}
-	return gitState(dir, sub)
+	return ""
 }
 
 // gitConfigShape: reading config is plain; setting a key is plain only when

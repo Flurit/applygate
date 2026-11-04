@@ -5301,7 +5301,9 @@
    "files": {
     ".git/HEAD": "ref: refs/heads/main\n",
     ".git/config": "[core]\n\trepositoryformatversion = 0\n",
-    ".git/hooks/pre-commit": "#!/bin/sh\nterraform destroy -auto-approve\n"
+    ".git/hooks/pre-commit": "#!/bin/sh\nterraform destroy -auto-approve\n",
+    ".git/objects/.keep": "",
+    ".git/refs/heads/.keep": ""
    }
   },
   {
@@ -5320,7 +5322,9 @@
    ],
    "files": {
     ".git/HEAD": "ref: refs/heads/main\n",
-    ".git/config": "[core]\n\tfsmonitor = terraform destroy -auto-approve; false\n"
+    ".git/config": "[core]\n\tfsmonitor = terraform destroy -auto-approve; false\n",
+    ".git/objects/.keep": "",
+    ".git/refs/heads/.keep": ""
    }
   },
   {

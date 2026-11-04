@@ -1,10 +1,16 @@
 package shell
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/Flurit/applygate/internal/gitx"
 )
 
 // The state git reads on its own, checked before a git command counts as
@@ -60,7 +66,14 @@ func gitState(dir, sub string) string {
 	if dir == "" {
 		return "a git repository in an unknown directory"
 	}
+	// git walks up the physical directory, as getcwd gives it.
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
 	gitDir, common, ok := gitDiscover(dir)
+	if why := gitAgrees(dir, gitDir, common, ok); why != "" {
+		return why
+	}
 	if !ok {
 		return "" // not in a repository: git init, clone, or an error
 	}
@@ -119,8 +132,14 @@ func gitDiscover(dir string) (gitDir, common string, ok bool) {
 		p := filepath.Join(d, ".git")
 		fi, err := os.Lstat(p)
 		switch {
-		case err == nil && fi.IsDir():
+		case err == nil && fi.IsDir() && isGitDir(p):
 			gitDir = p
+		case err == nil && fi.IsDir():
+			// git passes over a .git directory that is not a repository and
+			// tries the directory itself, then its parent.
+			if isGitDir(d) {
+				gitDir = d
+			}
 		case err == nil && fi.Mode().IsRegular():
 			b, err := readSmall(p)
 			if err != nil {
@@ -226,6 +245,10 @@ func gitConfigRead(p string, network bool, depth int) string {
 	for _, e := range entries {
 		if e.key == "include.path" || strings.HasPrefix(e.key, "includeif.") && strings.HasSuffix(e.key, ".path") {
 			inc := e.value
+			if strings.HasPrefix(inc, "~") && !strings.HasPrefix(inc, "~/") || strings.HasPrefix(inc, "%(") {
+				// ~user/ and %(prefix)/ name other places git expands.
+				return "a git config include (" + inc + ") applygate does not follow, in " + p
+			}
 			if strings.HasPrefix(inc, "~/") {
 				inc = filepath.Join(gitEnv("HOME"), inc[2:])
 			} else if !filepath.IsAbs(inc) {
@@ -556,6 +579,10 @@ func networkURL(v string) bool {
 			return true
 		}
 	}
+	if strings.Contains(v, "://") {
+		// Any other scheme runs git-remote-<scheme> from PATH.
+		return false
+	}
 	// scp-like: [user@]host:path, where host has no slash before the colon.
 	if i := strings.IndexByte(v, ':'); i > 0 && !strings.Contains(v[:i], "/") && !strings.Contains(l, "::") {
 		return true
@@ -566,4 +593,114 @@ func networkURL(v string) bool {
 // resetConfigCache forgets the cached verdicts (tests).
 func resetConfigCache() {
 	configCache.Range(func(k, _ any) bool { configCache.Delete(k); return true })
+	askCache.Range(func(k, _ any) bool { askCache.Delete(k); return true })
+}
+
+// gitAsk asks the hook's own git where the git directory for dir is. It is
+// a variable so that tests can replace it. found is false outside a
+// repository; failed is set when git could not answer (no git, a timeout).
+var gitAsk = func(dir string) (gitDir, common string, found, failed bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := gitx.Command(ctx, dir, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir")
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(errb.String(), "not a git repository") {
+			return "", "", false, false
+		}
+		return "", "", false, true
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != 2 {
+		return "", "", false, true
+	}
+	return lines[0], lines[1], true, false
+}
+
+var askCache sync.Map // dir -> string
+
+// gitAgrees reports why the git directory applygate found for dir is not
+// the one git itself uses ("" when they agree, or git cannot be asked).
+func gitAgrees(dir, gitDir, common string, ok bool) string {
+	if v, hit := askCache.Load(dir); hit {
+		return v.(string)
+	}
+	why := ""
+	g, c, found, failed := gitAsk(dir)
+	switch {
+	case failed:
+	case found != ok:
+		if found {
+			why = "git finds a repository at " + g + ", which applygate's walk does not"
+		} else {
+			why = "applygate finds a git directory git does not use"
+		}
+	case found && (!samePath(g, gitDir) || !samePath(c, common)):
+		why = "git uses the git directory " + g + ", not " + gitDir
+	}
+	askCache.Store(dir, why)
+	return why
+}
+
+func samePath(a, b string) bool {
+	if a == "" || b == "" {
+		return a == b
+	}
+	if r, err := filepath.EvalSymlinks(a); err == nil {
+		a = r
+	}
+	if r, err := filepath.EvalSymlinks(b); err == nil {
+		b = r
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+var remoteName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// gitConfiguredRemote reports whether name is a remote configured in the
+// repository dir is in (git takes it as the remote, not as a path).
+//
+// A name that is not configured is taken as a path when a directory of
+// that name exists (in dir or at the top of the work tree), and otherwise
+// fails in git: only the first is local.
+func gitConfiguredRemote(dir, name string) bool {
+	if dir == "" || !remoteName.MatchString(name) {
+		return false
+	}
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	gitDir, common, ok := gitDiscover(dir)
+	local := isDirPath(filepath.Join(dir, name))
+	if ok && filepath.Base(gitDir) == ".git" {
+		local = local || isDirPath(filepath.Join(filepath.Dir(gitDir), name))
+	}
+	if !ok || common == "" {
+		return !local
+	}
+	b, err := readSmall(filepath.Join(common, "config"))
+	if err != nil {
+		return false
+	}
+	entries, ok := parseGitConfig(string(b))
+	if !ok {
+		return false
+	}
+	want := "remote." + strings.ToLower(name) + ".url"
+	configured := false
+	for _, e := range entries {
+		if e.key == want {
+			if !networkURL(e.value) {
+				return false
+			}
+			configured = true
+		}
+	}
+	return configured || !local
+}
+
+func isDirPath(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
