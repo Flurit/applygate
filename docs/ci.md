@@ -101,26 +101,31 @@ inherits it:
 ```hcl
 terraform {
   # Every apply and destroy is judged for this unit's tier before Terraform
-  # runs. "terragrunt apply tfplan" is judged by the saved plan's contents;
-  # anything else (apply without a plan, apply -destroy, destroy) is judged
-  # as the command it is, so a plan left over from an earlier run is never
-  # judged in place of the one that runs. --enforce makes the exit code
-  # follow the verdict even when your user config is in observe mode.
-  # --cwd points tier resolution at the live directory (envs/prod/...).
+  # runs. "terragrunt apply tfplan" (tfplan the last argument of apply) is
+  # judged by the saved plan's contents; anything else (apply without a plan,
+  # apply -destroy, destroy) is judged as the command it is, so a plan left
+  # over from an earlier run is never judged in place of the one that runs.
+  # --enforce makes the exit code follow the verdict even when your user
+  # config is in observe mode. --cwd points tier resolution at the live
+  # directory (envs/prod/...).
+  # The arguments reach the script as positional parameters ("$@"), never as
+  # text pasted into it: an option value that contains "tfplan" or a quote
+  # cannot select the plan branch or end the script.
   before_hook "applygate_gate" {
     commands = ["apply", "destroy"]
-    execute = ["sh", "-c", <<-EOT
+    execute = concat(["sh", "-c", <<-EOT
       set -eu
-      args='${join(" ", get_terraform_cli_args())}'
-      case " $args " in
-        *" tfplan "*)
-          terraform show -json tfplan > tfplan.json
-          applygate plan-check --cwd '${get_terragrunt_dir()}' tfplan.json ;;
-        *)
-          applygate check --enforce --no-judge --cwd '${get_terragrunt_dir()}' "terraform ${get_terraform_command()} $args" ;;
-      esac
+      cmd=$1; dir=$2; shift 2
+      last=""
+      for a in "$@"; do last=$a; done
+      if [ "$cmd" = apply ] && [ "$last" = tfplan ] && [ -f tfplan ]; then
+        terraform show -json tfplan > tfplan.json
+        applygate plan-check --cwd "$dir" tfplan.json
+      else
+        applygate check --enforce --no-judge --cwd "$dir" "terraform $cmd $*"
+      fi
     EOT
-    ]
+    , "applygate-gate", get_terraform_command(), get_terragrunt_dir()], get_terraform_cli_args())
   }
 }
 ```

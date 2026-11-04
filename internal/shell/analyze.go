@@ -37,6 +37,10 @@ type Invocation struct {
 	Env    map[string]string
 	Redirs []Redir
 	Via    []string // how we got here: "bash -c", "make destroy", ...
+	// Stdin is the text fed to the program (a here-document, a here-string,
+	// a file it is redirected from, or what a known pipeline gives it) when
+	// the analysis knows it.
+	Stdin string
 }
 
 // Name returns the resolved program name ("" when unresolved).
@@ -390,6 +394,18 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 		default:
 			w := a.word(r.Word, st, via, depth)
 			write := r.Op != syntax.DplIn && r.Op != syntax.DplOut
+			if r.Op == syntax.DplOut || r.Op == syntax.DplIn {
+				// >&FD and >&- duplicate or close a descriptor; >& FILE (bash
+				// and zsh) sends stdout and stderr to the file. A word that
+				// is not a number or - is a file, and one that cannot be
+				// resolved may be.
+				t := w.Text
+				fd := t == "-" || t != "" && strings.Trim(t, "0123456789") == "" ||
+					len(t) > 1 && t[len(t)-1] == '-' && strings.Trim(t[:len(t)-1], "0123456789") == ""
+				if !fd && !(w.Resolved && t == "") {
+					write = r.Op == syntax.DplOut
+				}
+			}
 			redirs = append(redirs, Redir{Op: r.Op.String(), Target: w, Write: write})
 		}
 	}

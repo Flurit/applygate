@@ -1156,6 +1156,10 @@ func applyConfigFile(be *Backend, path string, src []byte) error {
 type Targets struct {
 	GCPProjects, KubeContexts, AzureSubscriptions []string
 	Unknown                                       string // why one is not known
+	// UsesKube is set when a kubernetes or helm provider block names no
+	// config_context: it acts on the context the environment selects
+	// (KUBE_CTX, KUBECONFIG, the default kubeconfig's current context).
+	UsesKube bool
 }
 
 // ProviderTargets reads the google and google-beta `project`, the
@@ -1176,7 +1180,7 @@ func ProviderTargets(dir string) Targets {
 	}
 	kinds := []kind{
 		{"project", []string{"hashicorp/google", "hashicorp/google-beta"}, &t.GCPProjects, "google provider's project"},
-		{"config_context", []string{"hashicorp/kubernetes"}, &t.KubeContexts, "kubernetes provider's config_context"},
+		{"config_context", []string{"hashicorp/kubernetes", "hashicorp/helm", "gavinbunney/kubectl", "alekc/kubectl"}, &t.KubeContexts, "kubernetes provider's config_context"},
 		{"subscription_id", []string{"hashicorp/azurerm"}, &t.AzureSubscriptions, "azurerm provider's subscription_id"},
 	}
 	for si, set := range sets {
@@ -1201,6 +1205,9 @@ func ProviderTargets(dir string) Targets {
 					attrs, _ := pb.Body.JustAttributes()
 					a, ok := attrs[k.attr]
 					if !ok {
+						if k.attr == "config_context" {
+							t.UsesKube = true
+						}
 						continue
 					}
 					if v, lit := literal(a.Expr); lit {

@@ -39,7 +39,7 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 	rest := args[1:]
 	for i := 0; i < len(rest); i++ {
 		w := rest[i]
-		t := w.Text
+		t := makeLongOption(w.Text)
 		if !w.Resolved {
 			a.problem(st, via, joinWords(args), "make argument cannot be resolved statically")
 			return true
@@ -324,4 +324,38 @@ func (mf *makefile) expand(s string) string {
 		s = n
 	}
 	return strings.ReplaceAll(s, "$$", "$")
+}
+
+// makeLong are the long options of GNU make that matter to the analysis;
+// getopt_long accepts any unique prefix of an option name.
+var makeLong = []string{"--directory", "--file", "--makefile", "--eval", "--dry-run", "--just-print", "--recon", "--question", "--touch",
+	"--include-dir", "--what-if", "--new-file", "--assume-new", "--old-file", "--assume-old", "--always-make", "--jobs", "--load-average",
+	"--max-load", "--keep-going", "--silent", "--quiet", "--ignore-errors", "--no-builtin-rules", "--no-builtin-variables", "--warn-undefined-variables"}
+
+// makeLongOption expands an abbreviated long option (--dir=x is --directory=x)
+// to its full name when the prefix is unique; otherwise it is returned as it is.
+func makeLongOption(t string) string {
+	if !strings.HasPrefix(t, "--") || len(t) < 4 {
+		return t
+	}
+	name, val, eq := strings.Cut(t, "=")
+	var match string
+	for _, o := range makeLong {
+		if o == name {
+			return t
+		}
+		if strings.HasPrefix(o, name) {
+			if match != "" && match != o {
+				return t // ambiguous
+			}
+			match = o
+		}
+	}
+	if match == "" {
+		return t
+	}
+	if eq {
+		return match + "=" + val
+	}
+	return match
 }

@@ -317,6 +317,10 @@ var DefaultProtectedPaths = []string{
 	// Start-up and login files outside the shell rc files.
 	"**/Library/LaunchAgents/**", "**/.config/fish/**", "**/.config/environment.d/*", "**/.config/systemd/user/**",
 	"**/.oh-my-zsh/custom/**",
+	// A repository's own git config and hooks: a hook, an alias that is a
+	// shell command or core.fsmonitor in them runs the next time anything
+	// runs git there, from whichever directory that is.
+	"**/.git/config", "**/.git/config.worktree", "**/.git/hooks/**", "**/.git/modules/**/config", "**/.git/modules/**/hooks/**",
 	// The go environment file sets GOFLAGS (-toolexec) for every later go
 	// command.
 	"**/Library/Application Support/go/env", "**/.config/go/env",
@@ -860,7 +864,16 @@ func onErrorRank(v string) int {
 var wellKnown = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true, "env": true, "sudo": true,
 	"terraform": true, "tofu": true, "terragrunt": true, "aws": true, "az": true, "gcloud": true, "kubectl": true, "helm": true,
 	"python": true, "python3": true, "node": true, "perl": true, "ruby": true, "make": true, "rm": true, "mv": true, "cp": true,
-	"applygate": true, "git": true, "xargs": true, "eval": true}
+	"applygate": true, "git": true, "xargs": true, "eval": true,
+	// The credential and secrets runners the analyzer unwraps itself, and
+	// the other shells and runners it models: a repository wrapper of the
+	// same name would replace that and drop the profile they supply.
+	"aws-vault": true, "aws-okta": true, "gds": true, "saml2aws": true, "aws-sso": true, "doppler": true, "op": true, "chamber": true,
+	"infisical": true, "dotenvx": true, "envchain": true, "aws-runas": true, "nohup": true, "exec": true, "command": true, "time": true,
+	"timeout": true, "nice": true, "ssh": true, "docker": true, "podman": true, "find": true, "watch": true, "flock": true, "script": true,
+	"su": true, "doas": true, "csh": true, "tcsh": true, "pwsh": true, "php": true, "osascript": true, "awk": true, "direnv": true, "mise": true,
+	"asdf": true, "nix": true, "nix-shell": true, "devbox": true, "sops": true, "chroot": true, "unbuffer": true, "setsid": true, "stdbuf": true,
+	"parallel": true, "tmux": true, "screen": true, "caffeinate": true, "kubectl-": false}
 
 // ShellWrappers returns the configured wrappers keyed by program name.
 func (c *Config) ShellWrappers() map[string]shell.WrapperSpec {

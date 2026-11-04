@@ -380,24 +380,74 @@ var (
 		{Type: "data", LabelNames: []string{"type", "name"}},
 		{Type: "provider", LabelNames: []string{"name"}},
 		{Type: "terraform"},
+		{Type: "check", LabelNames: []string{"name"}},
+		{Type: "resource", LabelNames: []string{"type", "name"}},
 	}}
+	runsCheckSchema     = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "data", LabelNames: []string{"type", "name"}}}}
 	runsTerraformSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "backend", LabelNames: []string{"type"}}}}
 	// programFiles are the provider and backend attributes that name a
 	// kubeconfig or AWS config file, whose exec and credential_process
 	// entries run programs.
-	programFiles     = []string{"config_path", "config_paths", "shared_config_files", "shared_credentials_files"}
+	programFiles     = []string{"config_path", "config_paths", "shared_config_files", "shared_credentials_files", "shared_credentials_file", "shared_config_file", "kubeconfig", "kubeconfig_path", "kubeconfig_file", "kube_config_path"}
 	runsNestedSchema = &hcl.BodySchema{
-		Attributes: []hcl.AttributeSchema{{Name: "config_path"}, {Name: "config_paths"}, {Name: "shared_config_files"}, {Name: "shared_credentials_files"}},
-		Blocks:     []hcl.BlockHeaderSchema{{Type: "exec"}, {Type: "kubernetes"}},
+		Attributes: []hcl.AttributeSchema{{Name: "config_path"}, {Name: "config_paths"}, {Name: "shared_config_files"}, {Name: "shared_credentials_files"}, {Name: "shared_credentials_file"}, {Name: "shared_config_file"}, {Name: "kubeconfig"}, {Name: "kubeconfig_path"}, {Name: "kubeconfig_file"}, {Name: "kube_config_path"}, {Name: "exec"}, {Name: "ssh_opts"}, {Name: "kubernetes"}},
+		Blocks:     []hcl.BlockHeaderSchema{{Type: "exec"}, {Type: "kubernetes"}, {Type: "dynamic", LabelNames: []string{"name"}}},
 	}
 	moduleSchema = &hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "module", LabelNames: []string{"name"}}}}
 )
+
+// RunsBackendPrograms reports a backend block in dir's configuration that
+// makes Terraform run a program when it configures the backend (init,
+// output, state, workspace): an exec block, or a config file naming a
+// credential_process or exec entry. "" when there is none.
+func RunsBackendPrograms(dir string) string {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range ents {
+		n := e.Name()
+		if e.IsDir() || !configName(n) {
+			continue
+		}
+		f := filepath.Join(dir, n)
+		file, why := readConfig(f)
+		if why != "" {
+			return why
+		}
+		top, _, _ := file.Body.PartialContent(runsTopSchema)
+		for _, b := range top.Blocks {
+			if b.Type != "terraform" {
+				continue
+			}
+			inner, _, _ := b.Body.PartialContent(runsTerraformSchema)
+			for _, be := range inner.Blocks {
+				if why := runsNested(be.Body, "backend \""+be.Labels[0]+"\"", f, 0); why != "" {
+					return why
+				}
+			}
+		}
+	}
+	return ""
+}
 
 // runsIn reports what in one file's body makes Terraform run a program.
 func runsIn(body hcl.Body, f string) string {
 	top, _, _ := body.PartialContent(runsTopSchema)
 	for _, b := range top.Blocks {
 		switch b.Type {
+		case "check":
+			// A data source scoped to a check block is read at plan time.
+			inner, _, _ := b.Body.PartialContent(runsCheckSchema)
+			for _, d := range inner.Blocks {
+				if t := d.Labels[0]; t == "external" || t == "local_command" || strings.HasPrefix(t, "shell_") {
+					return "data \"" + t + "\" in a check block in " + f + " runs a program during plan"
+				}
+			}
+		case "resource":
+			if t := b.Labels[0]; t == "shell_script" || strings.HasPrefix(t, "shell_") || t == "null_resource" && false || t == "external" {
+				return "resource \"" + t + "\" in " + f + " runs a program"
+			}
 		case "data":
 			if t := b.Labels[0]; t == "external" || t == "local_command" || strings.HasPrefix(t, "shell_") {
 				return "data \"" + t + "\" in " + f + " runs a program during plan"
@@ -425,9 +475,34 @@ func runsNested(body hcl.Body, what, f string, depth int) string {
 			return what + " in " + f + " sets " + n + ", whose file can run a program (exec, credential_process)"
 		}
 	}
+	// exec as an attribute (exec = { command = ... }) and ssh_opts
+	// (ProxyCommand) run programs the same way a block does.
+	for _, n := range []string{"exec", "ssh_opts", "credential_process", "credentials_process"} {
+		if _, ok := c.Attributes[n]; ok {
+			return what + " in " + f + " sets " + n + ", which runs a program"
+		}
+	}
+	// The helm provider takes kubernetes = { ... } as an attribute object:
+	// its exec and config_path are the same.
+	if a, ok := c.Attributes["kubernetes"]; ok {
+		v, d := a.Expr.Value(emptyCtx)
+		safe := false
+		if !d.HasErrors() && v.IsWhollyKnown() && !v.IsNull() && (v.Type().IsObjectType() || v.Type().IsMapType()) {
+			safe = true
+			for it := v.ElementIterator(); it.Next(); {
+				k, _ := it.Element()
+				if kn := k.AsString(); kn == "exec" || strings.HasPrefix(kn, "config_path") || strings.Contains(kn, "kubeconfig") {
+					safe = false
+				}
+			}
+		}
+		if !safe {
+			return what + " in " + f + " sets kubernetes as an attribute object that may hold exec or config_path, which run programs"
+		}
+	}
 	for _, nb := range c.Blocks {
-		if nb.Type == "exec" {
-			return what + " in " + f + " has an exec block, which runs a program"
+		if nb.Type == "exec" || nb.Type == "dynamic" && len(nb.Labels) > 0 && (nb.Labels[0] == "exec" || nb.Labels[0] == "kubernetes") {
+			return what + " in " + f + " has an exec block (or one generated by dynamic), which runs a program"
 		}
 		if depth < 3 {
 			if why := runsNested(nb.Body, what, f, depth+1); why != "" {
@@ -483,4 +558,94 @@ func moduleSources(body hcl.Body) []string {
 		}
 	}
 	return out
+}
+
+// InitSafe reports whether a plain terraform init in dir installs only what
+// the committed lock file vouches for: the lock file and the module sources
+// are as committed (no drift since HEAD), and the lock lists every provider
+// the configuration requires, so init adds nothing and verifies every
+// download against hashes the agent did not choose.
+func InitSafe(ctx context.Context, dir string) bool {
+	if LockfileDrift(dir) != nil {
+		return false
+	}
+	lock, err := readCapped(filepath.Join(dir, ".terraform.lock.hcl"), MaxConfigFile)
+	if err != nil {
+		return false
+	}
+	have := map[string]bool{}
+	for _, m := range lockProvider.FindAllSubmatch(lock, -1) {
+		have[strings.ToLower(string(m[1]))] = true
+	}
+	// A provider the configuration uses without requiring it is the
+	// hashicorp one of that name (aws for aws_db_instance).
+	declared := map[string]bool{}
+	for _, f := range parsedFiles(dir) {
+		top, _, _ := f.Body.PartialContent(terraformSchema)
+		for _, tb := range top.Blocks {
+			rp, _, _ := tb.Body.PartialContent(requiredSchema)
+			for _, b := range rp.Blocks {
+				attrs, _ := b.Body.JustAttributes()
+				for name := range attrs {
+					declared[name] = true
+				}
+			}
+		}
+	}
+	for _, f := range parsedFiles(dir) {
+		impl, _, _ := f.Body.PartialContent(runsTopSchema)
+		for _, b := range impl.Blocks {
+			name := ""
+			switch b.Type {
+			case "resource", "data":
+				name, _, _ = strings.Cut(b.Labels[0], "_")
+			case "provider":
+				name = b.Labels[0]
+			}
+			if name == "" || name == "terraform" || declared[name] {
+				continue
+			}
+			if !have["registry.terraform.io/hashicorp/"+strings.ToLower(name)] {
+				return false
+			}
+		}
+	}
+	for _, f := range parsedFiles(dir) {
+		top, _, _ := f.Body.PartialContent(terraformSchema)
+		for _, tb := range top.Blocks {
+			if tb.Type != "terraform" {
+				continue
+			}
+			rp, _, _ := tb.Body.PartialContent(requiredSchema)
+			for _, b := range rp.Blocks {
+				attrs, _ := b.Body.JustAttributes()
+				for name, a := range attrs {
+					src := ""
+					if v, d := a.Expr.Value(emptyCtx); !d.HasErrors() && v.IsWhollyKnown() && !v.IsNull() {
+						switch {
+						case v.Type() == cty.String:
+							src = v.AsString()
+						case v.Type().IsObjectType() && v.Type().HasAttribute("source"):
+							if sv := v.GetAttr("source"); sv.Type() == cty.String && !sv.IsNull() {
+								src = sv.AsString()
+							}
+						}
+					}
+					if src == "" {
+						src = "hashicorp/" + name
+					}
+					switch strings.Count(src, "/") {
+					case 1:
+						src = "registry.terraform.io/" + src
+					case 0:
+						return false
+					}
+					if !have[strings.ToLower(src)] {
+						return false
+					}
+				}
+			}
+		}
+	}
+	return true
 }

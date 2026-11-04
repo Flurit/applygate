@@ -109,6 +109,13 @@ func managedInstall(exclusive bool, stdout, stderr io.Writer) int {
 			return fail(err)
 		}
 		p := filepath.Join(dir, "applygate.json")
+		if old, err := os.ReadFile(p); err == nil && !exclusive && bytes.Contains(old, []byte(`"allowManagedHooksOnly": true`)) {
+			// An upgrade keeps what the install it replaces had: running the
+			// documented upgrade command must not turn user, project and
+			// plugin hooks back on.
+			exclusive = true
+			fmt.Fprintln(stdout, "exclusive:     kept from the existing install (managed hooks only)")
+		}
 		out, err := json.MarshalIndent(claudeManaged(bin, exclusive), "", "  ")
 		if err != nil {
 			return fail(err)
@@ -128,7 +135,7 @@ func managedInstall(exclusive bool, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "\nCodex: add this to %s (from the Codex docs, not tested live):\n\n%s\n",
 		filepath.Join(config.CodexManagedDir, "requirements.toml"), codexManaged(bin))
 
-	fmt.Fprintf(stdout, "Repository configs trusted before are not carried over. In each repository, run:\n\n  sudo %s trust\n\nThen check the install with: %s doctor\n", bin, bin)
+	fmt.Fprintf(stdout, "Repository configs trusted before are not carried over. In each repository, run:\n\n  %s\n\nThen check the install with: %s doctor\n", config.TrustCommand(), bin)
 	return 0
 }
 
@@ -252,6 +259,8 @@ func doctorManaged(say func(bool, string, ...any)) {
 		check("Claude Code settings", p)
 		if b, err := os.ReadFile(p); err == nil && !bytes.Contains(b, []byte(bin)) {
 			say(false, "%s does not run %s", p, bin)
+		} else if err == nil && !bytes.Contains(b, []byte(`"allowManagedHooksOnly": true`)) {
+			say(false, "Claude Code runs user, project and plugin hooks next to the managed one, and one of them can change a call after applygate allowed it (run install --managed --exclusive)")
 		}
 	}
 	if tp := config.SystemTrustPath(); fileExists(tp) {

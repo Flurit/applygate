@@ -460,7 +460,11 @@ func mergeSet(m map[string]bool, k string) map[string]bool {
 }
 
 func awsArgs(base Action, args []shell.Word) (Action, bool) {
-	return bothWays(awsArgsOne, base, args, awsValueOpts, awsBoolOpts, 2)
+	a, ok := bothWays(awsArgsOne, base, args, awsValueOpts, awsBoolOpts, 2)
+	if f := flagUnresolved(args, "--profile", "--endpoint-url"); f != "" && ok {
+		a.TargetUnknown = "aws " + f + " cannot be resolved statically, so the account it acts on is unknown"
+	}
+	return a, ok
 }
 
 func awsArgsOne(base Action, args []shell.Word) (Action, bool) {
@@ -549,6 +553,9 @@ func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 		}
 	}
 	kubeconfigFlag(&a, args)
+	if f := flagUnresolved(args, "--context", "--cluster", "--server", "--kubeconfig", "--user"); f != "" && a.TargetUnknown == "" {
+		a.TargetUnknown = "kubectl " + f + " cannot be resolved statically, so the cluster it acts on is unknown"
+	}
 	if flagValue(args, "--context") != "" {
 		// --cluster, --server and --user replace what the context names,
 		// so the cluster and credentials the call uses are not the
@@ -635,6 +642,9 @@ func helmArgsOne(base Action, args []shell.Word) (Action, bool) {
 		a.Target = flagValue(args, "--kube-apiserver")
 	}
 	kubeconfigFlag(&a, args)
+	if f := flagUnresolved(args, "--kube-context", "--kube-apiserver", "--kubeconfig"); f != "" && a.TargetUnknown == "" {
+		a.TargetUnknown = "helm " + f + " cannot be resolved statically, so the cluster it acts on is unknown"
+	}
 	if flagValue(args, "--kube-context") != "" {
 		for _, f := range []string{"--kube-apiserver", "--kube-token", "--kube-as-user", "--kube-ca-file"} {
 			if flagValue(args, f) != "" {
@@ -682,6 +692,9 @@ func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
 		a.Engine, a.Target = "gcloud", flagValue(args, "-p")
 	default:
 		a.Target = flagValue(args, "--subscription")
+	}
+	if f := flagUnresolved(args, "--project", "--configuration", "--subscription", "--account"); f != "" {
+		a.TargetUnknown = name + " " + f + " cannot be resolved statically, so the project or subscription it acts on is unknown"
 	}
 	pos, dynamic := cloudPositionals(args)
 	if dynamic {
@@ -811,6 +824,21 @@ func hasArg(args []shell.Word, name string) bool {
 	return false
 }
 
+// hasOpt reports whether args carry the option name, bare or with =value,
+// with one or two leading dashes (Terraform accepts both).
+func hasOpt(args []shell.Word, name string) bool {
+	for _, w := range args {
+		t := strings.TrimLeft(w.Text, "-")
+		if len(w.Text)-len(t) == 0 || len(w.Text)-len(t) > 2 {
+			continue
+		}
+		if t == name || strings.HasPrefix(t, name+"=") {
+			return true
+		}
+	}
+	return false
+}
+
 func toSet(ss ...string) map[string]bool {
 	m := make(map[string]bool, len(ss))
 	for _, s := range ss {
@@ -821,6 +849,22 @@ func toSet(ss ...string) map[string]bool {
 
 // flagValue returns the value of a flag given as "--name value" or
 // "--name=value"; the last one wins, as in the CLIs.
+// flagUnresolved reports a flag whose value cannot be resolved
+// (--context "$(cat f)", --profile=$P): the target it selects is unknown.
+func flagUnresolved(args []shell.Word, names ...string) string {
+	for i, w := range args {
+		for _, n := range names {
+			switch {
+			case w.Text == n && w.Resolved && i+1 < len(args) && !args[i+1].Resolved:
+				return n
+			case !w.Resolved && strings.HasPrefix(w.Text, n+"="):
+				return n
+			}
+		}
+	}
+	return ""
+}
+
 func flagValue(args []shell.Word, name string) string {
 	v := ""
 	for i, w := range args {
@@ -1084,7 +1128,10 @@ func kubeconfigFlag(a *Action, args []shell.Word) {
 // agentPackages are the npm packages of the agent CLIs, run through npx,
 // bunx and similar.
 var agentPackages = map[string]string{"@anthropic-ai/claude-code": "claude", "@openai/codex": "codex",
-	"@google/gemini-cli": "gemini", "@github/copilot": "copilot", "opencode-ai": "opencode"}
+	"@google/gemini-cli": "gemini", "@github/copilot": "copilot", "opencode-ai": "opencode",
+	// the unscoped names npm also serves
+	"claude-code": "claude", "codex": "codex", "gemini-cli": "gemini", "copilot-cli": "copilot", "opencode": "opencode",
+	"claude": "claude", "cursor-agent": "cursor-agent"}
 
 // packageAgent returns the agent CLI a package runner starts and its
 // arguments: npx @anthropic-ai/claude-code --bare, bunx @openai/codex.

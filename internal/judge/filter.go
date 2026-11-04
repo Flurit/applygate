@@ -117,7 +117,7 @@ var bareEnv = regexp.MustCompile(`(^|[|;&(]\s*)(?:\S*/)?env\s*($|[|;&)>])`)
 // any unambiguous prefix, so --mirr is --mirror.
 func pushLongAbbrev(a string) bool {
 	k, _, _ := strings.Cut(a, "=")
-	if len(k) < 5 || !strings.HasPrefix(k, "--") {
+	if len(k) < 3 || !strings.HasPrefix(k, "--") {
 		return false
 	}
 	for _, o := range []string{"--mirror", "--prune", "--delete", "--force", "--force-with-lease", "--force-if-includes"} {
@@ -319,6 +319,11 @@ func runsProgram(name string, rest []string) bool {
 	for i, a := range rest {
 		for _, f := range flags {
 			if a == f || strings.HasPrefix(a, f+"=") || len(f) > 2 && strings.HasPrefix(f, "--") && strings.HasPrefix(a, f) {
+				return true
+			}
+			// git, GNU tar and the like take any unique prefix of a long
+			// option: --recei is --receive-pack.
+			if k, _, _ := strings.Cut(a, "="); len(k) >= 4 && strings.HasPrefix(k, "--") && strings.HasPrefix(f, "--") && strings.HasPrefix(f, k) {
 				return true
 			}
 		}

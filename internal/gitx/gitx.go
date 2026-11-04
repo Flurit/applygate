@@ -59,7 +59,7 @@ func Path() string {
 
 // Command is the hook's git in dir with args.
 func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	base := []string{"-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat",
+	base := []string{"--no-replace-objects", "-C", dir, "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.pager=cat",
 		"-c", "core.sshCommand=false", "-c", "core.askPass=", "--no-pager"}
 	p := Path()
 	if p == "" {
@@ -67,6 +67,6 @@ func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	}
 	cmd := exec.CommandContext(ctx, p, append(base, args...)...)
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + os.Getenv("HOME"), "TMPDIR=" + os.TempDir(), "LANG=C", "GIT_TERMINAL_PROMPT=0",
-		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1"}
+		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_OPTIONAL_LOCKS=0", "GIT_ATTR_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1"}
 	return cmd
 }

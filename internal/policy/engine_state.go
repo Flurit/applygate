@@ -72,6 +72,30 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 			rest = append(rest, w.Text)
 		}
 		if !startsProviders(sub, rest) {
+			// These do not start providers, but all but a few configure the
+			// backend, and a backend that names a credentials file runs
+			// the program in it.
+			if tfNoBackend[sub] {
+				continue
+			}
+			if dir == "" {
+				return "terraform " + sub + " in a directory that cannot be followed"
+			}
+			bkey := dir + "\x00backend"
+			if v, ok := engineCache.Load(bkey); ok {
+				if w := v.(string); w != "" {
+					return w
+				}
+				continue
+			}
+			why := ""
+			if r := preflight.RunsBackendPrograms(dir); r != "" {
+				why = "terraform " + sub + ": " + r
+			}
+			engineCache.Store(bkey, why)
+			if why != "" {
+				return why
+			}
 			continue
 		}
 		if dir == "" {
@@ -107,3 +131,8 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 	}
 	return ""
 }
+
+// tfNoBackend are the subcommands that neither start providers nor
+// configure the backend.
+var tfNoBackend = map[string]bool{"fmt": true, "version": true, "-version": true, "-help": true, "help": true, "login": true,
+	"logout": true, "metadata functions": true, "providers lock": true, "providers mirror": true, "validate": false}
