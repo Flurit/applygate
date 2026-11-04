@@ -2,6 +2,7 @@ package shell
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -40,7 +41,8 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 			// pagers may only be turned off. A shell variable with a lower
 			// case letter is local: programs read upper-case names.
 			v, lit := litWord(x.Value)
-			if bare[x] && x.Name != nil && strings.ToUpper(x.Name.Value) != x.Name.Value {
+			if bare[x] && x.Name != nil && strings.ToUpper(x.Name.Value) != x.Name.Value &&
+				!x.Append && x.Array == nil && x.Index == nil && !zshSpecial(x.Name.Value) {
 				break
 			}
 			if x.Name == nil || x.Append || x.Array != nil || x.Index != nil {
@@ -54,6 +56,16 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 			if len(x.Args) == 0 {
 				for _, as := range x.Assigns {
 					bare[as] = true
+				}
+			}
+			// hash NAME=PATH (zsh) and hash -p PATH NAME make NAME run PATH.
+			if len(x.Args) > 1 {
+				if n, ok := litWord(x.Args[0]); ok && n == "hash" {
+					for _, w := range x.Args[1:] {
+						if t, ok := litWord(w); !ok || t == "-p" || t == "-d" || strings.Contains(t, "=") {
+							why = "hash binding a name to a program"
+						}
+					}
 				}
 			}
 			// env NAME=value: the same rule as an assignment.
@@ -96,6 +108,11 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 	if len(res.Problems) > 0 {
 		return false, "a part the analyzer cannot resolve (" + res.Problems[0].Reason + ")"
 	}
+	// writesGit is set once a step can have written git state without
+	// naming it (a new repository, an extracted archive, a recursive
+	// copy): git's state is read before the command runs, so a later git
+	// command would run what that step put there.
+	writesGit := false
 	for _, inv := range res.Invocations {
 		if len(inv.Args) == 0 {
 			continue // a bare redirection
@@ -114,8 +131,13 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 		if why := shapeOf(inv); why != "" {
 			return false, why
 		}
+		if n := ProgName(inv.Args[0].Text); n == "git" && writesGit {
+			return false, "git after an earlier step that can write git state"
+		} else if writesGitState(n, inv.Args[1:], inv.Dir) {
+			writesGit = true
+		}
 		// The repository's hooks and config are read by later git
-		// commands, this one's included (gitRepoState).
+		// commands, this one's included (gitState).
 		words := inv.Args[1:]
 		for _, r := range inv.Redirs {
 			words = append(words, r.Target)
@@ -165,12 +187,64 @@ func describe(n syntax.Node) string {
 	return strings.TrimPrefix(fmt.Sprintf("%T", n), "*syntax.")
 }
 
+// writesGitState reports whether a step can create or change a git
+// directory without naming its files.
+func writesGitState(n string, args []Word, dir string) bool {
+	has := func(short byte, long ...string) bool {
+		for _, w := range args {
+			t := optText(w)
+			if t == "--" {
+				break
+			}
+			for _, l := range long {
+				if t == l {
+					return true
+				}
+			}
+			if short != 0 && strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && strings.IndexByte(t[1:], short) >= 0 {
+				return true
+			}
+		}
+		return false
+	}
+	switch n {
+	case "git":
+		for _, w := range args {
+			if t := optText(w); !strings.HasPrefix(t, "-") {
+				return t == "init" || t == "clone" || t == "submodule" || t == "worktree"
+			}
+		}
+	case "unzip", "bsdtar", "7z", "cpio", "rsync", "ditto", "patch":
+		return true
+	case "tar":
+		return has('x', "--extract", "--get") || len(args) > 0 && !strings.HasPrefix(optText(args[0]), "-") && strings.Contains(optText(args[0]), "x")
+	case "cp":
+		return has('r', "--recursive", "--archive") || has('R') || has('a')
+	case "mv", "ln":
+		// A directory moved or linked into place.
+		for _, w := range args {
+			t := optText(w)
+			if !w.Resolved {
+				return true
+			}
+			if strings.HasPrefix(t, "-") {
+				continue
+			}
+			if fi, err := os.Stat(PhysicalJoin(dir, t)); err == nil && fi.IsDir() || dir == "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // gitStatePath reports whether p names a git directory's hooks, config or
 // the git directories of submodules.
 func gitStatePath(p string) bool {
 	segs := strings.Split(filepath.ToSlash(p), "/")
 	for i, s := range segs {
-		if s == ".git" && i+1 < len(segs) {
+		if (s == ".git" || strings.HasSuffix(s, ".git")) && i+1 < len(segs) {
+			// A repository's .git, or a bare repository named x.git.
 			switch segs[i+1] {
 			case "hooks", "config", "config.worktree", "modules", "commondir", "info", "worktrees":
 				return true
@@ -217,4 +291,47 @@ func litWord(w *syntax.Word) (string, bool) {
 		}
 	}
 	return b.String(), true
+}
+
+// stateBuiltins change the shell itself: what a name runs, its options,
+// its environment or its handlers.
+var stateBuiltins = toSet("alias", "unalias", "hash", "enable", "disable", "shopt", "setopt", "unsetopt", "set", "bind", "trap",
+	"autoload", "zmodload", "compdef", "functions", "export", "typeset", "declare", "local", "readonly", "source", ".", "eval",
+	"rehash", "emulate", "builtin", "command_not_found_handle", "unset", "unfunction", "zle", "fc", "history", "umask", "ulimit")
+
+// DefinesState reports what in cmd changes a shell that keeps running after
+// it ("" when nothing does): a function, an alias or other state builtin, or
+// a variable assignment on its own.
+func DefinesState(cmd string) string {
+	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(cmd), "")
+	if err != nil {
+		return "input that does not parse"
+	}
+	why := ""
+	syntax.Walk(f, func(n syntax.Node) bool {
+		if why != "" {
+			return false
+		}
+		switch x := n.(type) {
+		case *syntax.FuncDecl:
+			why = "a function definition"
+		case *syntax.DeclClause:
+			why = "a declaration"
+		case *syntax.CallExpr:
+			if len(x.Args) == 0 && len(x.Assigns) > 0 {
+				why = "a variable assignment"
+				break
+			}
+			if len(x.Args) > 0 {
+				name, ok := litWord(x.Args[0])
+				if !ok {
+					why = "a command name that cannot be resolved"
+				} else if stateBuiltins[name] {
+					why = "the builtin " + name
+				}
+			}
+		}
+		return why == ""
+	})
+	return why
 }

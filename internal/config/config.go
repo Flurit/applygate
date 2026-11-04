@@ -304,6 +304,19 @@ var DefaultProtectedPaths = []string{
 	"**/.config/glab-cli/**", "**/.docker/config.json", "**/.terraformrc", "**/.terraform.d/**", "**/.tofurc",
 	"**/.vault", "**/.wgetrc", "**/.tflint.hcl", "**/.tflint.d/**", "**/.config/helm/**",
 	"**/Library/Preferences/helm/**", "**/Library/helm/plugins/**", "**/.local/share/helm/plugins/**",
+	// ssh's config names a ProxyCommand or Match exec that a plain git
+	// fetch or push runs; Docker runs its CLI plugins for docker compose
+	// and the like; curl, the Azure CLI and Claude Code's own shell state
+	// likewise run or load what is written there. The ssh entries are a
+	// glob so that "config.d" does not become a needle in code.
+	"**/.ssh/config", "**/.ssh/config*/**", "**/.docker/cli-plugins/**", "**/.curlrc", "**/.azure/cliextensions/**",
+	// Claude Code sources a snapshot of the user's shell, and the session's
+	// CLAUDE_ENV_FILE scripts, before every Bash call: a function there
+	// replaces any program the hook allows.
+	"**/.claude/shell-snapshots/**", "**/.claude/session-env/**",
+	// Start-up and login files outside the shell rc files.
+	"**/Library/LaunchAgents/**", "**/.config/fish/**", "**/.config/environment.d/*", "**/.config/systemd/user/**",
+	"**/.oh-my-zsh/custom/**",
 }
 
 // pathPrograms are names an agent may not place in a PATH directory: the
@@ -477,6 +490,11 @@ func repoConfigChain(dir string) []string {
 // protected environments and other protection; it never replaces the
 // repository's config. Settings a repository config may not make are
 // ignored and noted in Deprecations.
+// MaxConfig is the largest config file read. A larger repository config is
+// untrusted (every directory it covers is protected); a larger user or
+// system config is an error.
+const MaxConfig = 1 << 20
+
 func Load(userPath, dir string) (*Config, error) {
 	cfg := Default()
 	// Under a managed install the root-owned system config is read first,
@@ -516,7 +534,7 @@ func Load(userPath, dir string) (*Config, error) {
 				cfg.Deprecations = append(cfg.Deprecations, p+" is not a regular file (a symlink?), so it is not read; replace it with the file itself and trust that")
 				continue
 			}
-			b, err := safefile.ReadFile(p)
+			b, err := safefile.ReadFileMax(p, MaxConfig)
 			if err != nil {
 				cfg.Untrusted = append(cfg.Untrusted, p)
 				cfg.Deprecations = append(cfg.Deprecations, p+" cannot be read, so it is not read: "+err.Error())
@@ -564,7 +582,7 @@ func LoadFile(path string) (*Config, error) {
 }
 
 func merge(cfg *Config, path string, l layer) error {
-	b, err := safefile.ReadFile(path)
+	b, err := safefile.ReadFileMax(path, MaxConfig)
 	if err != nil {
 		return err
 	}
@@ -1017,7 +1035,9 @@ func PathDirs(home string) []string {
 }
 
 // PathPrograms are the names guarded in PathDirs.
-func PathPrograms() []string { return pathPrograms }
+func PathPrograms() []string {
+	return append(append([]string(nil), pathPrograms...), shell.GitPrograms()...)
+}
 
 func pathDirs(home string) []string {
 	dirs := filepath.SplitList(os.Getenv("PATH"))
@@ -1346,9 +1366,12 @@ func (c *Config) Resolve(s Signals) Resolution {
 		}
 	}
 	for _, d := range s.StateDirs {
-		if r := c.Resolve(Signals{Dir: d}); !r.Unknown {
-			consider(r.Env, r.Tier, "the state file it uses is in "+d+" ("+strings.Join(r.Matched, "; ")+")")
-		}
+		// A state file's directory brings its tier even when no
+		// environment matches it: then the tier for an unknown directory
+		// (protected under strict), since the state can be any
+		// environment's.
+		r := c.Resolve(Signals{Dir: d})
+		consider(r.Env, r.Tier, "the state file it uses is in "+d+" ("+strings.Join(r.Matched, "; ")+")")
 	}
 	for _, d := range s.SourceDirs {
 		if r := c.Resolve(Signals{Dir: d}); !r.Unknown {

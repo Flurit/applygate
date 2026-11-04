@@ -78,6 +78,10 @@ type Action struct {
 	// saved plan this action applies: what is on disk when the hook runs is
 	// not what will be applied.
 	PlanWritten bool
+	// PlanOrigin is, for a plan an earlier step wrote, the directory of the
+	// terraform or tofu plan -out that wrote it; "" when another program
+	// wrote it (cp, ln, a download) or it cannot be told.
+	PlanOrigin string
 	// DataDirWritten is set when an earlier step rewrote this directory's
 	// .terraform (workspace, backend): the workspace and backend recorded
 	// there now are not the ones the command will use.
@@ -108,6 +112,10 @@ type Action struct {
 	// the command, an analysis that stopped): it is judged at the most
 	// protected tier under the repository root.
 	AnyDir bool
+	// Subtree is set when the command runs in every unit under Dir
+	// (terragrunt run --all, run-all, destroy-all): it is judged at the most
+	// protected tier under Dir.
+	Subtree bool
 }
 
 // Options configure classification.
@@ -169,16 +177,33 @@ func Invocations(res *shell.Result, opt Options) []Action {
 	// selected (kubectl config use-context, gcloud config set project, az
 	// account set): later calls that name none target it.
 	retarget := map[string]string{}
+	// origin maps a path an earlier step wrote to the directory of the
+	// plan -out that wrote it, or "" for any other writer.
+	origin := map[string]string{}
+	// seeded holds, per directory, the state files an earlier workspace new
+	// -state=PATH copied into the workspace it selected: later commands
+	// there run on that state.
+	seeded := map[string][]string{}
 	for _, inv := range res.Invocations {
 		acts := invocation(inv, opt)
 		for i := range acts {
 			a := &acts[i]
+			if (a.Engine == "terraform" || a.Engine == "tofu") && a.Dir != "" {
+				if a.Sub == "workspace new" && len(a.StateFiles) > 0 {
+					seeded[a.Dir] = append(seeded[a.Dir], a.StateFiles...)
+				} else if s := seeded[a.Dir]; len(s) > 0 {
+					a.StateFiles = append(a.StateFiles, s...)
+				}
+			}
 			if t, ok := retarget[a.Engine]; ok && a.Target == "" {
 				a.Target = t
 			}
 			if a.PlanFile != "" && a.Dir != "" {
 				plan := absPath(a.Dir, a.PlanFile, opt.Home)
 				a.PlanWritten = slices.Contains(written, writtenUnknown) || writtenAt(written, plan) || namedExactly(named, plan)
+				if a.PlanWritten && !slices.Contains(written, writtenUnknown) && !namedExactly(named, plan) {
+					a.PlanOrigin = origin[guard.Fold(filepath.Clean(plan))]
+				}
 			}
 			if a.Engine == "terraform" || a.Engine == "tofu" || a.Engine == "terragrunt" {
 				dataDir := ".terraform"
@@ -196,7 +221,22 @@ func Invocations(res *shell.Result, opt Options) []Action {
 			}
 		}
 		out = append(out, acts...)
-		written = append(written, stepWrites(inv, opt)...)
+		ws := stepWrites(inv, opt)
+		planDir := ""
+		if len(inv.Args) > 0 && inv.Args[0].Resolved {
+			if _, ok := engines[shell.ProgName(inv.Args[0].Text)]; ok {
+				for _, a := range acts {
+					if a.Engine == "terraform" || a.Engine == "tofu" {
+						planDir = a.Dir
+						break
+					}
+				}
+			}
+		}
+		for _, w := range ws {
+			origin[guard.Fold(filepath.Clean(w))] = planDir
+		}
+		written = append(written, ws...)
 		named = append(named, stepNames(inv, opt)...)
 		if engines, t, ok := selects(inv); ok {
 			for _, e := range engines {
@@ -1173,24 +1213,54 @@ func plantsCommand(inv shell.Invocation) string {
 		}
 		return false
 	}
+	n := shell.ProgName(inv.Args[0].Text)
+	// pos are the positional words, the values of the program's valued
+	// options left out (aws --region X, kubectl --context X, gh -R X).
+	valued := map[string]bool{}
+	switch n {
+	case "aws":
+		valued = toSet("--profile", "--region", "--output", "--endpoint-url", "--query", "--ca-bundle", "--cli-read-timeout", "--cli-connect-timeout", "--color")
+	case "kubectl":
+		valued = toSet("-n", "--namespace", "--context", "--cluster", "--user", "-s", "--server", "--kubeconfig", "--as", "--as-group", "--token", "--request-timeout", "-v")
+	case "gh", "glab":
+		valued = toSet("-R", "--repo", "--hostname")
+	}
 	pos := func() []string {
 		var out []string
-		for _, w := range ws {
-			if !strings.HasPrefix(w, "-") {
-				out = append(out, w)
+		for i := 0; i < len(ws); i++ {
+			w := ws[i]
+			if strings.HasPrefix(w, "-") {
+				if valued[w] {
+					i++
+				}
+				continue
 			}
+			out = append(out, w)
 		}
 		return out
 	}()
-	n := shell.ProgName(inv.Args[0].Text)
 	switch {
-	case n == "git" && len(pos) >= 2 && pos[0] == "config" && has("--global", "--system", "--file", "-f"):
-		k := pos[1]
-		if (k == "set" || k == "add") && len(pos) >= 3 {
-			k = pos[2]
+	case n == "git":
+		// git [-C dir] [-c k=v] ... config ...: the global options first.
+		args := inv.Args[1:]
+		for len(args) > 0 && strings.HasPrefix(args[0].Text, "-") {
+			if t := args[0].Text; (t == "-C" || t == "-c" || t == "--git-dir" || t == "--work-tree" || t == "--namespace") && len(args) > 1 {
+				args = args[1:]
+			}
+			args = args[1:]
 		}
-		if !inv.Args[len(inv.Args)-1].Resolved || shell.GitRunsKey(strings.ToLower(k), "") {
-			return "git config " + k + " outside the repository sets a command git runs later"
+		if len(args) == 0 || args[0].Text != "config" {
+			return ""
+		}
+		op, why := shell.GitConfigOp(args[1:])
+		if op.Scope == "" {
+			return "" // the repository's own config: strict shapes judges it
+		}
+		if why != "" && why != "git config --edit runs an editor" {
+			return "git config outside the repository: " + why
+		}
+		if why != "" || op.Write && !shell.GitSafeKey(op.Key, op.Value, true) {
+			return "git config " + op.Key + " outside the repository may set a command git runs later"
 		}
 	case (n == "gh" || n == "glab") && len(pos) >= 2 && pos[0] == "alias" && pos[1] != "list":
 		return n + " alias " + pos[1] + " defines a command " + n + " runs later"

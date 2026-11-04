@@ -21,13 +21,42 @@ func init() {
 		"ls", "cat", "head", "tail", "wc", "grep", "egrep", "uniq", "cut", "tr", "tee", "diff", "cmp", "tree", "stat",
 		"file", "du", "df", "basename", "dirname", "realpath", "readlink", "mkdir", "touch", "cp", "mv", "rm", "ln",
 		"chmod", "find", "jq", "yq", "column", "xxd", "od", "base64", "sha256sum", "shasum", "md5sum", "gzip", "gunzip",
-		"unzip", "nl", "fold", "comm", "join", "paste", "seq", "id", "whoami", "uname", "hostname", "printenv", "curl",
-		"gofmt", "terraform", "tofu", "terragrunt", "tflint", "tfsec", "terraform-docs", "infracost", "shellcheck",
-		"actionlint", "gsutil", "vault", "applygate", "make", "env",
+		"unzip", "nl", "fold", "comm", "join", "paste", "seq", "id", "whoami", "uname", "hostname", "printenv",
+		"gofmt", "terraform", "tofu", "tfsec", "terraform-docs", "shellcheck", "gsutil", "applygate", "env",
 	} {
 		shapes[n] = nil
 	}
 	shapes["printf"] = denyOpts("-v")
+	// curl -K reads options (output files, more URLs) from a file.
+	shapes["curl"] = denyOpts("-K", "--config")
+	shapes["infracost"] = denyOpts("--terraform-binary")
+	shapes["actionlint"] = denyOpts("-shellcheck", "-pyflakes")
+	// tflint runs the plugins its config names.
+	shapes["tflint"] = denyOpts("--config", "-c", "--init", "--plugin-dir")
+	shapes["vault"] = denySub("agent", "proxy", "ssh", "server", "plugin")
+	// terragrunt evaluates terragrunt.hcl, whose run_cmd() and hooks run
+	// programs, and runs terraform in a cache the plan check does not see:
+	// only formatting and its version are plain. make runs its recipes in
+	// a shell it chooses (SHELL, implicit rules, $(shell)), so it is never
+	// plain.
+	shapes["terragrunt"] = func(args []Word, _ Invocation) string {
+		for _, w := range args {
+			t := optText(w)
+			if t == "--version" || t == "-version" || t == "version" || t == "hclfmt" || t == "help" || t == "--help" {
+				return ""
+			}
+			if !strings.HasPrefix(t, "-") {
+				if t == "hcl" {
+					continue
+				}
+				if t == "fmt" {
+					return ""
+				}
+				break
+			}
+		}
+		return "terragrunt evaluates terragrunt.hcl, whose run_cmd and hooks run programs"
+	}
 	shapes["sort"] = denyOpts("--compress-program")
 	shapes["rg"] = rgShape
 	shapes["sed"] = sedShape
@@ -53,8 +82,21 @@ func init() {
 	shapes["podman"] = shapes["docker"]
 	shapes["kubectl"] = kubectlShape
 	shapes["helm"] = helmShape
-	shapes["kustomize"] = denyOpts("--enable-alpha-plugins", "--enable-exec")
-	shapes["checkov"] = denyOpts("--external-checks-dir", "--external-checks-git")
+	shapes["kustomize"] = denyOpts("--enable-alpha-plugins", "--enable-exec", "--enable-helm", "--helm-command")
+	// checkov loads Python checks from a directory its options or a
+	// .checkov.yaml in the directory name.
+	checkov := denyOpts("--external-checks-dir", "--external-checks-git", "--config-file")
+	shapes["checkov"] = func(args []Word, inv Invocation) string {
+		if why := checkov(args, inv); why != "" {
+			return why
+		}
+		for _, n := range []string{".checkov.yaml", ".checkov.yml"} {
+			if _, err := os.Stat(filepath.Join(inv.Dir, n)); inv.Dir == "" || err == nil {
+				return "checkov with a " + n + " config"
+			}
+		}
+		return ""
+	}
 	shapes["trivy"] = subcommands("config", "fs", "filesystem", "repo", "repository", "image", "version", "sbom", "k8s")
 	shapes["conftest"] = subcommands("test", "verify", "parse", "fmt", "version")
 	shapes["opa"] = subcommands("eval", "test", "fmt", "check", "version", "inspect", "parse", "build")
@@ -71,7 +113,8 @@ func init() {
 		if len(args) > 0 && args[0].Text == "env" {
 			return denyOpts("-w", "-u")(args, inv)
 		}
-		return ""
+		// go list -export builds, and -toolexec runs a program for each tool.
+		return denyOpts("-toolexec", "-exec")(args, inv)
 	}
 }
 
@@ -98,6 +141,11 @@ func plainEnvVar(name, v string, resolved bool) string {
 
 // shapeOf reports why one invocation is not plain.
 func shapeOf(inv Invocation) string {
+	// A program named by a path is trusted only in a system directory: a
+	// file called ./sort is not sort.
+	if p := inv.Args[0].Text; strings.Contains(p, "/") && (!filepath.IsAbs(p) || !gitSystemBins[filepath.Dir(filepath.Clean(p))]) {
+		return "a program named by a path outside the system directories (" + p + ")"
+	}
 	n := ProgName(inv.Args[0].Text)
 	s, ok := shapes[n]
 	if !ok {
@@ -131,8 +179,12 @@ func hasOpt(args []Word, o string) bool {
 		if t == "--" {
 			return false
 		}
+		if !w.Resolved && (t == "" || t == "-" || strings.HasPrefix(t, "-") && strings.HasPrefix(o, t)) {
+			// An option whose name is not known may be this one.
+			return true
+		}
 		switch {
-		case t == o, strings.HasPrefix(o, "--") && strings.HasPrefix(t, o+"="):
+		case t == o, len(o) > 2 && strings.HasPrefix(t, o+"="):
 			return true
 		case len(o) == 2 && o[0] == '-' && strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && strings.ContainsRune(t[1:], rune(o[1])):
 			return true
@@ -238,12 +290,12 @@ func tarShape(args []Word, _ Invocation) string {
 		"--xz", "--zstd", "--verbose", "--exclude", "--exclude-from", "--strip-components", "--wildcards", "--no-same-owner",
 		"--same-permissions", "--preserve-permissions", "--keep-old-files", "--overwrite", "--to-stdout", "--force-local",
 		"--transform", "--owner", "--group", "--mtime", "--sort", "--numeric-owner", "--exclude-vcs", "--totals",
-		"--one-file-system", "--dereference", "--null", "--files-from", "-T", "-X", "--warning", "--format", "--anchored")
+		"--one-file-system", "--dereference", "--null", "-X", "--warning", "--format", "--anchored")
 	local := false
 	for i, w := range args {
 		t := optText(w)
 		switch {
-		case !w.Resolved && strings.HasPrefix(t, "-"):
+		case !w.Resolved && (t == "" || strings.HasPrefix(t, "-")):
 			return "an option that cannot be resolved"
 		case strings.HasPrefix(t, "--"):
 			k, _, _ := strings.Cut(t, "=")
@@ -291,8 +343,12 @@ func sedShape(args []Word, _ Invocation) string {
 		switch {
 		case t == "--":
 			i = len(args)
-		case t == "-f" || strings.HasPrefix(t, "--file") || strings.HasPrefix(t, "-f") && !strings.HasPrefix(t, "--"):
+		case t == "-f" || strings.HasPrefix(t, "--f") || strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && strings.ContainsRune(t[1:], 'f'):
+			// -f, -nf, --file, --fil: a script from a file.
 			return "a sed script from a file"
+		case strings.HasPrefix(t, "--") && !strings.HasPrefix(t, "--expression") && len(t) > 3 && strings.HasPrefix("--expression", strings.SplitN(t, "=", 2)[0]):
+			// --ex, --expr: an abbreviation of --expression.
+			return "an abbreviated sed option"
 		case t == "-e" || t == "--expression":
 			explicit = true
 			if i+1 < len(args) {
@@ -439,7 +495,7 @@ var gitDeny = []string{"--upload-pack", "--receive-pack", "--exec", "--ext-diff"
 // its subcommand is listed, it uses none of gitDeny (nor rebase -x, grep -O,
 // clone or ls-remote -u), its config edits name no key that runs a command,
 // no URL uses the ext:: or fd:: transport, and its repository holds no
-// hooks and no such keys (gitRepoState).
+// hooks and no such keys (gitState).
 func gitShape(args []Word, inv Invocation) string {
 	i := 0
 	for i < len(args) && strings.HasPrefix(optText(args[i]), "-") {
@@ -477,6 +533,22 @@ func gitShape(args []Word, inv Invocation) string {
 		return "the git option -O"
 	case (sub == "clone" || sub == "ls-remote") && hasOpt(rest, "-u"):
 		return "the git option -u"
+	case sub == "clone" && (hasOpt(rest, "-c") || hasOpt(rest, "--config")):
+		return "the git option -c"
+	}
+	if gitNetwork[sub] {
+		// A local repository as the remote runs its hooks (push) and its
+		// git (fetch, clone).
+		for _, w := range rest {
+			t := optText(w)
+			if !w.Resolved && !strings.HasPrefix(t, "-") {
+				return "a git remote that cannot be resolved"
+			}
+			if strings.HasPrefix(t, "/") || strings.HasPrefix(t, "./") || strings.HasPrefix(t, "../") || strings.HasPrefix(t, "~") ||
+				strings.HasPrefix(strings.ToLower(t), "file:") || t == "." || t == ".." {
+				return "a local repository as the git remote"
+			}
+		}
 	}
 	for _, w := range rest {
 		t := strings.ToLower(optText(w))
@@ -489,41 +561,107 @@ func gitShape(args []Word, inv Invocation) string {
 			return why
 		}
 	}
-	return gitRepoState(inv.Dir, args[:i])
+	dir := inv.Dir
+	for j := 0; j+1 < i; j++ {
+		if args[j].Text == "-C" {
+			if !args[j+1].Resolved {
+				return "a git -C directory that cannot be resolved"
+			}
+			if dir != "" {
+				dir = PhysicalJoin(dir, args[j+1].Text)
+			}
+		}
+	}
+	return gitState(dir, sub)
 }
 
-// gitConfigShape: reading config is plain; setting a key is plain unless
-// the key runs a command or brings in another file.
+// gitConfigShape: reading config is plain; setting a key is plain only when
+// the key and value are safe (GitSafeKey).
 func gitConfigShape(args []Word) string {
+	op, why := GitConfigOp(args)
+	if why != "" {
+		return why
+	}
+	if op.Write && !GitSafeKey(op.Key, op.Value, true) {
+		return "the git config key " + op.Key
+	}
+	return ""
+}
+
+// GitConfig is what one git config call does.
+type GitConfig struct {
+	Write      bool   // sets a key
+	Key, Value string // the key (lower case) and value set
+	Scope      string // "global", "system", "file" or "" (the repository)
+}
+
+// GitConfigOp parses the arguments of git config (after "config"): the
+// old option syntax and the set/get/unset/list subcommands. why is set
+// when the call is not plain whatever the key: an editor, a section
+// rename, another file read as config, or words that cannot be resolved.
+func GitConfigOp(args []Word) (op GitConfig, why string) {
+	valued := toSet("--type", "-t", "--comment", "--default", "--value", "--url", "--file", "-f", "--blob")
 	var pos []Word
-	read := false
-	for _, w := range args {
+	read, unset := false, false
+	for i := 0; i < len(args); i++ {
+		w := args[i]
 		t := optText(w)
+		name, _, eq := strings.Cut(t, "=")
 		switch {
-		case t == "--get" || t == "--get-all" || t == "--get-regexp" || t == "-l" || t == "--list" || t == "--show-origin" ||
-			t == "--show-scope" || t == "--name-only" || t == "get" || t == "list":
+		case !w.Resolved && strings.HasPrefix(t, "-"), !w.Resolved && t == "":
+			return op, "git config with words that cannot be resolved"
+		case t == "--":
+			pos = append(pos, args[i+1:]...)
+			i = len(args)
+		case name == "--global":
+			op.Scope = "global"
+		case name == "--system":
+			op.Scope = "system"
+		case name == "--file" || name == "-f" || name == "--blob":
+			op.Scope = "file"
+			if !eq {
+				i++
+			}
+		case t == "--edit" || t == "-e":
+			return op, "git config --edit runs an editor"
+		case t == "--rename-section":
+			return op, "git config --rename-section"
+		case t == "--get" || t == "--get-all" || t == "--get-regexp" || t == "--get-urlmatch" || t == "--get-color" ||
+			t == "--get-colorbool" || t == "-l" || t == "--list" || t == "--show-origin" || t == "--show-scope" || t == "--name-only":
 			read = true
-		case t == "--file" || t == "-f" || t == "--blob" || strings.HasPrefix(t, "--file="):
-			return "git config on another file"
+		case t == "--unset" || t == "--unset-all" || t == "--remove-section":
+			unset = true
+		case valued[name]:
+			if !eq {
+				i++
+			}
 		case strings.HasPrefix(t, "-"):
 		default:
 			pos = append(pos, w)
 		}
 	}
-	if read || len(pos) < 2 {
-		return ""
+	if len(pos) > 0 && pos[0].Resolved {
+		switch pos[0].Text {
+		case "get", "list":
+			read, pos = true, pos[1:]
+		case "unset", "remove-section":
+			unset, pos = true, pos[1:]
+		case "set":
+			pos = pos[1:]
+		case "rename-section":
+			return op, "git config rename-section"
+		case "edit":
+			return op, "git config edit runs an editor"
+		}
 	}
-	k := pos[0]
-	if len(pos) >= 3 && (pos[0].Text == "set" || pos[0].Text == "add") {
-		k = pos[1]
+	if read || unset || len(pos) < 2 {
+		return op, ""
 	}
-	if !k.Resolved {
-		return "a git config key that cannot be resolved"
+	if !pos[0].Resolved || !pos[1].Resolved {
+		return op, "a git config key or value that cannot be resolved"
 	}
-	if GitRunsKey(strings.ToLower(k.Text), "") {
-		return "the git config key " + k.Text
-	}
-	return ""
+	op.Write, op.Key, op.Value = true, strings.ToLower(pos[0].Text), pos[1].Text
+	return op, ""
 }
 
 // GitRunsKey reports whether a git config key (lower case) with value v
@@ -556,91 +694,6 @@ func GitRunsKey(k, v string) bool {
 	return false
 }
 
-// gitRepoState reports why the repository a git command runs in is not
-// plain: it has hooks, or its config sets a key that runs a command. git
-// reads both on its own, so a plain command can run what an earlier one
-// planted. A repository whose git directory cannot be read is not plain.
-func gitRepoState(dir string, globalOpts []Word) string {
-	if dir == "" {
-		return "a git repository in an unknown directory"
-	}
-	for i := 0; i+1 < len(globalOpts); i++ {
-		if globalOpts[i].Text == "-C" {
-			if !globalOpts[i+1].Resolved {
-				return "a git -C directory that cannot be resolved"
-			}
-			dir = PhysicalJoin(dir, globalOpts[i+1].Text)
-		}
-	}
-	gitDir, common, ok := findGitDir(dir)
-	if !ok {
-		return "" // not in a repository: git init, clone, or an error
-	}
-	if gitDir == "" {
-		return "a git directory that cannot be read"
-	}
-	if ents, err := os.ReadDir(filepath.Join(common, "hooks")); err == nil {
-		for _, e := range ents {
-			if !strings.HasSuffix(e.Name(), ".sample") {
-				return "the repository's git hook " + e.Name()
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return "git hooks that cannot be read"
-	}
-	for _, f := range []string{filepath.Join(common, "config"), filepath.Join(gitDir, "config.worktree")} {
-		if why := gitConfigFile(f); why != "" {
-			return why
-		}
-	}
-	return ""
-}
-
-// findGitDir walks up from dir to the repository's git directory and its
-// common directory (they differ in a linked worktree). ok is false outside
-// a repository; gitDir is "" when a .git entry cannot be followed.
-func findGitDir(dir string) (gitDir, common string, ok bool) {
-	for d := dir; ; d = filepath.Dir(d) {
-		p := filepath.Join(d, ".git")
-		fi, err := os.Lstat(p)
-		switch {
-		case err == nil && fi.IsDir():
-			gitDir = p
-		case err == nil && fi.Mode().IsRegular():
-			b, err := readSmall(p)
-			if err != nil {
-				return "", "", true
-			}
-			g, found := strings.CutPrefix(strings.TrimSpace(string(b)), "gitdir:")
-			if !found {
-				return "", "", true
-			}
-			if g = strings.TrimSpace(g); !filepath.IsAbs(g) {
-				g = filepath.Join(d, g)
-			}
-			gitDir = g
-		case err == nil:
-			return "", "", true // a symlink or another kind of entry
-		case !os.IsNotExist(err):
-			return "", "", true
-		}
-		if gitDir != "" {
-			common = gitDir
-			if b, err := readSmall(filepath.Join(gitDir, "commondir")); err == nil {
-				c := strings.TrimSpace(string(b))
-				if !filepath.IsAbs(c) {
-					c = filepath.Join(gitDir, c)
-				}
-				common = filepath.Clean(c)
-			}
-			return gitDir, common, true
-		}
-		if filepath.Dir(d) == d {
-			return "", "", false
-		}
-	}
-}
-
 func readSmall(p string) ([]byte, error) {
 	fi, err := os.Stat(p)
 	if err != nil {
@@ -650,45 +703,6 @@ func readSmall(p string) ([]byte, error) {
 		return nil, os.ErrInvalid
 	}
 	return os.ReadFile(p)
-}
-
-// gitConfigFile reports a key in a git config file that runs a command.
-// Keys are compared in lower case.
-func gitConfigFile(p string) string {
-	b, err := readSmall(p)
-	if os.IsNotExist(err) {
-		return ""
-	}
-	if err != nil {
-		return "a git config that cannot be read"
-	}
-	sec := ""
-	for _, l := range strings.Split(string(b), "\n") {
-		l = strings.TrimSpace(l)
-		if l == "" || l[0] == '#' || l[0] == ';' {
-			continue
-		}
-		if l[0] == '[' {
-			end := strings.IndexByte(l, ']')
-			if end < 0 {
-				return "a git config that does not parse"
-			}
-			name, sub, hasSub := strings.Cut(l[1:end], " ")
-			sec = strings.TrimSpace(name)
-			if hasSub {
-				sec += "." + strings.Trim(strings.TrimSpace(sub), `"`)
-			}
-			sec = strings.ToLower(sec)
-			if l = strings.TrimSpace(l[end+1:]); l == "" {
-				continue
-			}
-		}
-		k, v, _ := strings.Cut(l, "=")
-		if key := sec + "." + strings.ToLower(strings.TrimSpace(k)); GitRunsKey(key, v) {
-			return "the git config key " + key
-		}
-	}
-	return ""
 }
 
 // kubectlSubs are kubectl's own subcommands: anything else is a plugin, a
@@ -704,8 +718,8 @@ func kubectlShape(args []Word, inv Invocation) string {
 	if hasOpt(args, "--kubeconfig") {
 		return "the option --kubeconfig"
 	}
-	if hasOpt(args, "--enable-alpha-plugins") || hasOpt(args, "--enable-exec") {
-		return "kustomize plugins"
+	if hasOpt(args, "--enable-alpha-plugins") || hasOpt(args, "--enable-exec") || hasOpt(args, "--enable-helm") || hasOpt(args, "--helm-command") {
+		return "kustomize plugins or helm"
 	}
 	pos := positional(args, 2, kubeValued)
 	if len(pos) == 0 {

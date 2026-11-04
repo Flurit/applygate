@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **Red-team round 6 fixes, strict shapes that check what programs read** (R6-2, design C in the fix plan):
+  - **git:** every git directory git can reach (bare repositories, gitfiles, `commondir`, submodules) and every config file it reads (system, global, repository, worktree, includes) is checked; every key must be on a safe list, and keys that name a program pass only with a known one. Local repositories as remotes, `clone -c`, and git after a step that can write git state in the same command are not plain. `git config` is parsed with its valued options and subcommands, and a global write off the safe list is tampering (6C6, 6C7, 6C8).
+  - **terraform:** a plain call that starts providers must find them matching the lock file committed at HEAD, which must match the upstream branch's, and no data source that runs a program (6H21).
+  - **Programs:** `make` and `terragrunt` (but `hclfmt`) are not plain; nor are `curl -K`, `tflint --config`, `infracost --terraform-binary`, `actionlint -shellcheck`, `go -toolexec`, `kustomize --enable-helm`, `tar -T`, `sed -f` in any cluster or abbreviated, or an unresolved word where a shape denies an option. A program named by a path outside the system directories is not plain (6C9, 6C10, 6C11).
+  - **zsh:** its special parameters, subscripted assignments and `hash NAME=PATH` are not plain; a `cd` as a pipeline's last element leaves the directory unknown; hook functions (`chpwd`, `zshexit`, `TRAP*`) are judged as running at any time (6C12).
+  - **Persistent MCP shells:** input that defines shell state is tampering in every tier (6C16).
+  - Cost on the agent trial in a protected directory: 51 of 162 calls asked about or blocked, against 47.
+
+- **Red-team round 6 fixes, first milestone** (`review/v0.6.0/2026-11-03-red-team-round-6.md`, plan in `2026-11-03-round-6-fix-plan.md`):
+  - **The hook's time and size are bounded.** A watchdog answers with a block when the run passes its 29 s budget, whatever is still running; config files over 1 MiB are not read (a repository config that large is untrusted); brace sequences and expansion past 64 KiB are unresolved. An 8 GiB sparse `.applygate.yaml` took 38 s and let Codex, Copilot, Gemini and Cline run the call; it now takes 0.05 s (6C17, 6H5).
+  - **The managed judge is out of the user's reach.** The judge cache reads back only `ask` and `block` and is not used under a managed install; a managed `command` judge must be a root-owned program named by its full path, with root-owned scripts, a fixed `PATH` and a short list of variables; a judge that fails under a managed install makes the call unjudgeable (6C3, 6C4, R2-11).
+  - **More guard paths:** Claude Code's shell snapshots and session environment files, `~/.ssh/config`, Docker CLI plugins, `~/.curlrc`, Azure CLI extensions, launch agents, fish, `environment.d`, systemd user units and oh-my-zsh custom files (6C1, 6C2, 6H1, R2-12).
+  - **Nested agents:** `claude --mcp-config`, `--plugin-dir` and `--agents`, `copilot --additional-mcp-config`, `gemini --extensions` and `codex -c mcp_servers.*` or `notify` are tampering (6C5).
+  - **Directories:** a command whose name, or an `eval` or `source` whose text, cannot be resolved leaves the directory unknown; so do `find -execdir`, runner directory options (`pnpm -C`, `yarn --cwd`, `mise --cd`, `poetry -C`, `parallel --wd`, `env --chd`) and a Terraform container whose `-w` is not under a mount, which is otherwise judged in the mounted directory (6C13, 6C14).
+  - **Saved plans and state:** a plan read from `/dev/…`, or written in the same command by anything but `plan -out`, is protected; a `plan -out` elsewhere brings its directory's tier; a plan in a configured environment's path brings that tier; a state file in an unmatched directory gets the unknown-directory tier; `workspace new -state` passes its tier on; `terragrunt run --all` takes the most protected unit beneath it (6C15, 6H6, 6H9, 6H12).
 - **The source builds and vets on Windows again** (not a release target): the approvals lock uses `LockFileEx` there and the terminal check the console mode, and CI vets for Windows.
 
 - **Red-team round 5 fixes** (`review/v0.6.0/2026-11-03-red-team-round-5.md`, plan in `2026-11-03-round-5-fix-plan.md`):

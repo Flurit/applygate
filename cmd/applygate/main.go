@@ -170,7 +170,7 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return os.ReadFile(p)
 		}
 	}
-	o := hook.Run(a, stdin, opt)
+	o := hook.RunWithin(a, stdin, opt)
 	stdout.Write(o.Stdout)
 	io.WriteString(stderr, o.Stderr)
 	// The verdict is out. Usage counts, if the person turned them on, go

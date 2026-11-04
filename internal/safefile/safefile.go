@@ -13,12 +13,30 @@ import (
 
 // ReadFile reads path if it is a regular file.
 func ReadFile(path string) ([]byte, error) {
+	return ReadFileMax(path, MaxRead)
+}
+
+// MaxRead is the most ReadFile reads. applygate's own files are small; a
+// larger one (a sparse file of gigabytes costs nothing on disk) would take
+// longer to read and hash than the host waits for the hook.
+const MaxRead = 4 << 20
+
+// ReadFileMax is ReadFile for a file of at most max bytes; a larger file is
+// an error, found before it is read.
+func ReadFileMax(path string, max int64) ([]byte, error) {
 	f, err := open(path, os.O_RDONLY, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(f)
+	if fi, err := f.Stat(); err == nil && fi.Size() > max {
+		return nil, fmt.Errorf("%s is %d bytes, more than the %d applygate reads", path, fi.Size(), max)
+	}
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err == nil && int64(len(b)) > max {
+		return nil, fmt.Errorf("%s is more than the %d bytes applygate reads", path, max)
+	}
+	return b, err
 }
 
 // OpenAppend opens path for appending, creating it with perm, if it is a

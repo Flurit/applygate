@@ -38,6 +38,9 @@ It is supported on macOS and Linux. Windows is not supported yet, because applyg
 - **Every change to a repository config** needs the managed binary's `trust` again before it takes effect. Until then every directory it covers is protected.
 - **The system config** is edited with `sudo`. A system config that root does not own, or that others can write, is not read, and every directory is protected until it is fixed; `doctor` says why.
 - **The judge is the system config's.** A `judge:` section in your user config is ignored; one in the system config cannot be turned off from the user config.
+  - A `command` judge must name its program by its full path, and the program and every script it is given must be root's alone, as engines are; otherwise every call the judge would see is asked about. It runs with `PATH=/usr/bin:/bin:/usr/sbin:/sbin` and only `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `LANG`, `LC_*`, `TZ`, `APPLYGATE_JUDGE_*` and variables ending in `_API_KEY` or `_TOKEN` from the agent's environment, so `BASH_ENV` or a planted `sh` cannot answer for it.
+  - The judge cache is not used: it lives in the agent's user's state directory.
+  - A judge that fails (unreachable, timed out, an error) makes the call unjudgeable, which is an ask outside disposable environments, since the agent's user decides whether a local server or a proxy answers. `SSL_CERT_FILE` and `SSL_CERT_DIR` are cleared at hook start.
 - **The plan gate runs a root-owned engine only.** To read a saved plan the hook runs `terraform show -json` (or `tofu`). Under a managed install that binary, after symlinks, and its directory must be owned and writable by root only; a Homebrew or `~/.local/bin` install is neither, so the saved plan is unverifiable until you name a root-owned copy in the system config:
 
   ```yaml

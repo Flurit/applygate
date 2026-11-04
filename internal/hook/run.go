@@ -197,7 +197,7 @@ func firstLine(s string) string {
 // Deps builds policy dependencies for a config. ctx is cancelled on the
 // internal deadline; the plan gate's show subprocess is bound to it.
 func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
-	d := policy.Deps{Env: opt.Env, PlanJSON: opt.PlanJSON,
+	d := policy.Deps{Ctx: ctx, Env: opt.Env, PlanJSON: opt.PlanJSON,
 		LoadConfig: func(dir string) (*config.Config, error) { return config.Load(opt.UserConfig, dir) }}
 	if d.PlanJSON == nil && cfg.RunShow() {
 		d.PlanJSON = ShowPlan(ctx, cfg.ShowTimeout(), cfg.EngineBinary)
@@ -291,8 +291,42 @@ func failureBlocks(cfg *config.Config, cwd string, timeout bool) bool {
 	return true
 }
 
+// RunWithin is Run with a watchdog: when the run is not done shortly after
+// its budget, the hook answers with a fail-closed block itself, whatever is
+// still running (reading a huge file, a slow judge, an expansion), so it
+// never reaches the host's own timeout, which some hosts treat as allow.
+// Observe mode cannot be honoured then, because the config may not be read.
+func RunWithin(a Adapter, in io.Reader, opt Options) Output {
+	budget := opt.Budget
+	if budget == 0 {
+		budget = DefaultBudget
+	}
+	done := make(chan Output, 1)
+	go func() { done <- Run(a, in, opt) }()
+	t := time.NewTimer(budget + watchdogSlack)
+	defer t.Stop()
+	select {
+	case o := <-done:
+		return o
+	case <-t.C:
+		o := a.Fail(true, fmt.Sprintf("applygate: the decision did not finish within %s, so the call is blocked (applygate fails closed when it runs out of time)", budget))
+		o.Deadline = time.Now()
+		return o
+	}
+}
+
+// watchdogSlack lets a run that finishes at its budget write its own answer
+// before the watchdog writes one.
+const watchdogSlack = 300 * time.Millisecond
+
 func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	start := time.Now()
+	if config.Managed() {
+		// The agent's user sets this process's environment. Certificate
+		// files named there would let a proxy answer for an HTTPS judge.
+		os.Unsetenv("SSL_CERT_FILE")
+		os.Unsetenv("SSL_CERT_DIR")
+	}
 	if opt.Timeout == 0 {
 		opt.Timeout = 25 * time.Second
 	}
@@ -425,7 +459,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	}
 	if ev.Kind == policy.KindMCP {
 		ev.Kind, ev.Command = policy.KindShell, tr.Command
-		ev.DirKnown = tr.Dir != ""
+		ev.DirKnown, ev.Persistent = tr.Dir != "", tr.Persistent
 		if tr.Dir != "" {
 			ev.Cwd = tr.Dir
 		}

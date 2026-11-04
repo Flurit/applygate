@@ -3,6 +3,7 @@ package shell
 import (
 	"bytes"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -60,6 +61,9 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 	}
 	if !args[0].Resolved {
 		record()
+		// The program may be cd, pushd, source or eval: after it the
+		// shell's directory is not known.
+		st.dir = ""
 		return
 	}
 	if p, ok := st.hashed[args[0].Text]; ok && !strings.Contains(args[0].Text, "/") {
@@ -283,6 +287,13 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			case !rest[i].Resolved:
 				a.problem(st, via, "hash "+joinWords(rest), "hash with an argument that cannot be resolved statically")
 				return
+			case strings.Contains(t, "=") && !strings.HasPrefix(t, "-"):
+				// zsh: hash NAME=PATH makes NAME run PATH.
+				n, p, _ := strings.Cut(t, "=")
+				if st.hashed == nil {
+					st.hashed = map[string]Word{}
+				}
+				st.hashed[n] = Word{Text: p, Resolved: true, Prefix: p}
 			}
 		}
 		return
@@ -356,6 +367,7 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 	case "eval":
 		if !allResolved(rest) {
 			a.problem(st, via, joinWords(args), "eval of text that cannot be resolved statically")
+			st.dir = "" // the text may cd
 			return
 		}
 		a.source(joinWords(rest), st, append(via, "eval"), depth+1)
@@ -366,11 +378,13 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		}
 		if !rest[0].Resolved {
 			a.problem(st, via, joinWords(args), "source of a file whose name cannot be resolved")
+			st.dir = ""
 			return
 		}
 		b, err := a.read(st, rest[0].Text)
 		if err != nil {
 			a.problem(st, via, joinWords(args), "source of a file that cannot be read: "+err.Error())
+			st.dir = ""
 			return
 		}
 		a.source(string(b), st, append(via, "source "+rest[0].Text), depth+1)
@@ -395,7 +409,12 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 				a.source(script.Text, cmdSt.childState(), append(via, bn), depth+1)
 				return
 			}
-			a.call(cmd, redirs, cmdSt, st, append(via, bn), depth+1, in)
+			es := cmdSt
+			if n := len(rest) - len(cmd); n >= 0 && movesDir(rest[:n]) {
+				es = cmdSt.clone()
+				es.dir = "" // mise -C DIR, mise exec --cd DIR
+			}
+			a.call(cmd, redirs, es, st, append(via, bn), depth+1, in)
 			return
 		}
 	case "aws-vault", "aws-okta", "gds", "saml2aws", "aws-sso", "doppler", "op", "chamber", "infisical", "dotenvx", "envchain", "aws-runas":
@@ -482,7 +501,10 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			a.call(cmd, redirs, es, st, append(via, bn+" run"), depth+1, in)
 			return
 		}
+		// Options before "run" (poetry -C DIR run ...): the backstop still
+		// finds a standalone engine, in a directory it no longer knows.
 		record()
+		a.backstop(bn, rest, redirs, cmdSt, st, via, depth)
 		return
 	case "git":
 		a.git(rest, cmdSt, st, via, depth)
@@ -608,7 +630,7 @@ func (a *analyzer) env(rest []Word, redirs []Redir, cmdSt, st *state, via []stri
 				delete(es.vars, rest[i+1].Text)
 			}
 			i += 2
-		case t == "-C" || t == "--chdir":
+		case t == "-C" || isAbbrev(t, "--chdir", 3):
 			if i+1 < len(rest) {
 				if rest[i+1].Resolved {
 					es.dir = a.abs(es, rest[i+1].Text)
@@ -617,8 +639,8 @@ func (a *analyzer) env(rest []Word, redirs []Redir, cmdSt, st *state, via []stri
 				}
 			}
 			i += 2
-		case strings.HasPrefix(t, "--chdir="):
-			es.dir = a.abs(es, strings.TrimPrefix(t, "--chdir="))
+		case strings.HasPrefix(t, "--c") && strings.Contains(t, "=") && isAbbrev(t[:strings.Index(t, "=")], "--chdir", 3):
+			es.dir = a.abs(es, t[strings.Index(t, "=")+1:])
 			i++
 		case t == "-S" || t == "--split-string" || strings.HasPrefix(t, "-S") || strings.HasPrefix(t, "--split-string="):
 			sw, next := Word{}, i+1
@@ -1307,13 +1329,20 @@ func (a *analyzer) parallel(rest []Word, redirs []Redir, cmdSt, st *state, via [
 		}
 	}
 	child := st.childState()
+	cs := cmdSt
+	if movesDir(rest[:len(rest)-len(r)]) {
+		// --wd DIR: the jobs run there.
+		child.dir = ""
+		cs = cmdSt.clone()
+		cs.dir = ""
+	}
 	label := append(via, "parallel")
 	if !known || len(items) > 32 || !allResolved(tmpl) {
 		if len(tmpl) == 0 {
 			a.problem(st, via, "parallel "+joinWords(rest), "parallel runs command lines that cannot be resolved statically")
 			return
 		}
-		a.call(append(placeholders(tmpl, "{"), Word{Resolved: false}), redirs, cmdSt, st, label, depth+1, stdin{})
+		a.call(append(placeholders(tmpl, "{"), Word{Resolved: false}), redirs, cs, st, label, depth+1, stdin{})
 		return
 	}
 	line := joinWords(tmpl)
@@ -1418,7 +1447,13 @@ func (a *analyzer) findExec(rest []Word, redirs []Redir, cmdSt, st *state, via [
 				sub[k] = Word{Resolved: false}
 			}
 		}
-		a.call(sub, nil, cmdSt, st, append(via, "find "+t), depth+1, stdin{})
+		es := cmdSt
+		if t == "-execdir" || t == "-okdir" {
+			// The command runs in the directory of each file found.
+			es = cmdSt.clone()
+			es.dir = ""
+		}
+		a.call(sub, nil, es, st, append(via, "find "+t), depth+1, stdin{})
 		i = j
 	}
 }
@@ -1447,9 +1482,84 @@ func (a *analyzer) container(args []Word, redirs []Redir, cmdSt, st *state, via 
 		if len(r) > 0 && (base(r[0].Text) == "terraform" || base(r[0].Text) == "tofu" || base(r[0].Text) == "terragrunt") {
 			r = r[1:]
 		}
-		a.call(append(lits(engine), r...), redirs, cmdSt, st, append(via, args[0].Text+" image "+w.Text), depth+1, stdin{})
+		cs := cmdSt.clone()
+		cs.dir = a.containerDir(args[1:i], cmdSt)
+		a.call(append(lits(engine), r...), redirs, cs, st, append(via, args[0].Text+" image "+w.Text), depth+1, stdin{})
 		return
 	}
+}
+
+// containerDir is the host directory a container's command runs in: the
+// mount source under its working directory (-v SRC:DST -w DST/sub), or ""
+// (unknown) when that cannot be followed. Without both a mount and a
+// working directory the command runs in the image's own directory, which is
+// not the host's either.
+func (a *analyzer) containerDir(opts []Word, cmdSt *state) string {
+	type mount struct{ src, dst string }
+	var mounts []mount
+	wd, ok := "", true
+	val := func(i int, name string) (string, int) {
+		t := opts[i].Text
+		if v, found := strings.CutPrefix(t, name+"="); found {
+			ok = ok && opts[i].Resolved
+			return v, i
+		}
+		if i+1 < len(opts) {
+			ok = ok && opts[i+1].Resolved
+			return opts[i+1].Text, i + 1
+		}
+		return "", i
+	}
+	for i := 0; i < len(opts); i++ {
+		t := opts[i].Text
+		f, _, _ := strings.Cut(t, "=")
+		switch f {
+		case "-v", "--volume":
+			v, j := val(i, f)
+			i = j
+			src, dst, found := strings.Cut(v, ":")
+			if found {
+				dst, _, _ = strings.Cut(dst, ":")
+				mounts = append(mounts, mount{src, dst})
+			}
+		case "--mount":
+			v, j := val(i, f)
+			i = j
+			var m mount
+			for _, kv := range strings.Split(v, ",") {
+				k, x, _ := strings.Cut(kv, "=")
+				switch k {
+				case "src", "source":
+					m.src = x
+				case "dst", "destination", "target":
+					m.dst = x
+				}
+			}
+			mounts = append(mounts, m)
+		case "-w", "--workdir":
+			wd, i = val(i, f)
+		}
+	}
+	if !ok || wd == "" || !path.IsAbs(wd) {
+		return ""
+	}
+	best := -1
+	for k, m := range mounts {
+		if m.src == "" || m.dst == "" {
+			continue
+		}
+		if wd == m.dst || strings.HasPrefix(wd, strings.TrimSuffix(m.dst, "/")+"/") {
+			if best < 0 || len(m.dst) > len(mounts[best].dst) {
+				best = k
+			}
+		}
+	}
+	if best < 0 {
+		return ""
+	}
+	m := mounts[best]
+	rel := strings.TrimPrefix(strings.TrimPrefix(wd, m.dst), "/")
+	return a.abs(cmdSt, filepath.Join(m.src, rel))
 }
 
 // skipFlags drops leading options; valued names consume the next word.

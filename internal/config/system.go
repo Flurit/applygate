@@ -119,6 +119,38 @@ func CheckSystemFile(p string) error {
 	return CheckSystemDirs(filepath.Dir(p))
 }
 
+// SystemProgram checks a program and its arguments for a managed install:
+// the program must be an absolute path, and it and every argument that names
+// a file (a script) must be root's alone after symlinks, in directories that
+// are root's alone. It returns argv with the program's real path.
+func SystemProgram(argv []string) ([]string, error) {
+	if len(argv) == 0 {
+		return nil, errors.New("no program")
+	}
+	if !filepath.IsAbs(argv[0]) {
+		return nil, fmt.Errorf("under a managed install the judge program must be named by its full path, not %q, so the agent's PATH cannot choose it", argv[0])
+	}
+	out := append([]string(nil), argv...)
+	for i, a := range argv {
+		if i > 0 {
+			if _, err := os.Stat(a); err != nil {
+				continue // not a file: an option or a value
+			}
+		}
+		real, err := filepath.EvalSymlinks(a)
+		if err != nil {
+			return nil, err
+		}
+		if err := CheckSystemFile(real); err != nil {
+			return nil, fmt.Errorf("under a managed install the judge's %s must be root's alone: %v", a, err)
+		}
+		if i == 0 {
+			out[0] = real
+		}
+	}
+	return out, nil
+}
+
 // CheckSystemDirs reports why directory d, or one above it, cannot be relied
 // on: each must be root's alone, since whoever can write a directory can
 // rename what is in it aside and put another in its place.

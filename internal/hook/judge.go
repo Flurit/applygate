@@ -36,7 +36,13 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 	if j == nil {
 		var err error
 		if j, err = judge.New(cfg, opt.Env); err != nil {
-			return d, &decisionlog.Judge{Error: "model judge not asked: " + err.Error()}
+			if config.Managed() {
+				// The system config's judge cannot run (a program the agent's
+				// user owns, say): the call is unjudgeable, not unjudged.
+				j = brokenJudge{err}
+			} else {
+				return d, &decisionlog.Judge{Error: "model judge not asked: " + err.Error()}
+			}
 		}
 	}
 	now := time.Now
@@ -47,7 +53,9 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 	if opt.JudgeCache == "" {
 		cache = judge.DefaultCache(config.JudgeCachePath())
 	}
-	if opt.JudgeCache == "-" {
+	if opt.JudgeCache == "-" || config.Managed() {
+		// Under a managed install the cache is in the agent's user's state
+		// directory, so an entry there could answer for the judge.
 		cache.Path = ""
 	}
 	key := judge.Key(judge.Identity(j), in)
@@ -66,6 +74,12 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 		ctx, cancel := context.WithTimeout(ctx, cfg.JudgeTimeout())
 		r = j.Judge(ctx, in)
 		cancel()
+		if r.Err != "" && config.Managed() {
+			// The agent's user decides whether a judge answers (a local
+			// server, a proxy, a slow call), so under a managed install a
+			// judge that fails is one the call could not get past.
+			r.Unjudgeable = true
+		}
 		if r.Err == "" {
 			_ = cache.Put(key, r, now())
 		}
@@ -143,4 +157,13 @@ func judgeInput(ev policy.Event, cfg *config.Config, redact bool) judge.Input {
 		in.Env = "unknown"
 	}
 	return in
+}
+
+// brokenJudge stands for a judge that cannot be started.
+type brokenJudge struct{ err error }
+
+func (b brokenJudge) Name() string { return "judge" }
+
+func (b brokenJudge) Judge(context.Context, judge.Input) judge.Result {
+	return judge.Result{Model: "judge", Err: "the judge cannot run: " + b.err.Error(), Unjudgeable: true}
 }
