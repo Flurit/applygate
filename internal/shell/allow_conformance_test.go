@@ -80,8 +80,9 @@ func conformance(t *testing.T, name string, opt string, val bool) (problems []st
 	root, _ = filepath.EvalSymlinks(root)
 	work := filepath.Join(root, "work")
 	by := filepath.Join(root, "bystander")
+	tmp := filepath.Join(root, "tmp") // programs make their temporary files here (yq does, for every run)
 	bin := filepath.Join(root, "canary")
-	for _, d := range []string{work, by, bin, filepath.Join(work, "d")} {
+	for _, d := range []string{work, by, tmp, bin, filepath.Join(work, "d")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -140,7 +141,7 @@ func conformance(t *testing.T, name string, opt string, val bool) (problems []st
 	cmd.Dir = work
 	// The canary directory comes first: a program that starts sh, a pager or a
 	// compressor finds the canary.
-	cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + root, "PAGER=canary-exec", "EDITOR=canary-exec", "TMPDIR=" + by, "LANG=C"}
+	cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + root, "PAGER=canary-exec", "EDITOR=canary-exec", "TMPDIR=" + tmp, "LANG=C"}
 	cmd.Stdin = strings.NewReader("")
 	before := snapshot(t, root)
 	_ = cmd.Run()
