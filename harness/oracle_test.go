@@ -300,6 +300,10 @@ func TestEffectsOracle(t *testing.T) {
 				seen = true
 			}
 		}
+		if !seen && b.shells["zsh"] == "" && (a.name == "state brace" || a.name == "state zsh clobber") {
+			t.Logf("no zsh here: %q acts only under zsh, so it is not checked", a.cmd)
+			continue
+		}
 		if !seen {
 			t.Errorf("the oracle does not see the effect of %q (%s) under any shell here: the checks below prove nothing for it", a.cmd, a.name)
 		}
