@@ -17,16 +17,6 @@ type shape func(args []Word, inv Invocation) string
 var shapes = map[string]shape{}
 
 func init() {
-	for _, n := range []string{
-		"cd", "pwd", "echo", "true", "false", "test", "[", "exit", "unset", "sleep", "date", "which", "type",
-		"ls", "cat", "head", "tail", "wc", "grep", "egrep", "uniq", "cut", "tr", "tee", "diff", "cmp", "tree", "stat",
-		"file", "du", "df", "basename", "dirname", "realpath", "readlink", "mkdir", "touch", "cp", "mv", "rm", "ln",
-		"chmod", "find", "jq", "column", "xxd", "od", "base64", "sha256sum", "shasum", "md5sum", "gzip", "gunzip",
-		"unzip", "nl", "fold", "comm", "join", "paste", "seq", "id", "whoami", "uname", "hostname", "printenv",
-		"gofmt", "terraform", "tofu", "tfsec", "shellcheck", "gsutil", "applygate", "env",
-	} {
-		shapes[n] = nil
-	}
 	shapes["printf"] = denyOpts("-v")
 	// yq 4.47 and later has a system operator that runs a command, enabled by
 	// this option.
@@ -97,7 +87,6 @@ func init() {
 		}
 		return "terragrunt evaluates terragrunt.hcl, whose run_cmd and hooks run programs"
 	}
-	shapes["sort"] = denyOpts("--compress-program")
 	shapes["rg"] = rgShape
 	shapes["sed"] = sedShape
 	shapes["tar"] = tarShape
