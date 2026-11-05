@@ -514,10 +514,18 @@ func GitSafeKey(k, v string, network bool) bool {
 		switch name {
 		case "uploadpack", "receivepack", "vcs":
 			return false
+		case "promisor", "partialclonefilter":
+			// A promisor remote fetches the objects a read finds missing, so a
+			// local command reaches the network and the remote's helper.
+			return false
 		case "url", "pushurl":
 			return networkURL(v)
 		}
 		return true
+	case "extensions":
+		// partialclone names the promisor remote; the other extensions
+		// describe the repository format.
+		return name != "partialclone"
 	case "url":
 		// url.<base>.insteadOf rewrites URLs to base.
 		return (name == "insteadof" || name == "pushinsteadof") && networkURL(sub)

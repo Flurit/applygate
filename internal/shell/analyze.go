@@ -41,6 +41,13 @@ type Invocation struct {
 	// a file it is redirected from, or what a known pipeline gives it) when
 	// the analysis knows it.
 	Stdin string
+	// Followed is set on an invocation the analysis took apart: it started
+	// other invocations of its own (make with its recipes, docker run with
+	// the image's command, xargs, bash -c with literal text), which are
+	// judged where they run. A program whose command line was only searched
+	// for a standalone terraform (the backstop for unrecognized programs) is
+	// not followed.
+	Followed bool
 }
 
 // Name returns the resolved program name ("" when unresolved).

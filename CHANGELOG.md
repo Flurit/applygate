@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Red-team round 10 fixes** (`review/v0.6.0/2026-11-05-red-team-round-10.md`): fixed by family; details and costs in `docs/limits.md` ("Costs of the round-10 fixes").
+  - **"Followed" is decided per invocation,** not by program name: an unknown program with a standalone `terraform` word, or a second use of a name followed once, is not followed; a docker image is the first word after the options, not any word that mentions terraform (C2, C6).
+  - **Shell semantics the analysis did not model are unseen code:** a bare shell reading an untracked stdin (`exec <<< TEXT; bash`, `bash <> FILE`, `>(bash)`), `${!x}` and `${x@P}`, functions through `command`/`env`/`exec`/wrappers, `unset -f`, same-line aliases, shadowed echo/pwd/printf, `xargs -0`/`-d`, `make -j TARGET`, `command printf -v`, an unresolved `-chdir=$x` (C1, C3, C4, C5, C7, C8).
+  - **Strict-shape options:** single-dash multi-letter options glued (`zip -TTprog`), the double-dash spelling for Go-flag programs (`go list --toolexec`, `go env --w`, `actionlint --shellcheck`), `rg --hostname-bin` (C10 to C12).
+  - **State:** `plan -out`/`-generate-config-out` over a state file, `aws s3`/`s3api` on a `.tfstate` object, and `rm`, `mv`, `cp`, `tee`, `dd`… with an unresolved name ask next to a protected environment (C9, R1-8, R3-6).
+  - **Judge, MCP, scans:** any recognized action no longer hides the rest of a command from the judge; an unclosed private-key header makes a call unjudgeable; Cursor's `contents`; unknown tools with split program and arguments; `data "archive_file"` output paths; git promisor keys; lock-file comparison timeout; log redaction of every action field; repository `wrappers` limited to unknown programs (R4-4, R4-5, R4-6, R5-6, R1-7, R2-2, R5-9, R5-10, R3-7).
+  - The attack pack gains 44 reproductions and controls (742 in all); `Y7H-C3` (a loop that removes `*.tmp`) asks now. Cost on the agent trial: no verdict changes in prod, staging or dev.
+  - Not done: strict shapes by allow list, R2-1 (unverified), and the mediums listed in `docs/limits.md`.
+
 - **The cross-directory rule is enabled.** A shell command that is not plain and can run code the analysis does not follow (python3, perl, awk, `sed …/e`, `tar --checkpoint-action`, a nested agent, an unresolved name or `PATH`, `init` followed by `plan`, terragrunt `run_cmd`) is also judged at the most protected tier under the repository root, so from a disposable or standard directory next to a protected one it asks. Syntax alone, and wrappers the analysis takes apart (`make`, `xargs`, `docker run`, an alias or function), do not. Cost on the agent trial: prod unchanged, staging and dev 40 more asks of 162 (`docs/limits.md`). The attack pack gains 14 scenarios (698 in all); eight benign controls ask now and two of `harness/pack`'s benign scenarios (B34, B46) expect an ask.
 
 - **Red-team round 9 fixes** (`review/v0.6.0/2026-11-04-red-team-round-9.md`): the 17 criticals and the highs, by rule where a rule covers the family (costs in `docs/limits.md`).

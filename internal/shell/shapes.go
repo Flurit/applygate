@@ -284,6 +284,16 @@ func hasOpt(args []Word, o string) bool {
 		switch {
 		case t == o, len(o) > 2 && strings.HasPrefix(t, o+"="):
 			return true
+		case len(o) > 2 && o[0] == '-' && o[1] != '-' && strings.HasPrefix(t, o):
+			// A single-dash option with several letters (zip -TT, go -toolexec,
+			// actionlint -shellcheck) takes its value glued to it.
+			return true
+		case o[0] == '-' && o[1] != '-' && len(o) > 2 && (t == "-"+o || strings.HasPrefix(t, "-"+o+"=")):
+			// Programs that parse options with Go's flag package (go, actionlint)
+			// take --toolexec as -toolexec.
+			return true
+		case len(o) == 2 && o[0] == '-' && o[1] != '-' && (t == "-"+o || strings.HasPrefix(t, "-"+o+"=")):
+			return true // go env --w
 		case len(o) == 2 && o[0] == '-' && strings.HasPrefix(t, "-") && !strings.HasPrefix(t, "--") && strings.ContainsRune(t[1:], rune(o[1])):
 			return true
 		case strings.HasPrefix(o, "--") && strings.HasPrefix(t, "--"):
@@ -369,7 +379,7 @@ func denySub(subs ...string) shape {
 
 // rgShape: --pre runs a preprocessor, and -z runs decompressors.
 func rgShape(args []Word, inv Invocation) string {
-	if why := denyOpts("--pre", "--pre-glob", "--search-zip")(args, inv); why != "" {
+	if why := denyOpts("--pre", "--pre-glob", "--search-zip", "--hostname-bin")(args, inv); why != "" {
 		return why
 	}
 	if hasOpt(args, "-z") {

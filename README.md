@@ -41,7 +41,7 @@ On the same 17 dangerous Terraform scenarios:
 | A competent hand-written Rego/regex policy | 14 / 17 |
 | **applygate** (protected tier) | **17 / 17** |
 
-The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 698 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
+The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 742 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
 
 applygate is a check, not a sandbox. Pair it with plan-only credentials for agents and writes behind MFA, which `applygate doctor --creds` checks ([docs/credentials.md](docs/credentials.md)); see [the threat model](docs/threat-model.md). Its self-protection, which stops an agent from turning it off, is a guarantee only under a managed install (`sudo applygate install --managed`, [docs/managed.md](docs/managed.md)); without one it is best-effort.
 
@@ -56,8 +56,10 @@ applygate is a check, not a sandbox. Pair it with plan-only credentials for agen
 | State surgery | state rm/mv/push, force-unlock, taint, `-migrate-state` | block | ask | ask |
 | Destructive cloud CLI | `aws … delete-*`, `s3 rb`, `kubectl delete`, `helm uninstall`, `az`/`gcloud … delete` | block | ask | ask |
 | Disabling the guard | skip-permission flags, edits to hooks, applygate's config, log, approvals, judge cache or binary, a renamed copy of applygate | block | block | block |
-| Unresolvable | `eval "$(curl …)"`, `curl … \| bash` | ask | ask | allow |
-| Not a plain command (strict shapes) | loops, functions, `$(…)`, `bash -c`, `python3 -c`, `export`, `npx`, `man`, a program option that runs a program (`git --upload-pack`, `tar --checkpoint-action`, `sed 's/x/y/e'`), git in a repository with hooks | ask | allow | allow |
+| Unresolvable | `eval "$(curl …)"`, `curl … \| bash` | ask | ask | ask next to a protected environment* |
+| Not a plain command (strict shapes) | loops, functions, `$(…)`, `bash -c`, `python3 -c`, `export`, `npx`, `man`, a program option that runs a program (`git --upload-pack`, `tar --checkpoint-action`, `sed 's/x/y/e'`), git in a repository with hooks | ask | allow | allow* |
+
+\* In a standard or disposable directory a command that is not plain asks when it can also run code the analysis does not follow (python3, perl, an unresolved program, an unknown program, a shell reading input it cannot see) and a protected environment is under the repository root ([limits](docs/limits.md)).
 
 A command whose directory cannot be followed (a `cd` to a computed path), or that could not be analyzed to the end, is judged at the most protected tier under the repository.
 

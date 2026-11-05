@@ -245,38 +245,27 @@ func classifyUnknown(ev *policy.Event, tool string, in map[string]json.RawMessag
 		return
 	}
 	if cmd := commandOf(in); strings.TrimSpace(cmd) != "" {
+		// A program and its arguments in separate fields ({"command":
+		// "terraform", "args": ["destroy"]}) are one command.
+		for _, k := range []string{"args", "arguments", "argv", "params", "parameters"} {
+			if extra := commandField(in[k]); extra != "" {
+				cmd += " " + extra
+			}
+		}
 		ev.Kind, ev.Command = policy.KindShell, asShell(tool, cmd)
 		return
 	}
 	raw, _ := json.Marshal(in)
-	var texts []string
-	var walk func(v any, depth int)
-	walk = func(v any, depth int) {
-		if depth > 8 || len(texts) > 64 {
+	// Every string of the call, in the order the text has them: a program
+	// and its arguments may sit in fields of any name ({"executable":
+	// "terraform", "arguments": ["destroy"]}).
+	var leaves []string
+	orderedLeaves(raw, &leaves, 0)
+	for _, l := range leaves {
+		if infraWord.MatchString(l) {
+			ev.Kind, ev.Command = policy.KindShell, asShell(tool, strings.Join(leaves, " "))
 			return
 		}
-		switch x := v.(type) {
-		case string:
-			if len(x) <= 64<<10 && infraWord.MatchString(x) {
-				texts = append(texts, x)
-			}
-		case []any:
-			for _, e := range x {
-				walk(e, depth+1)
-			}
-		case map[string]any:
-			for _, e := range x {
-				walk(e, depth+1)
-			}
-		}
-	}
-	var tree any
-	if json.Unmarshal(raw, &tree) == nil {
-		walk(tree, 0)
-	}
-	if len(texts) > 0 {
-		ev.Kind, ev.Command = policy.KindShell, asShell(tool, strings.Join(texts, "\n"))
-		return
 	}
 	ev.Kind, ev.Command, ev.Args = policy.KindMCP, mcpArguments(raw), raw
 }
@@ -670,4 +659,45 @@ func (Cline) Render(d policy.Decision) Output {
 
 func (Cline) Fail(block bool, msg string) Output {
 	return Output{Stdout: clineOut(block, msg), Stderr: msg + "\n"}
+}
+
+// orderedLeaves appends the strings in a JSON value in document order (object
+// keys excluded), up to 64 strings of at most 64 KiB each.
+func orderedLeaves(raw json.RawMessage, out *[]string, depth int) {
+	if depth > 8 || len(*out) >= 64 {
+		return
+	}
+	raw = json.RawMessage(strings.TrimSpace(string(raw)))
+	if len(raw) == 0 {
+		return
+	}
+	switch raw[0] {
+	case '"':
+		var s string
+		if json.Unmarshal(raw, &s) == nil && len(s) <= 64<<10 {
+			*out = append(*out, s)
+		}
+	case '[':
+		var list []json.RawMessage
+		if json.Unmarshal(raw, &list) == nil {
+			for _, e := range list {
+				orderedLeaves(e, out, depth+1)
+			}
+		}
+	case '{':
+		dec := json.NewDecoder(strings.NewReader(string(raw)))
+		if _, err := dec.Token(); err != nil {
+			return
+		}
+		for dec.More() {
+			if _, err := dec.Token(); err != nil { // the key
+				return
+			}
+			var v json.RawMessage
+			if dec.Decode(&v) != nil {
+				return
+			}
+			orderedLeaves(v, out, depth+1)
+		}
+	}
 }

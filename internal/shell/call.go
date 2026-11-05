@@ -20,6 +20,11 @@ var shells = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": true
 // base is the program name a command word runs, as lookups compare it.
 func base(name string) string { return ProgName(name) }
 
+// bypassesFunctions are the wrappers that look a program up on PATH: a shell
+// function or alias of the same name is not what they run.
+var bypassesFunctions = toSet("command", "exec", "builtin", "nohup", "chronic", "unbuffer", "setsid", "caffeinate", "env", "env -s",
+	"timeout", "nice", "ionice", "stdbuf", "taskset", "sudo", "doas", "xargs", "find", "parallel", "chroot", "terragrunt")
+
 // shellBuiltins act only inside the shell; their names are case-sensitive.
 var shellBuiltins = toSet("cd", "chdir", "pushd", "popd", "dirs", "alias", "unalias", "eval", "source", ".", "trap", "read", "mapfile",
 	"readarray", "getopts", "shift", "set", "declare", "typeset", "local", "export", "readonly", "nameref", "builtin")
@@ -41,8 +46,32 @@ func lits(ss ...string) []Word {
 }
 
 // call handles one simple command. cmdSt carries prefix assignments; st is
-// the enclosing shell state (mutated by cd, alias, and similar builtins).
+// the enclosing shell state (mutated by cd, alias, and similar builtins). It
+// marks the invocation of the command as followed when the command started
+// others of its own that the analysis took apart.
 func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []string, depth int, in stdin) {
+	n0 := len(a.res.Invocations)
+	a.call0(args, redirs, cmdSt, st, via, depth, in)
+	if len(args) == 0 || n0 >= len(a.res.Invocations) {
+		return
+	}
+	own, followed := -1, false
+	for j := n0; j < len(a.res.Invocations); j++ {
+		inv := &a.res.Invocations[j]
+		if len(inv.Via) > len(via) {
+			if l := inv.Via[len(via)]; (!strings.Contains(l, "(unrecognized wrapper)") || strings.Contains(l, "(runner)")) && !strings.HasPrefix(l, "alias ") && !strings.HasPrefix(l, "function ") {
+				followed = true
+			}
+		} else if own < 0 && len(inv.Args) == len(args) && len(inv.Args) > 0 && inv.Args[0].Text == args[0].Text && len(inv.Via) == len(via) {
+			own = j
+		}
+	}
+	if own >= 0 && followed {
+		a.res.Invocations[own].Followed = true
+	}
+}
+
+func (a *analyzer) call0(args []Word, redirs []Redir, cmdSt, st *state, via []string, depth int, in stdin) {
 	if len(redirs) > 0 {
 		// Redirections are applied by the shell before the command runs, so a
 		// command that reduces to no program the analyzer records (env with
@@ -102,9 +131,25 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 	// name, so expand whenever the name matches.
 	if rep, ok := st.aliases[name]; ok && !strings.Contains(name, "/") {
 		a.alias(name, rep, rest, redirs, cmdSt, st, via, depth, in)
+		// A bash alias takes effect for the next line of input, not for the
+		// rest of the line that defines it, and the analysis does not know
+		// which this is: the program of that name is followed as well.
+		if hasShape(bn) || tfEngines[bn] {
+			delete(st.aliases, name)
+			a.call(args, redirs, cmdSt, st, via, depth, in)
+			if _, redefined := st.aliases[name]; !redefined {
+				st.aliases[name] = rep
+			}
+		}
 		return
 	}
 	if body, ok := st.funcs[name]; ok {
+		if len(via) > 0 && bypassesFunctions[viaProgram(via[len(via)-1])] {
+			// command, env, exec, xargs and the wrappers that start a program
+			// find the program of that name, never the function.
+			a.unbounded(st, via, joinWords(args), viaProgram(via[len(via)-1])+" runs the program "+name+", not the function of that name, and the analysis does not follow both")
+			return
+		}
 		a.function(name, body, rest, st, via, depth, in)
 		return
 	}
@@ -130,6 +175,9 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		}
 	}
 
+	if bn == "unset" && name == bn {
+		a.unset(rest, st, via)
+	}
 	a.noteWrites(bn, rest, cmdSt)
 	a.callbackBuiltin(bn, rest, st, via, depth)
 	if subscriptBuiltins[bn] {
@@ -439,9 +487,14 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		return
 	case "exec", "command", "builtin", "nohup", "time", "chronic", "unbuffer", "setsid", "caffeinate", "noglob", "nocorrect", "-":
 		if bn == "command" || bn == "type" {
+			// command's own options come before the command: -v and -V look a
+			// name up, and a -v after the command is that command's option.
 			for _, w := range rest {
 				if w.Text == "-v" || w.Text == "-V" {
 					return // lookup only
+				}
+				if !strings.HasPrefix(w.Text, "-") || w.Text == "--" {
+					break
 				}
 			}
 		}
@@ -885,11 +938,14 @@ var envLong = []string{"ignore-environment", "null", "unset", "chdir", "split-st
 // shell handles sh/bash/zsh invocations: -c strings, script files and stdin.
 func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string, depth int, in stdin) {
 	child := cmdSt.childState()
-	var hasC bool
+	var hasC, info bool
 	var rcfiles []Word
 	i := 0
 	for i < len(rest) {
 		t := rest[i].Text
+		if t == "--version" || t == "--help" || t == "-h" {
+			info = true
+		}
 		if (t == "--rcfile" || t == "--init-file") && i+1 < len(rest) {
 			rcfiles = append(rcfiles, rest[i+1])
 			i += 2
@@ -965,6 +1021,13 @@ func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string,
 			return
 		}
 		a.source(in.text, child, append(via, in.desc+" | "+bn), depth+1)
+	case !info:
+		// A shell with no command string and no script reads commands from its
+		// standard input: a descriptor opened earlier (exec <<< TEXT, exec 3<
+		// FILE and <&3), a file opened for reading and writing (<>), or the
+		// terminal. The analysis follows a here-document, a here-string, a
+		// file and a pipe on this command only.
+		a.unbounded(st, via, bn, bn+" reads its commands from its standard input, which comes from a source the analysis does not follow")
 	}
 }
 
@@ -1401,7 +1464,7 @@ func pwshArgs(args []Word) (codes []Word, script *Word, rest []Word, stdinCode b
 func (a *analyzer) xargs(rest []Word, redirs []Redir, cmdSt, st *state, via []string, depth int, in stdin) {
 	valued := toSet("-I", "-J", "-n", "-P", "-d", "-a", "-E", "-L", "-s", "-R", "-S", "--max-args", "--max-procs",
 		"--delimiter", "--arg-file", "--max-lines", "--max-chars", "--eof")
-	repl, fromFile := "", false
+	repl, fromFile, splits := "", false, false
 	i := 0
 	for i < len(rest) {
 		t := rest[i].Text
@@ -1413,6 +1476,18 @@ func (a *analyzer) xargs(rest []Word, redirs []Redir, cmdSt, st *state, via []st
 			break
 		}
 		name, val, eq := strings.Cut(t, "=")
+		// Another delimiter (-0, -d), or lines taken as units (-L): the
+		// items are not the words of the input, which only the default
+		// splitting gives.
+		if strings.HasPrefix(t, "--") {
+			for _, l := range []string{"--null", "--delimiter", "--max-lines"} {
+				if len(name) >= 3 && strings.HasPrefix(l, name) {
+					splits = true
+				}
+			}
+		} else if strings.ContainsAny(name[1:], "0dL") && !strings.HasPrefix(t, "-I") && !strings.HasPrefix(t, "-J") && !strings.HasPrefix(t, "-i") && !strings.HasPrefix(t, "-a") {
+			splits = true
+		}
 		switch {
 		case name == "-I" || name == "-J":
 			if i+1 < len(rest) {
@@ -1440,7 +1515,7 @@ func (a *analyzer) xargs(rest []Word, redirs []Redir, cmdSt, st *state, via []st
 		r = lits("echo")
 	}
 	label := append(via, "xargs")
-	input, known := in.text, in.present && in.known && !fromFile
+	input, known := in.text, in.present && in.known && !fromFile && !splits
 	if repl != "" {
 		var lines []string
 		for _, l := range strings.Split(strings.TrimRight(input, "\n"), "\n") {
@@ -1671,9 +1746,32 @@ func (a *analyzer) findExec(rest []Word, redirs []Redir, cmdSt, st *state, via [
 // container unwraps "docker run ... <image> args" when the image is a
 // Terraform or OpenTofu image, so the arguments are classified as such.
 func (a *analyzer) container(args []Word, redirs []Redir, cmdSt, st *state, via []string, depth int) {
+	// The subcommand: the first word that is not an option, and "container"
+	// or "compose" are followed by theirs. Only run, create and exec start a
+	// command in a container; the image of run and create is the first word
+	// after the options that is not an option's value, and exec has a
+	// container name instead. A later word that mentions terraform (the text
+	// of sh -c, a path in the container) is not an image.
+	sub, start := "", 0
+	for i := 1; i < len(args); i++ {
+		if strings.HasPrefix(args[i].Text, "-") {
+			continue
+		}
+		if sub == "" && (args[i].Text == "container" || args[i].Text == "compose") {
+			sub = args[i].Text
+			continue
+		}
+		sub, start = args[i].Text, i+1
+		break
+	}
+	switch sub {
+	case "run", "create", "exec":
+	default:
+		return
+	}
 	skip := false
 	for i, w := range args {
-		if i < 2 {
+		if i < start {
 			continue
 		}
 		if skip {
@@ -1689,6 +1787,16 @@ func (a *analyzer) container(args []Word, redirs []Redir, cmdSt, st *state, via 
 		if strings.Contains(w.Text, "=") {
 			continue
 		}
+		if sub == "exec" {
+			// The first word is the container; what follows runs inside it,
+			// where the host's directory and mounts do not map back.
+			if r := args[i+1:]; len(r) > 0 && tfEngines[base(r[0].Text)] {
+				cs := cmdSt.clone()
+				cs.dir = ""
+				a.call(r, redirs, cs, st, append(via, args[0].Text+" exec"), depth+1, stdin{})
+			}
+			return
+		}
 		img := strings.ToLower(w.Text)
 		engine := ""
 		switch {
@@ -1700,7 +1808,7 @@ func (a *analyzer) container(args []Word, redirs []Redir, cmdSt, st *state, via 
 			engine = "terraform"
 		}
 		if engine == "" || strings.HasPrefix(img, "-") {
-			continue
+			return
 		}
 		r := args[i+1:]
 		if len(r) > 0 && (base(r[0].Text) == "terraform" || base(r[0].Text) == "tofu" || base(r[0].Text) == "terragrunt") {
@@ -2605,3 +2713,36 @@ var containerValued = toSet("-e", "--env", "--env-file", "-v", "--volume", "--mo
 	"-h", "--hostname", "--add-host", "--dns", "--cap-add", "--cap-drop", "--device", "-m", "--memory", "--cpus",
 	"--pull", "--restart", "--log-driver", "--log-opt", "--tmpfs", "--ulimit", "--security-opt", "--volumes-from",
 	"--secret", "--ssh", "--userns", "--pid", "--ipc", "--uts", "--cgroupns", "--runtime", "-a", "--attach", "--cidfile")
+
+// unset forgets what unset removes: with -f a function, and without it a
+// variable or, when there is none, a function. A name that is a function and
+// may be a variable too is not followed.
+func (a *analyzer) unset(rest []Word, st *state, via []string) {
+	fn := false
+	for _, w := range rest {
+		t := w.Text
+		if strings.HasPrefix(t, "-") && len(t) > 1 {
+			if strings.Contains(t, "f") {
+				fn = true
+			}
+			if strings.Contains(t, "v") {
+				fn = false
+			}
+			continue
+		}
+		if !w.Resolved {
+			if len(st.funcs) > 0 || len(st.aliases) > 0 {
+				a.unbounded(st, via, "unset "+t, "unset of a name that cannot be resolved while functions or aliases are defined")
+			}
+			continue
+		}
+		if _, isFn := st.funcs[t]; isFn {
+			if fn {
+				delete(st.funcs, t)
+			} else {
+				a.unbounded(st, via, "unset "+t, "unset of "+t+" removes a variable or, when there is none, the function of that name")
+			}
+		}
+		delete(st.aliases, t)
+	}
+}

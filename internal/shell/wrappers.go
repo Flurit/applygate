@@ -255,7 +255,13 @@ func (a *analyzer) backstop(bn string, rest []Word, redirs []Redir, cmdSt, st *s
 			es = cmdSt.clone()
 			es.dir = ""
 		}
-		a.call(rest[i:], redirs, es, st, append(via, label), depth+1, stdin{})
+		lb := label
+		if scriptRunners[bn] && i > 0 && (rest[i-1].Text == "exec" || rest[i-1].Text == "run" || rest[i-1].Text == "x") {
+			// pnpm exec terraform: the engine is the program the runner
+			// starts, not a word the call happens to hold.
+			lb += " (runner)"
+		}
+		a.call(rest[i:], redirs, es, st, append(via, lb), depth+1, stdin{})
 		return true
 	}
 	return false
@@ -296,3 +302,6 @@ func IsBackstopVia(via []string) bool {
 	}
 	return false
 }
+
+// scriptRunners start the program their exec or run subcommand names.
+var scriptRunners = toSet("pnpm", "yarn", "npm", "bun")

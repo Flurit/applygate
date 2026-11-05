@@ -548,6 +548,10 @@ func awsArgsOne(base Action, args []shell.Word) (Action, bool) {
 			return a, true
 		}
 	}
+	if obj := remoteStateObject(svc, op, pos[2:], args); obj != "" {
+		a.Class, a.Why = StateSurgery, "aws "+svc+" "+op+" writes or removes "+obj+", a Terraform state object"
+		return a, true
+	}
 	switch {
 	case svc == "configure" && (op == "get" && len(pos) > 2 && isSecretEnv(strings.ToUpper(pos[2])) || op == "export-credentials"):
 		a.Class, a.Why = CredentialAccess, "aws configure "+op+" prints credentials"
@@ -1243,4 +1247,46 @@ func firstText(ws []shell.Word) string {
 		return ""
 	}
 	return ws[0].Text
+}
+
+// remoteStateObject returns the Terraform state object an aws s3 or s3api
+// call overwrites, moves or deletes ("" when it touches none): a state kept
+// in a bucket is replaced as a file is.
+func remoteStateObject(svc, op string, pos []string, args []shell.Word) string {
+	isState := func(k string) bool {
+		k = strings.ToLower(k)
+		return strings.HasSuffix(k, ".tfstate") || strings.HasSuffix(k, ".tfstate.backup")
+	}
+	switch svc {
+	case "s3":
+		switch op {
+		case "cp", "mv", "rm":
+			for i, p := range pos {
+				// A copy writes its destination, the last path; a move or a
+				// removal takes its source away too.
+				if strings.HasPrefix(p, "s3://") && isState(p) && (op != "cp" || i == len(pos)-1) {
+					return p
+				}
+			}
+		}
+	case "s3api":
+		switch op {
+		case "put-object", "copy-object", "delete-object", "create-multipart-upload", "upload-part", "complete-multipart-upload", "restore-object":
+			for i, w := range args {
+				if v, ok := strings.CutPrefix(w.Text, "--key="); ok && isState(v) {
+					return v
+				}
+				if w.Text == "--key" && i+1 < len(args) && isState(args[i+1].Text) {
+					return args[i+1].Text
+				}
+			}
+		case "delete-objects":
+			for _, w := range args {
+				if strings.Contains(strings.ToLower(w.Text), ".tfstate") {
+					return w.Text
+				}
+			}
+		}
+	}
+	return ""
 }

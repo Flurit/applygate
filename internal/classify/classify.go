@@ -276,6 +276,11 @@ func Invocations(res *shell.Result, opt Options) []Action {
 			}
 		}
 		out = append(out, acts...)
+		if len(acts) > 0 && len(inv.Args) > 0 && inv.Args[0].Resolved {
+			if _, ok := engines[shell.ProgName(inv.Args[0].Text)]; ok {
+				out = append(out, engineOutputWrites(acts[0], inv)...)
+			}
+		}
 		for _, a := range acts {
 			if !isEngine(a.Engine) || a.Dir == "" {
 				continue
@@ -668,6 +673,10 @@ var removers = map[string]bool{"rm": true, "rmdir": true, "srm": true, "unlink":
 // copiers write into their last argument, or the directory after -t.
 var copiers = map[string]bool{"cp": true, "install": true, "rsync": true, "ditto": true}
 
+// destroysFiles remove or overwrite the files they are given.
+var destroysFiles = map[string]bool{"rm": true, "rmdir": true, "unlink": true, "shred": true, "srm": true, "mv": true, "cp": true,
+	"install": true, "ln": true, "tee": true, "truncate": true, "dd": true, "rsync": true}
+
 var readers = map[string]bool{
 	"cat": true, "less": true, "more": true, "head": true, "tail": true, "grep": true, "rg": true, "awk": true,
 	"base64": true, "xxd": true, "od": true, "strings": true, "bat": true, "nl": true, "cp": true, "scp": true, "curl": true,
@@ -683,6 +692,21 @@ func fileOps(base Action, name string, args []shell.Word, dir string, opt Option
 		out = append(out, a)
 	}
 	out = append(out, stateWrites(base, name, args, dir, opt)...)
+	// A program that removes or overwrites files, given a name the analysis
+	// cannot resolve (a loop variable, a command substitution, xargs input),
+	// may name a state file in any directory under the root.
+	if destroysFiles[name] && !slices.ContainsFunc(out, func(a Action) bool { return a.Class == StateSurgery }) {
+		for _, w := range args {
+			if !w.Resolved && !strings.HasPrefix(w.Prefix, "-") {
+				a := base
+				a.Class, a.Engine, a.AnyDir = ComplexShape, "file", true
+				a.AnyDirWhy = name + " removes or overwrites a file it names with a word the analysis cannot resolve, which may be a state file in any directory under the root"
+				a.Why = a.AnyDirWhy
+				out = append(out, a)
+				break
+			}
+		}
+	}
 	// Places the program writes, moves, removes or extracts into; a
 	// directory that holds a guard file counts.
 	for _, t := range writeTargets(name, args, dir, opt.Home) {
@@ -2407,3 +2431,41 @@ func patchPathGuard(p, dir string, opt Options) string {
 }
 
 func isEngine(e string) bool { return e == "terraform" || e == "tofu" || e == "terragrunt" }
+
+// engineOutputWrites are the files a Terraform call writes that are not what
+// it is for: plan -out=FILE and -generate-config-out=FILE write the file
+// named whatever it holds, so naming a state file replaces it (a local state
+// becomes a plan archive) from any directory.
+func engineOutputWrites(base Action, inv shell.Invocation) []Action {
+	var out []Action
+	seen := map[string]bool{}
+	args := inv.Args[1:]
+	for i := 0; i < len(args); i++ {
+		t := args[i].Text
+		for strings.HasPrefix(t, "--") && len(t) > 2 {
+			t = t[1:]
+		}
+		name, v, eq := strings.Cut(t, "=")
+		if name != "-out" && name != "-generate-config-out" || !args[i].Resolved {
+			continue
+		}
+		if !eq && i+1 < len(args) {
+			i++
+			v = args[i].Text
+		}
+		if v == "" || v == "-" || inv.Dir == "" {
+			continue
+		}
+		p := absPath(inv.Dir, v, "")
+		if !isStateFile(p) || seen[p] {
+			continue
+		}
+		seen[p] = true
+		a := base
+		a.Dir, a.AnyDir = filepath.Dir(p), false
+		a.Class, a.Engine, a.TouchesState = StateSurgery, "file", true
+		a.Why = inv.Args[0].Text + " " + name + " writes " + p + ", a state file, which it replaces with a plan"
+		out = append(out, a)
+	}
+	return out
+}

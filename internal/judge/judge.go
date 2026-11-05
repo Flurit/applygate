@@ -106,10 +106,10 @@ func Residual(d policy.Decision) bool {
 }
 
 // ResidualFor is Residual for a call whose text is known. A call in which the
-// rules recognized only read-only actions (terraform fmt, kubectl get) still
-// reaches the judge when it also runs a program they do not classify
-// (terraform fmt && pulumi destroy --yes): the recognized part must not take
-// the rest out of the judge's sight.
+// rules recognized some actions (terraform fmt, kubectl get, aws s3 cp that a
+// standard directory allows) still reaches the judge when it also runs a
+// program they do not classify (aws s3 cp x s3://b/x && pulumi destroy --yes):
+// the recognized part must not take the rest out of the judge's sight.
 func ResidualFor(d policy.Decision, in Input) bool {
 	if Residual(d) {
 		return true
@@ -121,9 +121,6 @@ func ResidualFor(d policy.Decision, in Input) bool {
 	for _, a := range d.Actions {
 		if a.Engine == "" || a.Engine == "shell" && a.Class == "complex-shape" {
 			continue
-		}
-		if a.Class != "read-only" {
-			return false
 		}
 		engines[a.Engine] = true
 	}
@@ -267,7 +264,7 @@ func WriteContent(input json.RawMessage) string {
 	// Whole-file and patch fields: Claude Code, Codex, Copilot (file_text),
 	// Cline's write_to_file (content) and replace_in_file (diff, SEARCH and
 	// REPLACE blocks).
-	for _, k := range []string{"content", "file_text", "new_source", "patch", "patchText", "diff"} {
+	for _, k := range []string{"content", "contents", "file_text", "new_source", "patch", "patchText", "diff"} {
 		if s := str(k); s != "" {
 			parts = append(parts, s)
 		}
