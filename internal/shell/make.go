@@ -76,6 +76,11 @@ func (a *analyzer) make(args []Word, cmdSt, st *state, via []string, depth int) 
 				a.unbounded(st, via, joinWords(args), "make --eval adds makefile text; it cannot be analyzed")
 				return true
 			}
+			// -j and -l take an optional numeric argument: in "make -j destroy"
+			// destroy is a target.
+			if (t == "-j" || t == "-l") && !(i+1 < len(rest) && isMakeNumber(rest[i+1].Text)) {
+				break
+			}
 			i++
 		case strings.HasPrefix(t, "--eval="):
 			a.unbounded(st, via, joinWords(args), "make --eval adds makefile text; it cannot be analyzed")
@@ -431,4 +436,17 @@ func makeLongOption(t string) string {
 		return match + "=" + val
 	}
 	return match
+}
+
+// isMakeNumber reports whether a word is the number a -j or -l option takes.
+func isMakeNumber(t string) bool {
+	if t == "" {
+		return false
+	}
+	for _, c := range t {
+		if (c < '0' || c > '9') && c != '.' {
+			return false
+		}
+	}
+	return true
 }

@@ -103,6 +103,12 @@ func (a *analyzer) wordQuiet(w *syntax.Word, st *state) Word {
 }
 
 func (a *analyzer) builtinOut(args []Word, st *state, in stdin) (string, bool) {
+	if _, ok := st.funcs[args[0].Text]; ok {
+		return "", false // a function of that name runs, not the builtin
+	}
+	if _, ok := st.aliases[args[0].Text]; ok {
+		return "", false
+	}
 	name := base(args[0].Text)
 	rest := texts(args[1:])
 	switch name {

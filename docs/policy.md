@@ -37,7 +37,7 @@
 | state-surgery | block | ask | ask | roadmap |
 | cloud-destructive | block | ask | ask | roadmap |
 | guard-tampering | block | block | block | roadmap |
-| dynamic | ask | ask | allow | roadmap |
+| dynamic | ask | ask | allow* | roadmap |
 | unknown-wrapper | ask | allow | allow | roadmap open decision ("ask in protected tiers") |
 | mutating (import, refresh, test) | ask | allow | allow | added |
 | cloud-write (create/update calls) | ask | allow | allow | added |

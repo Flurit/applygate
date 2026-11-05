@@ -71,6 +71,10 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 		r, hit = judge.Result{Model: j.Name(), Err: fmt.Sprintf("the call is %d bytes, more than the %d the judge is sent", max(len(in.Command), len(in.Args)), judge.MaxCall), Unjudgeable: true}, true
 	case len(in.Content) > judge.MaxContent:
 		r, hit = judge.Result{Model: j.Name(), Err: fmt.Sprintf("the content written is %d bytes, more than the %d the judge is sent", len(in.Content), judge.MaxContent), Unjudgeable: true}, true
+	case decisionlog.UnclosedKeyMarker(raw.Command) || decisionlog.UnclosedKeyMarker(raw.Content) || decisionlog.UnclosedKeyMarker(string(raw.Args)):
+		// A private-key header with no end marker: redaction removed everything
+		// after it, which may be commands, file text or arguments.
+		r, hit = judge.Result{Model: j.Name(), Err: "text after a private-key marker with no end marker was redacted", Unjudgeable: true}, true
 	case judge.HiddenByRedaction(raw.Command, in.Command, raw.Cwd):
 		// What redaction hid starts programs, so the judge would not see
 		// what the call runs.

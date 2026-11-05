@@ -46,6 +46,10 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 		}
 		dir, args := inv.Dir, inv.Args[1:]
 		for len(args) > 0 && strings.HasPrefix(args[0].Text, "-") {
+			if !args[0].Resolved {
+				// -chdir=$x: the text that is known stops before the directory.
+				return "a terraform option that cannot be resolved (it may be -chdir=DIR)"
+			}
 			if v, ok := strings.CutPrefix(args[0].Text, "-chdir="); ok && dir != "" {
 				dir = shell.PhysicalJoin(dir, v)
 			}

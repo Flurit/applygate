@@ -22,7 +22,9 @@ import (
 //   - Shell commands go unless every program the shell would start is known
 //     safe and nothing in the command is unresolved.
 func Relevant(in Input) bool {
-	if strings.HasPrefix(in.Tool, "mcp__") {
+	if strings.HasPrefix(in.Tool, "mcp__") || in.Command == "" && len(in.Args) > 0 {
+		// A tool of an MCP server, or one no table knows whose arguments the
+		// hook passes on (use_mcp_tool, Gemini's mcp_ names).
 		return true
 	}
 	if in.Command == "" {
@@ -53,6 +55,17 @@ func HiddenByRedaction(raw, redacted, cwd string) bool {
 	}
 	red := shell.Analyze(redacted, shell.Options{Dir: cwd, ReadFile: noFiles})
 	if len(red.Problems) > 0 {
+		// A redacted copy that does not parse shows the judge less than the
+		// command runs, when the command itself parses.
+		whole := shell.Analyze(raw, shell.Options{Dir: cwd, ReadFile: noFiles})
+		if len(whole.Problems) > 0 {
+			return false
+		}
+		for _, inv := range whole.Invocations {
+			if len(inv.Args) > 0 && !strings.Contains(redacted, inv.Args[0].Text) {
+				return true
+			}
+		}
 		return false
 	}
 	have := map[string]int{}
@@ -227,12 +240,13 @@ func outside(p, dir, root string) bool {
 // execFlags are the options of otherwise local programs that run another
 // program: a command, a compressor, a preprocessor or a test runner.
 var execFlags = map[string][]string{
-	"tar":  {"--checkpoint-action", "--to-command", "--use-compress-program", "--rsh-command", "--info-script", "--new-volume-script", "--rmt-command", "-I", "-F"},
-	"sort": {"--compress-program"},
-	"zip":  {"-TT", "--unzip-command"},
-	"rg":   {"--pre"},
-	"go":   {"-exec", "-toolexec", "--toolexec", "-vettool", "--exec"},
-	"git":  {"--upload-pack", "--receive-pack", "--exec", "--ext-diff", "--template", "-c", "--config", "-x", "--extcmd", "--tool"},
+	"tar":        {"--checkpoint-action", "--to-command", "--use-compress-program", "--rsh-command", "--info-script", "--new-volume-script", "--rmt-command", "-I", "-F"},
+	"sort":       {"--compress-program"},
+	"zip":        {"-TT", "--unzip-command"},
+	"rg":         {"--pre", "--pre-glob", "--hostname-bin"},
+	"actionlint": {"-shellcheck", "-pyflakes"},
+	"go":         {"-exec", "-toolexec", "--toolexec", "-vettool", "--exec"},
+	"git":        {"--upload-pack", "--receive-pack", "--exec", "--ext-diff", "--template", "-c", "--config", "-x", "--extcmd", "--tool"},
 	// cargo --config can set a runner or rustc wrapper; -Z unstable flags
 	// and the package managers' script shells run other programs.
 	"cargo": {"--config", "-Z"},
@@ -338,6 +352,12 @@ func runsProgram(name string, rest []string) bool {
 	for i, a := range rest {
 		for _, f := range flags {
 			if a == f || strings.HasPrefix(a, f+"=") || len(f) > 2 && strings.HasPrefix(f, "--") && strings.HasPrefix(a, f) {
+				return true
+			}
+			// A single-dash option with several letters takes its value glued
+			// (zip -TTprog), and a program that parses options with Go's flag
+			// package takes --toolexec as -toolexec.
+			if len(f) > 2 && f[0] == '-' && f[1] != '-' && (strings.HasPrefix(a, f) || a == "-"+f || strings.HasPrefix(a, "-"+f+"=")) {
 				return true
 			}
 			// git, GNU tar and the like take any unique prefix of a long

@@ -582,6 +582,11 @@ func runsIn(body hcl.Body, f string) string {
 			if t := b.Labels[0]; t == "external" || t == "local_command" || strings.HasPrefix(t, "shell_") {
 				return "data \"" + t + "\" in " + f + " runs a program during plan"
 			}
+			if b.Labels[0] == "archive_file" {
+				if why := archiveWrites(b.Body, f); why != "" {
+					return why
+				}
+			}
 		case "provider":
 			if why := runsNested(b.Body, "provider \""+b.Labels[0]+"\"", f, 0); why != "" {
 				return why
@@ -591,6 +596,30 @@ func runsIn(body hcl.Body, f string) string {
 				return why
 			}
 		}
+	}
+	return ""
+}
+
+// archiveWrites reports a data "archive_file" whose output_path is not a file
+// inside the module: the provider writes the archive when it reads the data
+// source, during plan, over whatever file the path names (a state file, a
+// guard file).
+func archiveWrites(body hcl.Body, f string) string {
+	c, _, _ := body.PartialContent(&hcl.BodySchema{Attributes: []hcl.AttributeSchema{{Name: "output_path"}}})
+	a, ok := c.Attributes["output_path"]
+	if !ok {
+		return ""
+	}
+	ctx := &hcl.EvalContext{Variables: map[string]cty.Value{"path": cty.ObjectVal(map[string]cty.Value{
+		"module": cty.StringVal("."), "root": cty.StringVal("."), "cwd": cty.StringVal("."),
+	})}}
+	v, d := a.Expr.Value(ctx)
+	if d.HasErrors() || !v.IsWhollyKnown() || v.IsNull() || v.Type() != cty.String {
+		return "data \"archive_file\" in " + f + " writes an archive to a path that cannot be resolved, which plan creates over any file it names"
+	}
+	p := v.AsString()
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "~") || strings.Contains(p, "..") || strings.Contains(p, ".tfstate") {
+		return "data \"archive_file\" in " + f + " writes its archive to " + p + ", outside the module or over a state file, during plan"
 	}
 	return ""
 }

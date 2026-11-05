@@ -132,7 +132,16 @@ func PlainShapeUnseen(cmd string, res *Result) (ok bool, why string, unseen stri
 			}
 		case *syntax.ParamExp:
 			if x.Param == nil || x.Exp != nil || x.Repl != nil || x.Slice != nil || x.Index != nil || x.Length || x.Excl {
-				set("a parameter expansion", false)
+				// ${!x} takes the value of x as a variable name, subscript
+				// included, and ${x@P} expands it as a prompt string: both run
+				// a command substitution in x's value.
+				hidden := x.Excl
+				if x.Exp != nil && x.Exp.Op == syntax.OtherParamOps {
+					if w, ok := litWord(x.Exp.Word); !ok || strings.ContainsAny(w, "PE") {
+						hidden = true
+					}
+				}
+				set("a parameter expansion", hidden)
 			}
 		default:
 			r, known := describe(n)
@@ -148,12 +157,6 @@ func PlainShapeUnseen(cmd string, res *Result) (ok bool, why string, unseen stri
 	// copy): git's state is read before the command runs, so a later git
 	// command would run what that step put there.
 	writesGit := false
-	followed := map[string]bool{}
-	for _, inv := range res.Invocations {
-		for _, v := range inv.Via {
-			followed[viaProgram(v)] = true
-		}
-	}
 	for _, inv := range res.Invocations {
 		if len(inv.Args) == 0 {
 			continue // a bare redirection
@@ -178,7 +181,7 @@ func PlainShapeUnseen(cmd string, res *Result) (ok bool, why string, unseen stri
 		// with the image's command, pnpm exec, xargs) is followed: what it
 		// runs is judged as invocations of their own. One it could not (a
 		// nested agent, python3, a name no shape knows) can run anything.
-		set(shapeOf(inv), !followed[ProgName(inv.Args[0].Text)])
+		set(shapeOf(inv), !inv.Followed)
 		if n := ProgName(inv.Args[0].Text); n == "git" && writesGit {
 			set("git after an earlier step that can write git state", true)
 		} else if writesGitState(n, inv.Args[1:], inv.Dir) {

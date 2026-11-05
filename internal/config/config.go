@@ -878,6 +878,23 @@ var wellKnown = map[string]bool{"sh": true, "bash": true, "zsh": true, "dash": t
 	"asdf": true, "nix": true, "nix-shell": true, "devbox": true, "sops": true, "chroot": true, "unbuffer": true, "setsid": true, "stdbuf": true,
 	"parallel": true, "tmux": true, "screen": true, "caffeinate": true, "kubectl-": false}
 
+func init() {
+	// A repository config may not redeclare a program the classifier reads
+	// the arguments of (file writers and readers, cloud and Kubernetes tools,
+	// package managers): a wrapper's skipped arguments would hide what it
+	// writes, removes or deletes, and lower a block to an ask.
+	for _, n := range []string{"tee", "dd", "shred", "truncate", "ln", "sed", "gsed", "curl", "wget", "install", "gzip", "gunzip", "unlink",
+		"rmdir", "srm", "rsync", "ditto", "sponge", "patch", "cpio", "chmod", "chown", "chattr", "touch", "tar", "zip", "unzip", "oc",
+		"gsutil", "rclone", "pulumi", "cdktf", "eksctl", "gh", "glab", "vault", "opa", "trivy", "checkov", "tflint", "infracost",
+		"conftest", "kustomize", "jq", "yq", "cat", "less", "more", "head", "tail", "grep", "rg", "base64", "xxd", "od", "strings",
+		"bat", "nl", "scp", "vi", "vim", "nvim", "nano", "emacs", "ed", "ex", "go", "cargo", "npm", "pnpm", "yarn", "npx", "bunx", "uv",
+		"pip", "pip3", "node", "bun", "deno", "tfsec", "terraform-docs", "actionlint", "shellcheck", "gofmt", "printf", "echo", "test",
+		"find", "sort", "diff", "cmp", "mkdir", "rm", "mv", "cp", "git", "kubectl", "helm", "aws", "az", "gcloud", "docker", "podman",
+		"nerdctl", "terraform", "tofu", "terragrunt", "make", "gmake", "perl", "ruby", "python", "python3", "lua", "php", "java"} {
+		wellKnown[n] = true
+	}
+}
+
 // ShellWrappers returns the configured wrappers keyed by program name.
 func (c *Config) ShellWrappers() map[string]shell.WrapperSpec {
 	if len(c.Wrappers) == 0 {

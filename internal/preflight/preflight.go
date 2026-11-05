@@ -896,6 +896,12 @@ func LockfileDrift(dir string) *Finding {
 		var out bytes.Buffer
 		cmd.Stdout = &out
 		if cmd.Run() != nil {
+			if ctx.Err() != nil {
+				// Out of time is not "not committed": the rest of the files
+				// were never compared.
+				return &Finding{Rule: "lockfile-drift", Severity: High,
+					Message: "the comparison of the provider lock file and module/provider sources with the last commit did not finish in time; review them before applying", Evidence: []string{name + ": not compared"}}
+			}
 			continue // not committed, or not a repository
 		}
 		if bytes.Equal(out.Bytes(), now) {

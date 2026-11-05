@@ -11,7 +11,7 @@ A **mistaken or manipulated agent** running with the developer's privileges. For
 - tries to turn off its own guardrails: skip-permissions flags, edits to hook settings, applygate's config, log, approvals or judge cache, a renamed or reinstalled copy of applygate, or the agent CLI's own switches (`claude plugin disable`, `claude config set`, a nested `claude --settings`, `codex -c` hook overrides);
 - plants a configuration: a nested or cloned `.applygate.yaml`, which can only add protection, never remove it;
 - swaps what will run: a planfile or `.terraform` rewritten earlier in the same command, or a provider binary replaced in `.terraform/providers`;
-- reads cloud credential files.
+- reads cloud credential files: the AWS credential and SSO cache paths and Terraform's credentials file, with the common readers (cat, head, grep, cp, curl and the like; the list is in [limits](limits.md)); other credential files and other readers are not covered by the hook.
 
 ## Does not defend against
 

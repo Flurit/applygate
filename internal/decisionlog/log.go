@@ -220,6 +220,12 @@ func redactEntry(e *Entry) {
 	for i := range e.Actions {
 		e.Actions[i].Command = r.field(e.Actions[i].Command)
 		e.Actions[i].Why = r.field(e.Actions[i].Why)
+		// A backend address, a profile or a plan path can carry a credential
+		// (https://user:pass@host, a token in a path).
+		a := &e.Actions[i]
+		for _, f := range []*string{&a.Backend, &a.Dir, &a.Workspace, &a.Profile, &a.KubeContext, &a.GCPProject, &a.AzureSubscription, &a.PlanFile, &a.NextStep} {
+			*f = r.field(*f)
+		}
 		for j := range e.Actions[i].Via {
 			e.Actions[i].Via[j] = r.field(e.Actions[i].Via[j])
 		}
@@ -445,4 +451,16 @@ func shorten(s string, n int) string {
 		return s[:n-3] + "..."
 	}
 	return s
+}
+
+var (
+	keyBlock    = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY[A-Z ]*-----.*?-----END [A-Z ]*PRIVATE KEY[A-Z ]*-----`)
+	keyOpenOnly = regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY[A-Z ]*-----`)
+)
+
+// UnclosedKeyMarker reports whether s has a private-key header with no end
+// marker. Redaction then removes everything after the header, whatever it is,
+// so a copy for the judge would not show the text that follows.
+func UnclosedKeyMarker(s string) bool {
+	return keyOpenOnly.MatchString(keyBlock.ReplaceAllString(s, ""))
 }
