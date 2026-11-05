@@ -33,6 +33,9 @@ type prog struct {
 	ops    func(ops []Word) string
 	need   func(seen map[string]bool) string // a rule over the options seen
 	opWord func(t string) bool               // a word that starts with a dash but is an operand (a chmod mode)
+	once   map[string]bool                   // options that may appear once (the analysis judges one output file per call)
+	valOK  func(opt string, v Word) string   // a rule over the value of an option
+	writes map[string]bool                   // options whose value is a file the analysis judges as written (the conformance test expects it)
 }
 
 // allowProgs are the programs described by a prog, by name (the conformance
@@ -60,7 +63,13 @@ func newProg(flags, vals string) *prog {
 func (p *prog) withOptVal(s string) *prog { p.optVal = opts(s); return p }
 func (p *prog) withNum() *prog            { p.num = true; return p }
 func (p *prog) withLoose() *prog          { p.loose = true; return p }
-func (p *prog) withMaxOps(n int) *prog    { p.maxOps = n; return p }
+func (p *prog) withOnce(s string) *prog   { p.once = opts(s); return p }
+func (p *prog) withWrites(s string) *prog { p.writes = opts(s); return p }
+func (p *prog) withValOK(f func(string, Word) string) *prog {
+	p.valOK = f
+	return p
+}
+func (p *prog) withMaxOps(n int) *prog { p.maxOps = n; return p }
 
 var digitsRE = regexp.MustCompile(`^[0-9]+$`)
 
@@ -74,6 +83,17 @@ func (p *prog) check(name string, args []Word) string {
 	seen := map[string]bool{}
 	var ops []Word
 	endOpts := false
+	// use records an option and checks the rules over it and its value.
+	use := func(opt string, v *Word) string {
+		if p.once[opt] && seen[opt] {
+			return "the option " + opt + " more than once"
+		}
+		seen[opt] = true
+		if v != nil && p.valOK != nil {
+			return p.valOK(opt, *v)
+		}
+		return ""
+	}
 	for i := 0; i < len(args); i++ {
 		w := args[i]
 		t := optText(w)
@@ -99,16 +119,22 @@ func (p *prog) check(name string, args []Word) string {
 				if hasEq {
 					return "the option " + k + " with a value"
 				}
-				seen[k] = true
+				if why := use(k, nil); why != "" {
+					return why
+				}
 			case p.optVal[k]:
 				seen[k] = true
 			case p.vals[k]:
-				seen[k] = true
+				v := Word{Text: strings.TrimPrefix(w.Text, k+"="), Resolved: w.Resolved}
 				if !hasEq {
 					if i+1 >= len(args) {
 						return "the option " + k + " without its value"
 					}
 					i++
+					v = args[i]
+				}
+				if why := use(k, &v); why != "" {
+					return why
 				}
 			default:
 				return "the option " + k + " of " + name
@@ -118,15 +144,19 @@ func (p *prog) check(name string, args []Word) string {
 		// One dash. A whole name first (find, go and Go-style programs take
 		// -name, -toolexec), then a number, then a cluster of letters.
 		if p.flags[t] {
-			seen[t] = true
+			if why := use(t, nil); why != "" {
+				return why
+			}
 			continue
 		}
 		if p.vals[t] {
-			seen[t] = true
 			if i+1 >= len(args) {
 				return "the option " + t + " without its value"
 			}
 			i++
+			if why := use(t, &args[i]); why != "" {
+				return why
+			}
 			continue
 		}
 		if p.num && digitsRE.MatchString(t[1:]) {
@@ -136,15 +166,21 @@ func (p *prog) check(name string, args []Word) string {
 			c := "-" + string(t[j])
 			switch {
 			case p.flags[c]:
-				seen[c] = true
+				if why := use(c, nil); why != "" {
+					return why
+				}
 				continue
 			case p.vals[c]:
-				seen[c] = true
+				v := Word{Text: w.Text[j+1:], Resolved: w.Resolved}
 				if j+1 == len(t) {
 					if i+1 >= len(args) {
 						return "the option " + c + " without its value"
 					}
 					i++
+					v = args[i]
+				}
+				if why := use(c, &v); why != "" {
+					return why
 				}
 			case p.num && digitsRE.MatchString(t[j:]):
 			default:
