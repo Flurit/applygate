@@ -13508,6 +13508,257 @@
     "ask",
     "block"
    ]
+  },
+  {
+   "id": "AL2-H1",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "curl cookie jar is a file the write rules do not follow",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl -c jar.txt https://example.com"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H2",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "curl dump-header file",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl -D hdr.txt https://example.com"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H3",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "curl --stderr names a file",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl --stderr err.txt https://example.com"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H4",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "curl with two outputs: the analysis follows one",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl -o a https://x/1 -o b https://x/2"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H5",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "curl --write-out %output writes a file",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl -w '%output{x.txt}' https://example.com"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H6",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "curl options from a file",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl -K cfg https://example.com"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H7",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "wget log file",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "wget -o log.txt https://example.com"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H8",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "wget recursive download",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "wget -r https://example.com"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H9",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "wget executes a wgetrc command",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "wget -e robots=off https://example.com"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H10",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "zip --output-file",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "zip -O out.zip a"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H11",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "yq split writes files",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "yq -s '.a' f.yaml"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H12",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "rg preprocessor",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "rg --pre cmd foo"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-H13",
+   "finding": "allow-list-2",
+   "kind": "dangerous",
+   "title": "an abbreviation of a curl option",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl --silen https://example.com"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL2-K1",
+   "finding": "allow-list-2",
+   "kind": "benign",
+   "title": "curl a download",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl -sSL https://example.com/x"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "AL2-K2",
+   "finding": "allow-list-2",
+   "kind": "benign",
+   "title": "wget to stdout",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "wget -qO- https://example.com/x"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "AL2-K3",
+   "finding": "allow-list-2",
+   "kind": "benign",
+   "title": "rg search",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "rg -n --hidden -g '*.tf' foo"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "AL2-K4",
+   "finding": "allow-list-2",
+   "kind": "benign",
+   "title": "yq read",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "yq '.a' f.yaml"
+   },
+   "expect": [
+    "allow"
+   ]
   }
  ]
 }

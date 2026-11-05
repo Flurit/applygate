@@ -17,12 +17,9 @@ type shape func(args []Word, inv Invocation) string
 var shapes = map[string]shape{}
 
 func init() {
-	shapes["printf"] = denyOpts("-v")
 	// yq 4.47 and later has a system operator that runs a command, enabled by
 	// this option.
-	shapes["yq"] = denyOpts("--security-enable-system-operator")
 	// curl -K reads options (output files, more URLs) from a file.
-	shapes["curl"] = denyOpts("-K", "--config")
 	// infracost runs terraform init and plan in the directory, with init and
 	// plan flags it passes through and a config file that names a binary:
 	// only its version and help read nothing.
@@ -57,9 +54,6 @@ func init() {
 		}
 		return ""
 	}
-	shapes["actionlint"] = denyOpts("-shellcheck", "-pyflakes")
-	// tflint runs the plugins its config names.
-	shapes["tflint"] = denyOpts("--config", "-c", "--init", "--plugin-dir")
 	shapes["vault"] = denySub("agent", "proxy", "ssh", "server", "plugin")
 	// terragrunt evaluates terragrunt.hcl, whose run_cmd() and hooks run
 	// programs, and runs terraform in a cache the plan check does not see:
@@ -87,11 +81,8 @@ func init() {
 		}
 		return "terragrunt evaluates terragrunt.hcl, whose run_cmd and hooks run programs"
 	}
-	shapes["rg"] = rgShape
 	shapes["sed"] = sedShape
 	shapes["tar"] = tarShape
-	shapes["zip"] = denyOpts("-TT", "--unzip-command")
-	shapes["wget"] = denyOpts("--use-askpass", "-e", "--execute", "--config")
 	shapes["git"] = gitShape
 	shapes["gh"] = valuedSubcommands(toSet("-R", "--repo"), "auth status", "api", "cache", "gist", "issue", "label", "org", "pr", "project", "release",
 		"repo", "run", "ruleset", "search", "secret", "status", "variable", "workflow", "config get", "config list")
@@ -367,17 +358,6 @@ func denySub(subs ...string) shape {
 		}
 		return ""
 	}
-}
-
-// rgShape: --pre runs a preprocessor, and -z runs decompressors.
-func rgShape(args []Word, inv Invocation) string {
-	if why := denyOpts("--pre", "--pre-glob", "--search-zip", "--hostname-bin")(args, inv); why != "" {
-		return why
-	}
-	if hasOpt(args, "-z") {
-		return "the option -z"
-	}
-	return ""
 }
 
 // tarShape accepts the usual create, extract and list options. The options

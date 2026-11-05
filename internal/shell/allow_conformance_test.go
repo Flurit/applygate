@@ -80,8 +80,9 @@ func conformance(t *testing.T, name string, opt string, val bool) (problems []st
 	root, _ = filepath.EvalSymlinks(root)
 	work := filepath.Join(root, "work")
 	by := filepath.Join(root, "bystander")
+	tmp := filepath.Join(root, "tmp") // programs make their temporary files here (yq does, for every run)
 	bin := filepath.Join(root, "canary")
-	for _, d := range []string{work, by, bin, filepath.Join(work, "d")} {
+	for _, d := range []string{work, by, tmp, bin, filepath.Join(work, "d")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -113,9 +114,23 @@ func conformance(t *testing.T, name string, opt string, val bool) (problems []st
 	switch name {
 	case "date":
 		args = append(args, "+%Y")
-	case "hostname":
+	case "hostname", "printf", "tflint", "actionlint":
+		if name == "printf" {
+			args = append(args, "x")
+		}
 	case "find":
 		args = append([]string{"."}, args...)
+	case "curl":
+		args = append(args, "file://"+work+"/in.txt")
+	case "wget":
+		args = append(args, "http://127.0.0.1:9/in.txt")
+	case "zip":
+		args = append(args, "out.zip", "in.txt")
+	case "yq":
+		args = append(args, ".")
+		args = append(args, "in.txt")
+	case "rg":
+		args = append(args, "x", "in.txt")
 	default:
 		args = append(args, "in.txt")
 	}
@@ -126,7 +141,7 @@ func conformance(t *testing.T, name string, opt string, val bool) (problems []st
 	cmd.Dir = work
 	// The canary directory comes first: a program that starts sh, a pager or a
 	// compressor finds the canary.
-	cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + root, "PAGER=canary-exec", "EDITOR=canary-exec", "TMPDIR=" + by, "LANG=C"}
+	cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + root, "PAGER=canary-exec", "EDITOR=canary-exec", "TMPDIR=" + tmp, "LANG=C"}
 	cmd.Stdin = strings.NewReader("")
 	before := snapshot(t, root)
 	_ = cmd.Run()
@@ -142,7 +157,8 @@ func conformance(t *testing.T, name string, opt string, val bool) (problems []st
 		if strings.HasPrefix(f, by) && (!existed || old != h) {
 			bad("%s %v changed %s outside the scratch directory", name, args, f)
 		}
-		if !existed && strings.HasPrefix(f, work) && !strings.Contains(filepath.Base(f), "in.txt") && !strings.HasSuffix(f, "d") {
+		listed := allowProgs[name].writes[opt] && filepath.Base(f) == "canary-exec"
+		if !existed && strings.HasPrefix(f, work) && !listed && !strings.Contains(filepath.Base(f), "in.txt") && filepath.Base(f) != "out.zip" && !strings.HasSuffix(f, "d") {
 			bad("%s %v created %s, which its operands do not name", name, args, f)
 		}
 	}

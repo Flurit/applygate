@@ -41,7 +41,7 @@ On the same 17 dangerous Terraform scenarios:
 | A competent hand-written Rego/regex policy | 14 / 17 |
 | **applygate** (protected tier) | **17 / 17** |
 
-The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 811 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
+The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 828 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
 
 applygate is a check, not a sandbox. Pair it with plan-only credentials for agents and writes behind MFA, which `applygate doctor --creds` checks ([docs/credentials.md](docs/credentials.md)); see [the threat model](docs/threat-model.md). Its self-protection, which stops an agent from turning it off, is a guarantee only under a managed install (`sudo applygate install --managed`, [docs/managed.md](docs/managed.md)); without one it is best-effort.
 
