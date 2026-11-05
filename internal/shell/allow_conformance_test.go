@@ -89,7 +89,7 @@ func conformance(t *testing.T, name string, opt string, val bool) (problems []st
 	log := filepath.Join(root, "canary.log")
 	script := "#!/bin/sh\necho \"$0 $*\" >> " + log + "\nexit 0\n"
 	for _, c := range []string{"canary-exec", "sh", "bash", "zsh", "dash", "python3", "perl", "ruby", "less", "more", "vi", "vim", "pr", "gzip", "bzip2", "xz", "zstd", "pager", "editor"} {
-		if c == name {
+		if c == name || c == "gzip" && name == "gunzip" { // gunzip is a script that runs gzip
 			continue
 		}
 		if err := os.WriteFile(filepath.Join(bin, c), []byte(script), 0o755); err != nil {
