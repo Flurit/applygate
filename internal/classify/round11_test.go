@@ -119,12 +119,32 @@ func TestCurlAndGhMutations(t *testing.T) {
 		"gh api -X DELETE repos/o/r":                                                          CloudDestructive,
 		"gh repo delete o/r --yes":                                                            CloudDestructive,
 		"gh workflow run destroy.yml":                                                         CloudWrite,
+		// A body, a form or an upload makes the request a write even when no
+		// method is named (an HCP Terraform run is a POST with a JSON body).
+		"curl -H 'Authorization: Bearer t' -H 'Content-Type: application/vnd.api+json' -X POST https://app.terraform.io/api/v2/runs -d @run.json": CloudWrite,
+		"curl https://app.terraform.io/api/v2/runs -d @run.json":                                                                                  CloudWrite,
+		"curl -sd @run.json https://app.terraform.io/api/v2/runs":                                                                                 CloudWrite,
+		"curl -sXPOST https://app.terraform.io/api/v2/runs":                                                                                       CloudWrite,
+		"curl --json '{}' https://app.terraform.io/api/v2/runs":                                                                                   CloudWrite,
+		"curl -F file=@x https://example.com/up":                                                                                                  CloudWrite,
+		"curl -T x https://example.com/up":                                                                                                        CloudWrite,
+		"curl -X PATCH https://example.com/x":                                                                                                     CloudWrite,
+		"curl -X $M https://example.com/x":                                                                                                        CloudWrite,
+		"wget --post-data=x https://example.com/x":                                                                                                CloudWrite,
+		"wget --post-file=x https://example.com/x":                                                                                                CloudWrite,
+		"wget --method=PUT --body-data=x https://example.com/x":                                                                                   CloudWrite,
+		"http POST https://example.com/x a=b":                                                                                                     CloudWrite,
+		"http https://example.com/x a=b":                                                                                                          CloudWrite,
+		"http https://example.com/x a:=1":                                                                                                         CloudWrite,
+		"xh put https://example.com/x":                                                                                                            CloudWrite,
+		"gh api repos/o/r/dispatches -f event_type=x":                                                                                             CloudWrite,
+		"gh api repos/o/r/issues --input x.json":                                                                                                  CloudWrite,
 	} {
 		if a := first(classify(t, cmd, "/r/envs/prod", nil)); a.Class != want {
 			t.Errorf("%s: got %s, want %s", cmd, a.Class, want)
 		}
 	}
-	for _, cmd := range []string{"curl https://example.com", "curl -X DELETE http://localhost:9200/i", "curl -X POST https://example.com -d x", "gh pr list"} {
+	for _, cmd := range []string{"curl https://example.com", "curl -X DELETE http://localhost:9200/i", "curl -sS -H \"Accept: application/json\" https://example.com/x", "curl -G -d q=1 https://example.com", "curl -I https://example.com", "curl -X POST http://localhost:8080/x -d y", "wget -q https://example.com/x -O -", "http https://example.com/x Accept:text/plain", "http GET https://example.com/x q==1", "gh pr list", "gh api repos/o/r"} {
 		for _, a := range classify(t, cmd, "/r/envs/prod", nil) {
 			if a.Class == CloudDestructive || a.Class == CloudWrite {
 				t.Errorf("%s: ordinary call classified %s", cmd, a.Class)
