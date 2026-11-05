@@ -54,7 +54,6 @@ func init() {
 		}
 		return ""
 	}
-	shapes["vault"] = denySub("agent", "proxy", "ssh", "server", "plugin")
 	// terragrunt evaluates terragrunt.hcl, whose run_cmd() and hooks run
 	// programs, and runs terraform in a cache the plan check does not see:
 	// only formatting and its version are plain. make runs its recipes in
@@ -136,8 +135,6 @@ func init() {
 		}
 		return podman(args, inv)
 	}
-	shapes["kubectl"] = kubectlShape
-	shapes["helm"] = helmShape
 	shapes["kustomize"] = denyOpts("--enable-alpha-plugins", "--enable-exec", "--enable-helm", "--helm-command")
 	// checkov loads Python checks from a directory its options or a
 	// .checkov.yaml in the directory name.
@@ -180,9 +177,6 @@ func init() {
 	}
 	shapes["conftest"] = subcommands("test", "verify", "parse", "fmt", "version")
 	shapes["opa"] = subcommands("eval", "test", "fmt", "check", "version", "inspect", "parse", "build")
-	shapes["aws"] = awsShape
-	shapes["az"] = denySub("extension", "upgrade", "interactive")
-	shapes["gcloud"] = denySub("components", "interactive")
 	// `go env -w` and `-u` write the go environment file, which later
 	// builds read.
 	goShape := shapes["go"]
@@ -914,37 +908,6 @@ func readSmall(p string) ([]byte, error) {
 	return os.ReadFile(p)
 }
 
-// kubectlSubs are kubectl's own subcommands: anything else is a plugin, a
-// program found on PATH.
-var kubectlSubs = toSet("get", "describe", "logs", "apply", "create", "delete", "edit", "patch", "replace", "scale",
-	"rollout", "expose", "run", "set", "label", "annotate", "autoscale", "top", "cordon", "uncordon", "drain", "taint",
-	"certificate", "cluster-info", "explain", "diff", "exec", "port-forward", "proxy", "cp", "auth", "debug", "events",
-	"wait", "api-resources", "api-versions", "version", "kustomize", "completion", "attach", "config")
-
-// kubectlShape: a plugin, another kubeconfig (its users may run an exec
-// credential plugin), a config edit, or kustomize plugins are not plain.
-func kubectlShape(args []Word, inv Invocation) string {
-	if hasOpt(args, "--kubeconfig") {
-		return "the option --kubeconfig"
-	}
-	if hasOpt(args, "--enable-alpha-plugins") || hasOpt(args, "--enable-exec") || hasOpt(args, "--enable-helm") || hasOpt(args, "--helm-command") {
-		return "kustomize plugins or helm"
-	}
-	pos := positional(args, 2, kubeValued)
-	if len(pos) == 0 {
-		return ""
-	}
-	if !kubectlSubs[pos[0]] {
-		return "the kubectl subcommand " + pos[0]
-	}
-	if pos[0] == "config" {
-		if len(pos) < 2 || pos[1] != "view" && pos[1] != "get-contexts" && pos[1] != "current-context" && pos[1] != "get-clusters" && pos[1] != "use-context" {
-			return "a kubectl config edit"
-		}
-	}
-	return ""
-}
-
 // kubeValued and cloudValued are the global options of kubectl and helm,
 // and of the cloud CLIs, that take a value.
 var kubeValued = toSet("-n", "--namespace", "--context", "--cluster", "--user", "-s", "--server", "--as", "--as-group",
@@ -953,36 +916,6 @@ var kubeValued = toSet("-n", "--namespace", "--context", "--cluster", "--user", 
 
 var cloudValued = toSet("--profile", "--region", "--output", "--endpoint-url", "--query", "--project", "--account",
 	"--configuration", "--subscription", "-o", "--format")
-
-var helmSubs = toSet("completion", "create", "dependency", "env", "get", "help", "history", "install", "lint", "list",
-	"ls", "package", "pull", "push", "registry", "repo", "rollback", "search", "show", "status", "template", "test",
-	"uninstall", "upgrade", "verify", "version")
-
-// helmShape: a plugin or a post-renderer runs a program.
-func helmShape(args []Word, _ Invocation) string {
-	if hasOpt(args, "--post-renderer") {
-		return "the option --post-renderer"
-	}
-	if hasOpt(args, "--kubeconfig") {
-		// Another kubeconfig: its users may run an exec credential plugin.
-		return "the option --kubeconfig"
-	}
-	pos := positional(args, 1, kubeValued)
-	if len(pos) == 1 && !helmSubs[pos[0]] {
-		return "the helm subcommand " + pos[0]
-	}
-	return ""
-}
-
-// awsShape: another config file can hold a credential_process, and aws
-// configure writes the config later calls read.
-func awsShape(args []Word, _ Invocation) string {
-	pos := positional(args, 2, cloudValued)
-	if len(pos) == 2 && pos[0] == "configure" && pos[1] != "get" && pos[1] != "list" && pos[1] != "list-profiles" && pos[1] != "export-credentials" {
-		return "aws configure " + pos[1]
-	}
-	return ""
-}
 
 // bsdSed is set where sed is BSD's (macOS and the BSDs), whose -i and -I
 // take the next word as the backup suffix.

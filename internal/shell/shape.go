@@ -63,7 +63,9 @@ func PlainShapeUnseen(cmd string, res *Result) (ok bool, why string, unseen stri
 			return true
 		}
 		switch x := n.(type) {
-		case *syntax.File, *syntax.Word, *syntax.Lit, *syntax.SglQuoted, *syntax.DblQuoted, *syntax.Redirect, *syntax.Comment:
+		case *syntax.Redirect:
+			set(redirectShape(x), true)
+		case *syntax.File, *syntax.Word, *syntax.Lit, *syntax.SglQuoted, *syntax.DblQuoted, *syntax.Comment:
 			if q, ok := x.(*syntax.SglQuoted); ok && q.Dollar {
 				set("a $'...' string", false)
 			}
@@ -98,6 +100,18 @@ func PlainShapeUnseen(cmd string, res *Result) (ok bool, why string, unseen stri
 							set("hash binding a name to a program", true)
 						}
 					}
+				}
+			}
+			// cd is a builtin the analysis follows; its operands have a grammar
+			// of their own (one directory, no zsh OLD NEW, no "-").
+			if len(x.Args) > 0 {
+				if n, ok := litWord(x.Args[0]); ok && n == "cd" {
+					var ws []Word
+					for _, a := range x.Args[1:] {
+						t, ok := litWord(a)
+						ws = append(ws, Word{Text: t, Resolved: ok, Prefix: t})
+					}
+					set(allowProgs["cd"].check("cd", ws), true)
 				}
 			}
 			// read, mapfile, readarray and getopts assign the names they
@@ -181,7 +195,8 @@ func PlainShapeUnseen(cmd string, res *Result) (ok bool, why string, unseen stri
 		// with the image's command, pnpm exec, xargs) is followed: what it
 		// runs is judged as invocations of their own. One it could not (a
 		// nested agent, python3, a name no shape knows) can run anything.
-		set(shapeOf(inv), !inv.Followed)
+		why := shapeOf(inv)
+		set(why, !inv.Followed && (why == "" || shapeUnseen(inv, why)))
 		if n := ProgName(inv.Args[0].Text); n == "git" && writesGit {
 			set("git after an earlier step that can write git state", true)
 		} else if writesGitState(n, inv.Args[1:], inv.Dir) {
@@ -437,4 +452,36 @@ func runtimeAssign(args []*syntax.Word) string {
 		}
 	}
 	return ""
+}
+
+// redirectShape is the positive grammar for a redirection in a plain command:
+// the operators that every shell reads the same way, with a target that is one
+// literal word. Anything else (zsh's >!, a clobber >|, <>, a descriptor
+// variable {fd}, a target with a glob, brace, tilde or variable, a here-string
+// with an expansion) is not plain, whichever shell runs the command.
+func redirectShape(r *syntax.Redirect) string {
+	if r.N != nil && !digitsRE.MatchString(r.N.Value) {
+		return "a redirection with a named descriptor"
+	}
+	switch r.Op {
+	// &> is a background job and a redirection to dash.
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrIn:
+		t, ok := litWord(r.Word)
+		if !ok {
+			return "a redirection target that is not a literal word"
+		}
+		if t == "" || strings.ContainsAny(t, "*?[]{}$`\\!") || strings.HasPrefix(t, "~") || strings.HasPrefix(t, "=") {
+			return "a redirection target with a character the shell may expand (" + t + ")"
+		}
+		return ""
+	case syntax.DplOut, syntax.DplIn:
+		t, ok := litWord(r.Word)
+		if !ok || !(digitsRE.MatchString(t) || t == "-") {
+			return "a descriptor duplication that is not to a number"
+		}
+		return ""
+	case syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc:
+		return "" // its text is a word the analysis walks
+	}
+	return "the redirection operator " + r.Op.String()
 }

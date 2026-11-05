@@ -40,7 +40,7 @@ func TestPlainShapeUnseen(t *testing.T) {
 		{"docker run --rm hashicorp/terraform version; docker run --rm alpine true", false, true},
 		{"echo a | xargs -0 bash -c", false, true},
 		{"f() { echo; }; command f", false, true},
-		{"alias terraform=echo; terraform x", false, false},
+		{"alias terraform=echo; terraform plan", false, false},
 		{"alias tf=terraform; tf plan", false, false},
 	}
 	for _, c := range cases {
