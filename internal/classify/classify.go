@@ -171,10 +171,13 @@ type Options struct {
 }
 
 // relGuard reports whether rel, written from dir, may be a guard file the
-// hook cannot place: the command's directory is not known and rel is
-// relative to it.
+// hook cannot place: the command's directory is not known (the host did not
+// report it, or the analysis lost it) and rel is relative to it.
 func (o Options) relGuard(dir, rel string) bool {
-	if !o.UnknownCwd || o.Guard == nil || dir != o.Cwd || rel == "" || filepath.IsAbs(rel) || strings.HasPrefix(rel, "~") {
+	// The directory is unknown when the host does not report it, or when the
+	// analysis lost it (cd to a glob, a substitution or a variable): the
+	// command may then be writing in any directory under the root.
+	if o.Guard == nil || rel == "" || filepath.IsAbs(rel) || strings.HasPrefix(rel, "~") || !(dir == "" || o.UnknownCwd && dir == o.Cwd) {
 		return false
 	}
 	return o.Guard.NamedLike(filepath.Base(rel))

@@ -14025,6 +14025,51 @@
    "expect": [
     "allow"
    ]
+  },
+  {
+   "id": "AL5-H1",
+   "finding": "allow-list-5",
+   "kind": "dangerous",
+   "title": "found by the effects oracle: a glob cd loses the directory, and a write to a hook settings file there was allowed",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "cd ../pro* && echo '{}' > .claude/settings.json"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL5-H2",
+   "finding": "allow-list-5",
+   "kind": "dangerous",
+   "title": "same, with cp",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "cd ../pro* && cp /dev/null .claude/settings.json"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL5-H3",
+   "finding": "allow-list-5",
+   "kind": "dangerous",
+   "title": "same, through a variable",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "d=../prod; cd $d && echo '{}' > .claude/settings.json"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
   }
  ]
 }
