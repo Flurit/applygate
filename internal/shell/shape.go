@@ -315,6 +315,12 @@ func gitStatePath(p string) bool {
 	return false
 }
 
+// KnownProgram reports whether the analysis reads the arguments of the
+// program n (it has a shape, or is a builtin or a runner it follows).
+func KnownProgram(n string) bool {
+	return hasShape(n) || shellBuiltins[n] || scriptRunners[n]
+}
+
 func hasShape(n string) bool {
 	_, ok := shapes[n]
 	return ok

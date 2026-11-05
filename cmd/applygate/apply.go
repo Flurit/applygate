@@ -94,7 +94,19 @@ func cmdApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "applygate: --engine must be terraform, tofu or terragrunt (or a path to one), not %q\n", *engine)
 		return 2
 	}
-	engineArgs := append([]string{"apply", planfile}, extra...)
+	// The plan that is judged is the plan that is applied: the file is read
+	// once, and the engine is given a private copy of those bytes, so a swap
+	// of the original while the person decides (or while the plan is read)
+	// changes nothing.
+	shown := planfile
+	if copyPath, cleanup, err := privatePlanCopy(dir, planfile); err != nil {
+		fmt.Fprintln(stderr, "applygate: cannot read the plan file:", err)
+		return 2
+	} else if copyPath != "" {
+		defer cleanup()
+		shown = copyPath
+	}
+	engineArgs := append([]string{"apply", shown}, extra...)
 	cmdline := quoteCommand(append([]string{engineName}, engineArgs...))
 	ev := policy.Event{Agent: "human", Tool: "Bash", Kind: policy.KindShell, Command: cmdline, Cwd: dir, CanAsk: true, DirKnown: true}
 	d := policy.Decide(ev, cfg, hook.Deps(context.Background(), cfg, opt))
@@ -151,6 +163,37 @@ func cmdApply(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		logIt("")
 	}
 	return applyExec(*engine, engineArgs, dir, stdin, stdout, stderr)
+}
+
+// privatePlanCopy copies the plan file into a directory only this user can
+// enter and returns the copy's path. A path that is not a regular file (a
+// missing one, so the engine reports it) returns "".
+func privatePlanCopy(dir, planfile string) (string, func(), error) {
+	p := planfile
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(dir, p)
+	}
+	fi, err := os.Stat(p)
+	if err != nil || !fi.Mode().IsRegular() {
+		return "", nil, nil
+	}
+	if fi.Size() > 1<<30 {
+		return "", nil, fmt.Errorf("%s is larger than 1 GiB", p)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return "", nil, err
+	}
+	tmp, err := os.MkdirTemp("", "applygate-plan-")
+	if err != nil {
+		return "", nil, err
+	}
+	out := filepath.Join(tmp, filepath.Base(p))
+	if err := os.WriteFile(out, b, 0o600); err != nil {
+		os.RemoveAll(tmp)
+		return "", nil, err
+	}
+	return out, func() { os.RemoveAll(tmp) }, nil
 }
 
 // quoteCommand renders argv as a shell command line the analyzer parses back

@@ -526,13 +526,23 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "--scope must be user or project, not %q\n", *scope)
 		return 2
 	}
-	if _, err := os.Stat(config.FileName); err == nil {
+	// Lstat, not Stat: a dangling symlink named .applygate.yaml (placed by an
+	// agent, pointing at a file that does not exist yet) would be written
+	// through. O_EXCL does not follow a final symlink and refuses an
+	// existing name.
+	if _, err := os.Lstat(config.FileName); err == nil {
 		fmt.Fprintf(stderr, "%s already exists; not overwriting\n", config.FileName)
 		return 1
 	}
-	if err := os.WriteFile(config.FileName, []byte(starterConfig), 0o644); err != nil {
+	if f, err := os.OpenFile(config.FileName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	} else {
+		_, werr := f.WriteString(starterConfig)
+		if cerr := f.Close(); werr != nil || cerr != nil {
+			fmt.Fprintln(stderr, "could not write", config.FileName)
+			return 1
+		}
 	}
 	// The person running init wrote this config; trust it. After an edit,
 	// applygate trust approves the new content.

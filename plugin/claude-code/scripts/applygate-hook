@@ -181,7 +181,7 @@ proto='=https'
 wget_https=--https-only
 case "$base" in http://127.0.0.1:*) proto='=http,https' wget_https= ;; esac
 if need curl; then
-    curl --proto "$proto" --proto-redir "$proto" -fsSL --retry 2 --max-time "$limit" -o "$tmp/$archive" "$url" 2>"$tmp/err" ||
+    curl --proto "$proto" --proto-redir "$proto" -fsSL --retry 0 --max-time "$limit" -o "$tmp/$archive" "$url" 2>"$tmp/err" ||
         fail "no applygate on PATH, and downloading v$version failed: $url ($(head -n 1 "$tmp/err"))"
 elif need wget; then
     wget $wget_https -q -T "$limit" -O "$tmp/$archive" "$url" 2>"$tmp/err" ||

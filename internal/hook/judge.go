@@ -99,7 +99,7 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 	// In a disposable directory an unjudgeable call that names production (a
 	// padded command, text hidden by redaction) is still an ask: the tier
 	// the judge was told is the directory's, not the target's.
-	if r.Unjudgeable && (in.Tier != config.Disposable || config.LooksProd(raw.Command) || config.LooksProd(string(raw.Args))) {
+	if r.Unjudgeable && (in.Tier != config.Disposable || looksProd(raw)) {
 		// The call kept the judge from answering (too large, refused, no
 		// verdict in the answer): outside a disposable tier that is an ask,
 		// so a call cannot get past the judge by breaking it.
@@ -133,7 +133,11 @@ func judgeInput(ev policy.Event, cfg *config.Config, redact bool) judge.Input {
 		}
 		return s
 	}
-	in := judge.Input{Agent: ev.Agent, Tool: ev.Tool, Paths: ev.Paths, Cwd: ev.Cwd,
+	paths := make([]string, len(ev.Paths))
+	for i, p := range ev.Paths {
+		paths[i] = r(p)
+	}
+	in := judge.Input{Agent: ev.Agent, Tool: ev.Tool, Paths: paths, Cwd: ev.Cwd,
 		Content: r(ev.Content), Write: ev.Kind == policy.KindWrite}
 	if ev.Kind == policy.KindShell {
 		in.Command = r(ev.Command)
@@ -142,6 +146,9 @@ func judgeInput(ev policy.Event, cfg *config.Config, redact bool) judge.Input {
 	// arguments the server gets too.
 	if len(ev.Args) > 0 && (ev.Kind == policy.KindMCP || ev.Kind == policy.KindShell) {
 		args := r(string(ev.Args))
+		if redact && json.Valid(ev.Args) {
+			args = decisionlog.RedactJSONCut(string(ev.Args), 1<<20)
+		}
 		if !json.Valid([]byte(args)) {
 			b, _ := json.Marshal(args)
 			args = string(b)
@@ -246,4 +253,21 @@ func commandSignals(cmd, cwd string) []config.Signals {
 		}
 	}
 	return out
+}
+
+// looksProd reports whether anything the call carries names production: the
+// command, the arguments, the paths and the content, with quotes, escapes and
+// JSON punctuation taken away so 'prod-db' and "prod" are the word prod.
+func looksProd(in judge.Input) bool {
+	clean := strings.NewReplacer(`"`, " ", "'", " ", "\\", " ", "`", " ", "{", " ", "}", " ", "[", " ", "]", " ").Replace
+	if config.LooksProd(in.Command) || config.LooksProd(clean(in.Command)) || config.LooksProd(string(in.Args)) || config.LooksProd(clean(string(in.Args))) ||
+		config.LooksProd(in.Content) || config.LooksProd(clean(in.Content)) {
+		return true
+	}
+	for _, p := range in.Paths {
+		if config.LooksProd(p) {
+			return true
+		}
+	}
+	return false
 }

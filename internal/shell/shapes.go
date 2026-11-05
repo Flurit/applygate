@@ -21,13 +21,16 @@ func init() {
 		"cd", "pwd", "echo", "true", "false", "test", "[", "exit", "unset", "sleep", "date", "which", "type",
 		"ls", "cat", "head", "tail", "wc", "grep", "egrep", "uniq", "cut", "tr", "tee", "diff", "cmp", "tree", "stat",
 		"file", "du", "df", "basename", "dirname", "realpath", "readlink", "mkdir", "touch", "cp", "mv", "rm", "ln",
-		"chmod", "find", "jq", "yq", "column", "xxd", "od", "base64", "sha256sum", "shasum", "md5sum", "gzip", "gunzip",
+		"chmod", "find", "jq", "column", "xxd", "od", "base64", "sha256sum", "shasum", "md5sum", "gzip", "gunzip",
 		"unzip", "nl", "fold", "comm", "join", "paste", "seq", "id", "whoami", "uname", "hostname", "printenv",
 		"gofmt", "terraform", "tofu", "tfsec", "shellcheck", "gsutil", "applygate", "env",
 	} {
 		shapes[n] = nil
 	}
 	shapes["printf"] = denyOpts("-v")
+	// yq 4.47 and later has a system operator that runs a command, enabled by
+	// this option.
+	shapes["yq"] = denyOpts("--security-enable-system-operator")
 	// curl -K reads options (output files, more URLs) from a file.
 	shapes["curl"] = denyOpts("-K", "--config")
 	// infracost runs terraform init and plan in the directory, with init and

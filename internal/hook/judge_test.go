@@ -147,7 +147,7 @@ func TestJudgeSeesMCPAndWrites(t *testing.T) {
 		t.Fatalf("write: %+v", f.asked)
 	}
 	f = &fakeJudge{verdict: policy.Ask}
-	runJudged(t, Claude{}, opt, f, "Bash", filepath.Join(root, "prod"), map[string]any{"command": "curl -H 'Authorization: Bearer abc123def' -X DELETE https://api.acme.io/v1/tenants/42"})
+	runJudged(t, Claude{}, opt, f, "Bash", filepath.Join(root, "prod"), map[string]any{"command": "acmectl -H 'Authorization: Bearer abc123def' delete tenants/42"})
 	if len(f.asked) != 1 || strings.Contains(f.asked[0].Command, "abc123def") {
 		t.Fatalf("secret in command sent to the judge: %+v", f.asked)
 	}

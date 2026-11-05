@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -843,7 +844,7 @@ func mergeBytes(cfg *Config, path string, b []byte, l layer) error {
 		// what that program runs.
 		// Under a managed install a wrapper comes from the system config:
 		// one skips its first arguments, which can hide what it runs.
-		if repo && wellKnown[w.Name] || l == layerUserManaged {
+		if repo && (wellKnown[w.Name] || classify.ModelledProgram(w.Name)) || l == layerUserManaged {
 			ignored("wrappers: " + w.Name)
 			continue
 		}
@@ -1486,6 +1487,7 @@ func (c *Config) Resolve(s Signals) Resolution {
 // match any text, / included (s3://bucket/* matches every key in the
 // bucket), and ? one character.
 func backendMatch(pattern, v string) bool {
+	pattern, v = normalizeBackend(pattern), normalizeBackend(v)
 	var b strings.Builder
 	b.WriteString("^")
 	for _, r := range pattern {
@@ -1501,6 +1503,32 @@ func backendMatch(pattern, v string) bool {
 	b.WriteString("$")
 	re, err := regexp.Compile(b.String())
 	return err == nil && re.MatchString(v)
+}
+
+// normalizeBackend puts a backend URL in one spelling, so that the host in
+// another case, the default port, percent-encoding, doubled slashes and a
+// prefix with leading or trailing slashes (s3, gcs, http) name the same state
+// as the pattern does.
+func normalizeBackend(s string) string {
+	scheme, rest, ok := strings.Cut(s, "://")
+	if !ok {
+		return s
+	}
+	scheme = strings.ToLower(scheme)
+	host, p, _ := strings.Cut(rest, "/")
+	if scheme == "http" || scheme == "https" {
+		host = strings.ToLower(host)
+		host = strings.TrimSuffix(host, map[string]string{"http": ":80", "https": ":443"}[scheme])
+	}
+	if d, err := url.PathUnescape(p); err == nil {
+		p = d
+	}
+	p = path.Clean("/" + p)
+	p = strings.TrimPrefix(p, "/")
+	if p == "" {
+		return scheme + "://" + host
+	}
+	return scheme + "://" + host + "/" + p
 }
 
 func globEq(pattern, v string) bool {

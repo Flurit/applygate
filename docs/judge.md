@@ -18,7 +18,7 @@
 
 A call reaches the judge only when all of these hold:
 
-1. The rules allowed it without recognizing any action in it. Anything they classified, safe or not, is decided by the rules alone.
+1. The rules allowed it, and part of it is not a call they recognize. A recognized action that the rules allowed no longer hides the rest of a command from the judge: in `aws s3 cp x s3://b/x && pulumi destroy --yes` the second command is judged, and the text of the whole command leaves the machine. A call made of recognized actions only is decided by the rules alone.
 2. It is one of:
    - a **shell command** that starts a program outside a short list of local ones;
    - a **file write or edit**, whatever the file;

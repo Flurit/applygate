@@ -32,8 +32,12 @@ type Word struct {
 
 // Invocation is one program the shell would start.
 type Invocation struct {
-	Args   []Word
-	Dir    string // effective working directory; "" when unknown
+	Args []Word
+	Dir  string // effective working directory; "" when unknown
+	// Approx is set when Dir is only the session directory, used because
+	// the host does not report the command's own: a relative -chdir or -C
+	// from it is not known.
+	Approx bool
 	Env    map[string]string
 	Redirs []Redir
 	Via    []string // how we got here: "bash -c", "make destroy", ...
@@ -106,8 +110,11 @@ type Options struct {
 	// a directory that does not exist, and that no earlier step creates,
 	// leaves the directory unknown: the cd fails and the shell stays
 	// where it was.
-	IsDir    func(path string) bool
-	MaxDepth int
+	IsDir func(path string) bool
+	// UnknownBase is set when the host does not report the directory the
+	// command runs in and Dir is the session directory used instead.
+	UnknownBase bool
+	MaxDepth    int
 	// ProtectedPaths are the guard-file patterns from the config. An
 	// interpreter body that names one of them is never a plain file edit.
 	ProtectedPaths []string
@@ -138,6 +145,9 @@ func DefaultReadFile(path string) ([]byte, error) {
 }
 
 // Analyze parses cmd and returns the invocations it would run.
+// maxAnalyzeBytes is the largest command text the analyzer parses.
+const maxAnalyzeBytes = 1 << 20
+
 func Analyze(cmd string, opt Options) *Result {
 	if opt.MaxDepth == 0 {
 		opt.MaxDepth = 8
@@ -147,6 +157,13 @@ func Analyze(cmd string, opt Options) *Result {
 	}
 	a := &analyzer{opt: opt, res: &Result{}, budget: 2000}
 	st := newState(opt)
+	if len(cmd) > maxAnalyzeBytes {
+		// The syntax tree of a command takes about 200 times its size in
+		// memory; one this large is not parsed, and what it may run is not
+		// known.
+		a.unbounded(st, nil, cmd[:256], "command too large to analyze")
+		return a.res
+	}
 	a.source(cmd, st, nil, 0)
 	return a.res
 }
@@ -163,6 +180,10 @@ type state struct {
 	paramsOK bool
 	arg0     value // $0 inside a script
 	dir      string
+	// approx is set while dir is only the session directory the host
+	// reports for a command whose own directory it does not: a relative cd,
+	// -C or -chdir from there leads to a place that is not known.
+	approx   bool
 	funcs    map[string]*syntax.Stmt
 	aliases  map[string]string
 	dirStack []string // pushd's stack, most recent last
@@ -199,6 +220,7 @@ func newState(opt Options) *state {
 		vars:     map[string]value{},
 		exported: map[string]bool{},
 		dir:      opt.Dir,
+		approx:   opt.UnknownBase,
 		funcs:    map[string]*syntax.Stmt{},
 		aliases:  map[string]string{},
 		paramsOK: true,
@@ -402,6 +424,35 @@ func (a *analyzer) stmtsIn(ss []*syntax.Stmt, st *state, via []string, depth int
 	}
 }
 
+// clobberTargets reads zsh's >! >>! >&! &>! (and >| style) operators. The
+// bash grammar this parser follows reads them as the plain operator and a
+// target of "!", so the file is the next word of the command, which it sees
+// as an argument. The file is moved from the arguments to the redirection.
+func clobberTargets(s *syntax.Stmt) {
+	c, ok := s.Cmd.(*syntax.CallExpr)
+	if !ok {
+		return
+	}
+	for _, r := range s.Redirs {
+		switch r.Op {
+		case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.DplOut:
+		default:
+			continue
+		}
+		if r.Word == nil || r.Word.Lit() != "!" {
+			continue
+		}
+		end := r.Word.End().Offset()
+		for i, arg := range c.Args {
+			if arg.Pos().Offset() >= end {
+				r.Word = arg
+				c.Args = append(append([]*syntax.Word(nil), c.Args[:i]...), c.Args[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
 func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in stdin) {
 	if s == nil {
 		return
@@ -418,6 +469,7 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 		st = st.clone()
 	}
 	var redirs []Redir
+	clobberTargets(s)
 	for _, r := range s.Redirs {
 		switch r.Op {
 		case syntax.Hdoc, syntax.DashHdoc:
@@ -438,21 +490,24 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 			}
 			redirs = append(redirs, Redir{Op: r.Op.String(), Target: w})
 		default:
-			w := a.word(r.Word, st, via, depth)
-			write := r.Op != syntax.DplIn && r.Op != syntax.DplOut
-			if r.Op == syntax.DplOut || r.Op == syntax.DplIn {
-				// >&FD and >&- duplicate or close a descriptor; >& FILE (bash
-				// and zsh) sends stdout and stderr to the file. A word that
-				// is not a number or - is a file, and one that cannot be
-				// resolved may be.
-				t := w.Text
-				fd := t == "-" || t != "" && strings.Trim(t, "0123456789") == "" ||
-					len(t) > 1 && t[len(t)-1] == '-' && strings.Trim(t[:len(t)-1], "0123456789") == ""
-				if !fd && !(w.Resolved && t == "") {
-					write = r.Op == syntax.DplOut
+			// A brace expansion in the target ({a,b}.json) is several files:
+			// zsh writes every one (multios), bash refuses. Each is a write.
+			for _, w := range a.words(r.Word, st, via, depth) {
+				write := r.Op != syntax.DplIn && r.Op != syntax.DplOut
+				if r.Op == syntax.DplOut || r.Op == syntax.DplIn {
+					// >&FD and >&- duplicate or close a descriptor; >& FILE (bash
+					// and zsh) sends stdout and stderr to the file. A word that
+					// is not a number or - is a file, and one that cannot be
+					// resolved may be.
+					t := w.Text
+					fd := t == "-" || t != "" && strings.Trim(t, "0123456789") == "" ||
+						len(t) > 1 && t[len(t)-1] == '-' && strings.Trim(t[:len(t)-1], "0123456789") == ""
+					if !fd && !(w.Resolved && t == "") {
+						write = r.Op == syntax.DplOut
+					}
 				}
+				redirs = append(redirs, Redir{Op: r.Op.String(), Target: w, Write: write})
 			}
-			redirs = append(redirs, Redir{Op: r.Op.String(), Target: w, Write: write})
 		}
 	}
 	defer func() {
@@ -466,7 +521,7 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 	// ({ …; } > f, ( … ) > f, if …; fi > f, a bare > f) apply all the same:
 	// they are recorded as an invocation with no program.
 	if c, isCall := s.Cmd.(*syntax.CallExpr); (!isCall || len(c.Args) == 0) && len(redirs) > 0 {
-		a.res.Invocations = append(a.res.Invocations, Invocation{Dir: st.dir, Env: st.env(), Redirs: redirs, Via: append([]string(nil), via...)})
+		a.res.Invocations = append(a.res.Invocations, Invocation{Dir: st.dir, Approx: st.approx, Env: st.env(), Redirs: redirs, Via: append([]string(nil), via...)})
 	}
 	switch c := s.Cmd.(type) {
 	case *syntax.CallExpr:
@@ -959,6 +1014,14 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 			if home, ok := a.opt.Env["HOME"]; ok {
 				v = home + v[1:]
 			}
+		} else if first && strings.HasPrefix(v, "~") && len(v) > 1 && v[1] != '/' {
+			// ~+ is the working directory, ~- the previous one, ~user
+			// another person's home, ~N a stack entry. Only ~+ is known.
+			if st != nil && st.dir != "" && (v == "~+" || strings.HasPrefix(v, "~+/")) {
+				v = st.dir + v[2:]
+			} else {
+				mark()
+			}
 		}
 		b.WriteString(v)
 	case *syntax.SglQuoted:
@@ -1087,6 +1150,15 @@ func (a *analyzer) param(x *syntax.ParamExp, st *state) (string, bool) {
 
 // abs is where p names from the current directory, as the kernel resolves
 // it (see PhysicalJoin).
+// dirAbs resolves p, a directory a command is run in or moves to. From a
+// directory that is only approximate, a relative one is not known ("").
+func (a *analyzer) dirAbs(st *state, p string) string {
+	if st.approx && !filepath.IsAbs(p) {
+		return ""
+	}
+	return a.abs(st, p)
+}
+
 func (a *analyzer) abs(st *state, p string) string {
 	if filepath.IsAbs(p) || st.dir == "" {
 		return PhysicalJoin("", p)

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Flurit/applygate/internal/approval"
 	"github.com/Flurit/applygate/internal/config"
@@ -368,6 +369,11 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	// fails closed: an unknown environment is treated as protected.
 	fail := func(cfg *config.Config, cwd, msg string) Output {
 		block := failureBlocks(cfg, cwd, false)
+		if !block && cfg != nil && !cfg.Observe() && cfg.OnError != "allow" && infraWord.MatchString(entry.Command) {
+			// One internal error must not let a command that runs an
+			// infrastructure program through, whatever tier the root is.
+			block = true
+		}
 		mode := "enforce"
 		if cfg != nil {
 			mode = cfg.Mode
@@ -528,6 +534,7 @@ func decided(a Adapter, ev policy.Event, d policy.Decision, cfg *config.Config, 
 		d = withApproval(opt.Approvals, ev, d, now())
 	}
 	entry.Verdict, entry.Enforced, entry.Actions, entry.Notes = d.Verdict, d.Enforced, d.Actions, d.Notes
+	d.Message = safeMessage(d.Message)
 	if er, isEventRenderer := a.(eventRenderer); isEventRenderer {
 		return er.RenderEvent(ev, d)
 	}
@@ -569,6 +576,13 @@ func withApproval(path string, ev policy.Event, d policy.Decision, now time.Time
 	if d.Enforced != policy.Block {
 		return d // the host shows its own prompt
 	}
+	if decisionlog.UnclosedKeyMarker(ev.Command) || decisionlog.UnclosedKeyMarker(ev.Content) {
+		// The person approving sees the call with its secrets hidden, and a
+		// key header with no end hides everything after it: they could not
+		// read what they would approve.
+		d.Notes = append(d.Notes, "no approval offered: part of this call is hidden by redaction (an unclosed private-key header), so a person could not read what they approve")
+		return d
+	}
 	rec, err = approval.Request(path, approval.NewRequest(ev, d), now)
 	if err != nil {
 		d.Notes = append(d.Notes, "approvals unavailable: "+err.Error())
@@ -588,4 +602,38 @@ func withMCPNote(d policy.Decision, note string) policy.Decision {
 		d.Message += "\nNote: " + note
 	}
 	return d
+}
+
+// maxMessage caps the text shown to the person and the agent for one verdict.
+const maxMessage = 16 << 10
+
+// safeMessage makes a verdict's text safe to show: the command and the paths
+// in it come from the agent, so terminal escapes, carriage returns and
+// direction overrides are written out (they could redraw the prompt the
+// person reads), secrets are redacted as in the log (a backend address can
+// carry a password), and a huge command does not become a huge answer.
+func safeMessage(s string) string {
+	if s == "" {
+		return s
+	}
+	if len(s) > maxMessage {
+		cut := maxMessage
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + fmt.Sprintf("\n…(the rest of this message, %d bytes, is left out)", len(s)-cut)
+	}
+	s = decisionlog.Redact(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == 0x2028 || r == 0x2029 || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069):
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

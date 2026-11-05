@@ -153,7 +153,7 @@ var hostFormats = []hostFormat{
 	{
 		// The instance directory is the cwd; the command's directory is the
 		// relative workdir, as the OpenCode shell tool takes it.
-		agent: "opencode", dirKnown: true,
+		agent: "opencode", dirKnown: false,
 		event: func(s Scenario, in map[string]any, repo string) map[string]any {
 			tool, args := "bash", map[string]any{"command": in["command"]}
 			if s.Cwd != "" {

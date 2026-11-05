@@ -39,7 +39,7 @@ type fakeExec struct {
 func withPlan(t *testing.T, file *string) {
 	old := applyPlanJSON
 	applyPlanJSON = func(_, _, pf string) ([]byte, error) {
-		if pf != "tfplan" {
+		if filepath.Base(pf) != "tfplan" {
 			return nil, os.ErrNotExist
 		}
 		return os.ReadFile(*file)
@@ -79,7 +79,7 @@ func TestApplyJudgesThePlanBeforeRunningTheEngine(t *testing.T) {
 	}
 	// The same plan in a disposable directory is applied; the engine's exit code is returned.
 	rc, _ = run("envs/dev", destroy)
-	if rc != 7 || len(fe.calls) != 1 || strings.Join(fe.calls[0], " ") != "terraform apply tfplan" || fe.dir != filepath.Join(root, "envs/dev") {
+	if rc != 7 || len(fe.calls) != 1 || len(fe.calls[0]) != 3 || fe.calls[0][1] != "apply" || filepath.Base(fe.calls[0][2]) != "tfplan" || fe.calls[0][2] == "tfplan" || fe.dir != filepath.Join(root, "envs/dev") {
 		t.Fatalf("disposable destroy: rc %d calls %v dir %s", rc, fe.calls, fe.dir)
 	}
 	// Standard tier asks; without a terminal it is refused: there is no

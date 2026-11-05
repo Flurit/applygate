@@ -328,7 +328,7 @@ func (a *analyzer) builtinOut(args []Word, st *state, in stdin) (string, bool) {
 		if len(rest) != 1 || strings.HasPrefix(rest[0], "-") || st.dir == "" && !filepath.IsAbs(rest[0]) {
 			return "", false
 		}
-		st.dir = a.abs(st, rest[0])
+		st.dir = a.dirAbs(st, rest[0])
 		return "", true
 	case "pwd":
 		if st.dir != "" {

@@ -85,13 +85,13 @@ func (a *analyzer) call0(args []Word, redirs []Redir, cmdSt, st *state, via []st
 					return
 				}
 			}
-			a.res.Invocations = append(a.res.Invocations, Invocation{Dir: dir, Env: env, Redirs: redirs, Via: append([]string(nil), via...)})
+			a.res.Invocations = append(a.res.Invocations, Invocation{Dir: dir, Approx: st.approx, Env: env, Redirs: redirs, Via: append([]string(nil), via...)})
 		}()
 	}
 	if len(args) == 0 {
 		// exec 5<>file: the redirections apply to the shell itself.
 		if len(redirs) > 0 && len(via) > 0 && via[len(via)-1] == "exec" {
-			a.res.Invocations = append(a.res.Invocations, Invocation{Dir: cmdSt.dir, Env: cmdSt.env(), Redirs: redirs, Via: append([]string(nil), via...)})
+			a.res.Invocations = append(a.res.Invocations, Invocation{Dir: cmdSt.dir, Approx: cmdSt.approx, Env: cmdSt.env(), Redirs: redirs, Via: append([]string(nil), via...)})
 		}
 		return
 	}
@@ -101,7 +101,7 @@ func (a *analyzer) call0(args []Word, redirs []Redir, cmdSt, st *state, via []st
 	}
 	record := func() {
 		inv := Invocation{
-			Args: args, Dir: cmdSt.dir, Env: cmdSt.env(), Redirs: redirs, Via: append([]string(nil), via...),
+			Args: args, Dir: cmdSt.dir, Approx: cmdSt.approx, Env: cmdSt.env(), Redirs: redirs, Via: append([]string(nil), via...),
 		}
 		if in.present && in.known {
 			inv.Stdin = in.text
@@ -238,16 +238,29 @@ func (a *analyzer) call0(args []Word, redirs []Redir, cmdSt, st *state, via []st
 		}
 		target := ""
 		ok, physical := true, false
+		operands := 0
 		for _, w := range rest {
 			if strings.HasPrefix(w.Text, "-") && w.Resolved && w.Text != "-" {
 				physical = physical || w.Text != "--" && strings.Contains(w.Text, "P")
 				continue
 			}
-			target, ok = w.Text, w.Resolved
-			break
+			if operands == 0 {
+				target, ok = w.Text, w.Resolved
+			}
+			operands++
+		}
+		if operands > 1 {
+			// zsh: cd OLD NEW replaces OLD with NEW in the working directory
+			// (bash refuses). Where it lands is not the first word.
+			st.dir = ""
+			return
 		}
 		switch {
 		case !ok:
+			st.dir = ""
+		case st.approx && target != "" && target != "~" && !strings.HasPrefix(target, "~/") && !filepath.IsAbs(target):
+			// From a directory the host did not report, a relative cd leads
+			// to a place that is not known.
 			st.dir = ""
 		case target == "" || target == "~":
 			st.dir = a.opt.Env["HOME"]
@@ -268,7 +281,10 @@ func (a *analyzer) call0(args []Word, redirs []Redir, cmdSt, st *state, via []st
 			if !filepath.IsAbs(target) {
 				logical = filepath.Join(st.dir, target)
 			}
-			st.dir = a.abs(st, target)
+			st.dir = a.dirAbs(st, target)
+			if filepath.IsAbs(target) {
+				st.approx = false
+			}
 			if !physical && !samePlace(filepath.Clean(logical), st.dir) {
 				// cd follows .. in the text of the path, cd -P (and set -P)
 				// where a symlink really leads: which one runs is not
@@ -441,7 +457,7 @@ func (a *analyzer) call0(args []Word, redirs []Redir, cmdSt, st *state, via []st
 			child.dir = ""
 			if dir != nil {
 				if dir.Resolved {
-					child.dir = a.abs(st, dir.Text)
+					child.dir = a.dirAbs(st, dir.Text)
 				}
 			}
 			a.reparseIn(cmd, child, via, bn, depth)
@@ -510,9 +526,17 @@ func (a *analyzer) call0(args []Word, redirs []Redir, cmdSt, st *state, via []st
 				a.source(script.Text, cmdSt.childState(), append(via, bn), depth+1)
 				return
 			}
-			es := cmdSt
+			// The environment these runners load (.envrc, mise.toml [env],
+			// devbox.json, a flake's shell hook) is not read here, so any of
+			// the tier signals in it is unknown, not absent.
+			es := cmdSt.clone()
+			for _, k := range TierEnv {
+				if _, set := es.vars[k]; !set {
+					es.vars[k] = value{}
+					es.exported[k] = true
+				}
+			}
 			if n := len(rest) - len(cmd); n >= 0 && movesDir(rest[:n]) {
-				es = cmdSt.clone()
 				es.dir = "" // mise -C DIR, mise exec --cd DIR
 			}
 			a.call(cmd, redirs, es, st, append(via, bn), depth+1, in)
@@ -580,7 +604,7 @@ func (a *analyzer) call0(args []Word, redirs []Redir, cmdSt, st *state, via []st
 			}
 			ss = cmdSt.clone()
 			if dir.Resolved {
-				ss.dir = a.abs(ss, dir.Text)
+				ss.dir = a.dirAbs(ss, dir.Text)
 			} else {
 				ss.dir = ""
 			}
@@ -647,7 +671,7 @@ func (a *analyzer) call0(args []Word, redirs []Redir, cmdSt, st *state, via []st
 			es := cmdSt.clone()
 			if dir != nil {
 				if dir.Resolved {
-					es.dir = a.abs(es, dir.Text)
+					es.dir = a.dirAbs(es, dir.Text)
 				} else {
 					es.dir = ""
 				}
@@ -814,7 +838,7 @@ func (a *analyzer) env(rest []Word, redirs []Redir, cmdSt, st *state, via []stri
 	}
 	chdir := func(v Word) {
 		if v.Resolved {
-			es.dir = a.abs(es, v.Text)
+			es.dir = a.dirAbs(es, v.Text)
 		} else {
 			es.dir = ""
 		}
@@ -2370,13 +2394,11 @@ func (a *analyzer) git(rest []Word, cmdSt, st *state, via []string, depth int) {
 	// receive-pack, archive's --exec, and filter-branch's filters.
 	for i := 0; i < len(rest); i++ {
 		k, v, eq := strings.Cut(rest[i].Text, "=")
-		switch k {
-		case "--upload-pack", "--receive-pack", "--exec", "--upload-archive", "--tree-filter", "--index-filter", "--msg-filter",
-			"--env-filter", "--commit-filter", "--tag-name-filter", "--parent-filter", "--subdirectory-filter":
+		if full := gitLongName(k, gitRunOpts); full != "" {
 			if eq {
-				run(Word{Text: v, Resolved: rest[i].Resolved, Prefix: v}, "git "+k)
+				run(Word{Text: v, Resolved: rest[i].Resolved, Prefix: v}, "git "+full)
 			} else if i+1 < len(rest) {
-				run(rest[i+1], "git "+k)
+				run(rest[i+1], "git "+full)
 				i++
 			}
 		}
@@ -2433,7 +2455,7 @@ func (a *analyzer) git(rest []Word, cmdSt, st *state, via []string, depth int) {
 			continue
 		case t == "-C" && i+1 < len(rest):
 			if rest[i+1].Resolved {
-				child.dir = a.abs(child, rest[i+1].Text)
+				child.dir = a.dirAbs(child, rest[i+1].Text)
 			} else {
 				child.dir = ""
 			}
@@ -2474,10 +2496,10 @@ func (a *analyzer) git(rest []Word, cmdSt, st *state, via []string, depth int) {
 	case "grep":
 		// -O and --open-files-in-pager take their pager only glued on.
 		for _, w := range args {
-			if v, ok := strings.CutPrefix(w.Text, "-O"); ok && v != "" {
+			if k, v, eq := strings.Cut(w.Text, "="); eq && gitLongName(k, []string{"--open-files-in-pager"}) != "" {
+				run(Word{Text: v, Resolved: w.Resolved, Prefix: v}, "git grep -O")
+			} else if v, ok := strings.CutPrefix(w.Text, "-O"); ok && v != "" && !strings.HasPrefix(w.Text, "--") {
 				run(Word{Text: v, Resolved: w.Resolved, Prefix: strings.TrimPrefix(w.Prefix, "-O")}, "git grep -O")
-			} else if v, ok := strings.CutPrefix(w.Text, "--open-files-in-pager="); ok {
-				run(Word{Text: v, Resolved: w.Resolved, Prefix: strings.TrimPrefix(w.Prefix, "--open-files-in-pager=")}, "git grep -O")
 			}
 		}
 	case "submodule":
@@ -2498,19 +2520,50 @@ func gitExecKey(k string) bool {
 		strings.HasPrefix(k, "filter.") || strings.HasSuffix(k, ".command") || strings.HasSuffix(k, ".cmd")
 }
 
+// gitRunOpts are the long options whose value is a program git runs.
+var gitRunOpts = []string{"--upload-pack", "--receive-pack", "--exec", "--upload-archive", "--tree-filter", "--index-filter", "--msg-filter",
+	"--env-filter", "--commit-filter", "--tag-name-filter", "--parent-filter", "--subdirectory-filter"}
+
+// gitLongName returns the long option k (a --name without its value) stands
+// for among the candidates: git takes any unique prefix of a long option, so
+// --exe is --exec and --tree-f is --tree-filter. A prefix that fits more
+// than one (git refuses it) is taken as the first, the safe reading here.
+func gitLongName(k string, candidates []string) string {
+	if !strings.HasPrefix(k, "--") || len(k) < 4 {
+		return ""
+	}
+	for _, c := range candidates {
+		if strings.HasPrefix(c, k) {
+			return c
+		}
+	}
+	return ""
+}
+
 // gitCmdOpt runs the value of an option that takes a command: separate
-// (-x cmd, --exec cmd), with = (--exec=cmd) or glued to the short form
-// (-xcmd).
+// (-x cmd, --exec cmd), with = (--exec=cmd), glued to the short form (-xcmd),
+// after other short options in a cluster (-qx cmd), or through an
+// abbreviated long name (--exe cmd).
 func gitCmdOpt(args []Word, short, long string, run func(Word, string), label string) {
 	for j, w := range args {
+		k, v, eq := strings.Cut(w.Text, "=")
 		switch {
-		case (w.Text == short || w.Text == long) && j+1 < len(args):
-			run(args[j+1], label)
-		case strings.HasPrefix(w.Text, long+"="):
-			v := strings.TrimPrefix(w.Text, long+"=")
-			run(Word{Text: v, Resolved: w.Resolved, Prefix: strings.TrimPrefix(w.Prefix, long+"=")}, label)
-		case strings.HasPrefix(w.Text, short) && len(w.Text) > len(short) && !strings.HasPrefix(w.Text, "--"):
-			run(Word{Text: w.Text[len(short):], Resolved: w.Resolved, Prefix: strings.TrimPrefix(w.Prefix, short)}, label)
+		case w.Text == short || gitLongName(k, []string{long}) != "" && !eq:
+			if j+1 < len(args) {
+				run(args[j+1], label)
+			}
+		case eq && gitLongName(k, []string{long}) != "":
+			run(Word{Text: v, Resolved: w.Resolved, Prefix: strings.TrimPrefix(w.Prefix, k+"=")}, label)
+		case strings.HasPrefix(w.Text, "-") && !strings.HasPrefix(w.Text, "--") && strings.Contains(w.Text[1:], short[1:]):
+			// The short option's letter inside a cluster: what follows it is
+			// the command, or the next word when it ends the cluster.
+			cl := w.Text[1:]
+			at := strings.Index(cl, short[1:])
+			if rest := cl[at+1:]; rest != "" {
+				run(Word{Text: rest, Resolved: w.Resolved, Prefix: rest}, label)
+			} else if j+1 < len(args) {
+				run(args[j+1], label)
+			}
 		}
 	}
 }

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Red-team round 11 fixes** (`review/v0.6.0/2026-11-05-red-team-round-11.md`): fixed by family; details and costs in `docs/limits.md` ("Costs of the round-11 fixes").
+  - **State files by rule:** a program not known to only read that names a state file in any spelling is state surgery in that file's directory; `find -P`, `~+`, `--target-directory=`, `zip -mj`, `git archive -o`, `opa`/`kustomize`/`az rest`/`gh` outputs, `curl --hsts`, `wget --save-cookies`, `tar -r`, aws outfile calls, redirects, Write and Edit (C4 to C11, R6-1).
+  - **zsh:** `cd OLD NEW`, brace expansion and `>!` in redirects (C1 to C3). **Unreported directory:** relative `cd`/`-chdir`/`-C` from it is unknown (R3-1). **Runners:** `direnv`, `mise`, `asdf`, `devbox`, `nix` environments are unknown (R6-2). **Buckets:** `aws s3` writes to a `backends:` bucket are state surgery; backend patterns are normalized (R6-3, R3-4).
+  - **Fixed a round-10 crash:** `cp *.txt "$DEST"` panicked in the unresolved-name rule; an internal error now blocks commands that name an infrastructure program (R5-1).
+  - Git option clusters and prefixes, terragrunt single-dash options, `gcloud projects delete`, `curl -X DELETE`, `gh` deletes, secret-printing reads, `yq` system operator; plan gate (deleted protections, CIDR unions, broad wildcards, admin ports); `applygate apply` applies the judged bytes; judge filter, MCP argument names, redaction of JSON strings, verdict message safety, size cap, `init` symlink, `install.sh` symlink, launcher retry, wrappers refusal (R4-1 to R4-9, R5-2 to R5-13, R3-2 to R3-6, R1-10 to R1-13).
+  - The attack pack gains 48 reproductions and controls (790 in all). Cost on the agent trial: no verdict changes in prod, staging or dev.
+  - Not done: listed in `docs/limits.md` ("Not done (round 11)").
 - **Red-team round 10 fixes** (`review/v0.6.0/2026-11-05-red-team-round-10.md`): fixed by family; details and costs in `docs/limits.md` ("Costs of the round-10 fixes").
   - **"Followed" is decided per invocation,** not by program name: an unknown program with a standalone `terraform` word, or a second use of a name followed once, is not followed; a docker image is the first word after the options, not any word that mentions terraform (C2, C6).
   - **Shell semantics the analysis did not model are unseen code:** a bare shell reading an untracked stdin (`exec <<< TEXT; bash`, `bash <> FILE`, `>(bash)`), `${!x}` and `${x@P}`, functions through `command`/`env`/`exec`/wrappers, `unset -f`, same-line aliases, shadowed echo/pwd/printf, `xargs -0`/`-d`, `make -j TARGET`, `command printf -v`, an unresolved `-chdir=$x` (C1, C3, C4, C5, C7, C8).
