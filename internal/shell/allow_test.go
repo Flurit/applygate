@@ -120,3 +120,20 @@ func TestAllowListStage2(t *testing.T) {
 		}
 	}
 }
+
+func TestStage3Grammars(t *testing.T) {
+	plain := []string{"cd dir && ls", "cd -P dir", "cd", "cd ..", "echo x > out.txt", "echo x >> out.txt", "cat < in.txt", "ls 2>&1", "ls >/dev/null 2>&1", "cat <<EOF\nhi\nEOF", `cd "$HOME"`}
+	for _, c := range plain {
+		if !plainCall(t, c) {
+			ok, why := PlainShape(c, analyze(c, "/r"))
+			t.Errorf("%q should be plain: %v %s", c, ok, why)
+		}
+	}
+	notPlain := []string{"cd a b", "cd -", "cd -x a", "echo x >| out", "echo x >! out", "echo x <> out", "echo x > out{1,2}", "echo x > *.txt", "echo x > ~/out", "echo x > $OUT", `echo x > "$OUT"`,
+		"echo x > =cmd", "echo x &> out", "echo x {fd}> out", "echo x >& out", "echo x > ''"}
+	for _, c := range notPlain {
+		if plainCall(t, c) {
+			t.Errorf("%q should not be plain", c)
+		}
+	}
+}

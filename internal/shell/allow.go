@@ -222,7 +222,7 @@ func itoa(n int) string {
 // exec-capable option never belongs here: it gets a prog.
 var inert = toSet(
 	// builtins and trivial
-	"cd", "pwd", "echo", "true", "false", "test", "[", "exit", "unset", "sleep", "which", "type",
+	"pwd", "echo", "true", "false", "test", "[", "exit", "unset", "sleep", "which", "type",
 	// readers of files and directories
 	"ls", "cat", "head", "tail", "wc", "grep", "egrep", "cut", "tr", "cmp", "stat", "df", "du",
 	"basename", "dirname", "realpath", "readlink", "column", "od", "jq", "nl", "fold", "comm", "join", "paste",
@@ -316,6 +316,19 @@ func init() {
 		return valuedSubcommands(nil, "ls", "cat", "stat", "du", "hash", "version", "help")(args, Invocation{})
 	}
 	shapes["find"] = findShape
+	// cd takes one directory: zsh's two-operand form, CDPATH-sensitive plain
+	// names are the analysis's, and "-" is the previous directory, which the
+	// analysis does not know.
+	cd := newProg("-P -L", "").withMaxOps(1).withLoose()
+	cd.ops = func(ops []Word) string {
+		for _, o := range ops {
+			if optText(o) == "-" {
+				return "cd - goes to the previous directory"
+			}
+		}
+		return ""
+	}
+	allow("cd", cd)
 
 	for n := range inert {
 		shapes[n] = nil
