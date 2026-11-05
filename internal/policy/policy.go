@@ -1571,6 +1571,12 @@ func credFileRuns(a classify.Action) string {
 			if !filepath.IsAbs(p) && a.Dir != "" {
 				p = shell.PhysicalJoin(a.Dir, p)
 			}
+			if p == os.DevNull || p == "/dev/null" {
+				// The null device is empty by definition: pointing a CLI at it
+				// (as sandboxes do) names no program, and no content can
+				// arrive through it.
+				continue
+			}
 			b, err := safefile.ReadFileMax(p, 1<<20)
 			if err != nil {
 				if !os.IsNotExist(err) {
