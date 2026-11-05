@@ -21,6 +21,9 @@ type Terragrunt struct {
 	// Unknown says why the backend cannot be told: a remote_state value
 	// built with locals or functions, or a generate "backend" block.
 	Unknown string
+	// Generated are the configuration files generate blocks write, parsed:
+	// a provider block there is a target like one in a .tf file.
+	Generated []*hcl.File
 }
 
 var (
@@ -51,6 +54,36 @@ func ReadTerragrunt(dir string) *Terragrunt {
 				tg.Unknown = "generate \"" + b.Labels[0] + "\" writes the backend configuration, which is not read"
 			} else if a, ok := attrs["path"]; ok && strings.Contains(strings.ToLower(literalParts(a.Expr)), "backend") {
 				tg.Unknown = "a generate block writes a backend file, which is not read"
+			}
+			// Whatever the block is called, what it writes is configuration
+			// Terraform reads: its provider blocks are targets and a backend
+			// block in it is the backend. Contents built with Terragrunt
+			// functions cannot be read.
+			label := ""
+			if len(b.Labels) > 0 {
+				label = b.Labels[0]
+			}
+			if a, ok := attrs["contents"]; ok {
+				if text, lit := scalar(a.Expr); lit {
+					f, d := hclsyntax.ParseConfig([]byte(text), "generate "+label, hcl.Pos{Line: 1, Column: 1})
+					switch {
+					case d.HasErrors() || f == nil:
+						if pa, ok := attrs["path"]; !ok || strings.Contains(strings.ToLower(literalParts(pa.Expr)), ".tf") {
+							if tg.Unknown == "" {
+								tg.Unknown = "generate \"" + label + "\" writes configuration that does not parse"
+							}
+						}
+					default:
+						tg.Generated = append(tg.Generated, f)
+						if why := runsTerraformBackend(f); why && tg.Unknown == "" {
+							tg.Unknown = "generate \"" + label + "\" writes a backend block, which is not read"
+						}
+					}
+				} else if t := strings.ToLower(literalParts(a.Expr)); strings.Contains(t, "provider") || strings.Contains(t, "backend") || strings.Contains(t, "terraform") {
+					if tg.Unknown == "" {
+						tg.Unknown = "generate \"" + label + "\" writes configuration built with Terragrunt functions, which is not read"
+					}
+				}
 			}
 		case "terraform":
 			if a, ok := attrs["source"]; ok {
@@ -115,4 +148,16 @@ func asSyntax(e hcl.Expression) hclsyntax.Node {
 		return n
 	}
 	return &hclsyntax.LiteralValueExpr{}
+}
+
+// runsTerraformBackend reports whether f declares a backend.
+func runsTerraformBackend(f *hcl.File) bool {
+	top, _, _ := f.Body.PartialContent(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "terraform"}}})
+	for _, b := range top.Blocks {
+		inner, _, _ := b.Body.PartialContent(&hcl.BodySchema{Blocks: []hcl.BlockHeaderSchema{{Type: "backend", LabelNames: []string{"type"}}}})
+		if len(inner.Blocks) > 0 {
+			return true
+		}
+	}
+	return false
 }

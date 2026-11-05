@@ -95,12 +95,15 @@ func terraformArgs(a *Action, args []shell.Word) {
 	}
 	// Global options before the subcommand. A -chdir whose directory cannot
 	// be resolved leaves the directory unknown.
+	unresolvedLead := false
 	for len(args) > 0 && (args[0].Resolved && strings.HasPrefix(args[0].Text, "-") || !args[0].Resolved && strings.HasPrefix(args[0].Prefix, "-")) {
 		t := args[0].Text
 		if !args[0].Resolved {
-			if strings.HasPrefix(strings.TrimLeft(args[0].Prefix, "-"), "chdir") {
-				a.Dir, a.AnyDir = "", true
-			}
+			// An unresolved word may expand to several, -chdir=DIR among
+			// them (the words of a file, an array, $(<f)): the directory
+			// is not known.
+			a.Dir, a.AnyDir = "", true
+			unresolvedLead = true
 			args = args[1:]
 			continue
 		}
@@ -120,12 +123,19 @@ func terraformArgs(a *Action, args []shell.Word) {
 		}
 		args = args[1:]
 	}
+	if len(args) == 0 && unresolvedLead {
+		a.Class, a.Why = Dynamic, "arguments cannot be resolved statically, and may hold the subcommand"
+		return
+	}
 	if len(args) == 0 {
 		a.Class, a.Why = ReadOnly, "no subcommand"
 		return
 	}
 	if !args[0].Resolved {
 		a.Class, a.Why = Dynamic, "subcommand cannot be resolved statically"
+		// It may also be several words, with -chdir=DIR before the
+		// subcommand it stands for.
+		a.Dir, a.AnyDir = "", true
 		return
 	}
 	sub := args[0].Text
@@ -162,6 +172,37 @@ func terraformArgs(a *Action, args []shell.Word) {
 			}
 			a.Via = append(a.Via, "terragrunt "+sub)
 			terraformArgs(a, r)
+			return
+		case "exec":
+			// terragrunt exec [--] CMD ARGS...: CMD runs in the unit's
+			// directory, with the unit's environment.
+			r := rest
+			for len(r) > 0 && r[0].Resolved && strings.HasPrefix(r[0].Text, "-") && r[0].Text != "--" {
+				r = r[1:]
+			}
+			if len(r) > 0 && r[0].Text == "--" {
+				r = r[1:]
+			}
+			a.Via = append(a.Via, "terragrunt exec")
+			if len(r) > 0 && r[0].Resolved && (shell.ProgName(r[0].Text) == "terraform" || shell.ProgName(r[0].Text) == "tofu") {
+				terraformArgs(a, r[1:])
+				return
+			}
+			a.Class, a.Sub, a.Why = UnknownWrapper, "exec", "terragrunt exec runs "+firstText(r)+" in the unit's directory, which applygate does not analyze"
+			return
+		case "backend":
+			a.Sub = "backend " + firstText(rest)
+			a.TouchesState = true
+			switch firstText(rest) {
+			case "delete":
+				a.Class, a.Why = StateSurgery, "terragrunt backend delete deletes the remote state backend"
+			case "bootstrap":
+				a.Class, a.Why = Mutating, "terragrunt backend bootstrap creates the remote state backend"
+			case "migrate":
+				a.Class, a.Why = StateSurgery, "terragrunt backend migrate moves state between backends"
+			default:
+				a.Class, a.Why = UnknownWrapper, "unrecognized terragrunt backend subcommand "+firstText(rest)
+			}
 			return
 		case "plan-all", "validate-all", "output-all", "render-json", "graph-dependencies", "hclfmt", "hcl", "info", "find", "list", "dag", "catalog", "scaffold", "render":
 			a.Class, a.Sub, a.Why = ReadOnly, sub, "terragrunt read-only command"
@@ -510,11 +551,17 @@ func awsArgsOne(base Action, args []shell.Word) (Action, bool) {
 	switch {
 	case svc == "configure" && (op == "get" && len(pos) > 2 && isSecretEnv(strings.ToUpper(pos[2])) || op == "export-credentials"):
 		a.Class, a.Why = CredentialAccess, "aws configure "+op+" prints credentials"
+	case svc == "configure" && (op == "set" || op == "import" || op == "add-model" || op == "" || op == "sso" || op == "sso-session"):
+		// aws configure set source_profile, role_arn, endpoint_url or keys
+		// re-points a profile: the next call under its name reaches another
+		// account, endpoint or identity. Writing the same file by redirect is
+		// blocked as guard tampering, and so is this.
+		a.Class, a.Engine, a.Why = Tampering, "aws", "aws configure "+op+" rewrites ~/.aws/config or credentials, a guard file: it can re-point a profile at another account"
 	case svc == "configure" || svc == "sts" && op != "get-session-token":
 		a.Class, a.Why = ReadOnly, "aws "+svc+" "+op
 	case svc == "s3" && (op == "rb" || op == "rm"):
 		a.Class, a.Why = CloudDestructive, "aws s3 "+op+" deletes buckets or objects"
-	case svc == "s3" && op == "sync" && strings.Contains(all, "--delete"):
+	case svc == "s3" && op == "sync" && (strings.Contains(all, "--delete") || abbrevOpt(strings.Fields(all), "--delete", 5)):
 		a.Class, a.Why = CloudDestructive, "aws s3 sync --delete removes objects"
 	case svc == "s3" && op == "mv":
 		a.Class, a.Why = CloudWrite, "aws s3 mv moves objects"
@@ -743,7 +790,7 @@ func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
 			verb = p
 		}
 	}
-	if name == "gsutil" && pos[0] == "rsync" && hasArg(args, "-d") {
+	if name == "gsutil" && pos[0] == "rsync" && (hasArg(args, "-d") || shortCluster(args, 'd')) {
 		a.Class, a.Why = CloudDestructive, cmd+" -d deletes objects missing from the source"
 		return a, true
 	}
@@ -813,6 +860,29 @@ func cloudPositionals(args []shell.Word) (pos []string, dynamic bool) {
 		pos = append(pos, t)
 	}
 	return pos, false
+}
+
+// abbrevOpt reports a long option written as a prefix (at least min
+// characters) of full: argparse accepts --del for --delete.
+func abbrevOpt(words []string, full string, min int) bool {
+	for _, w := range words {
+		k, _, _ := strings.Cut(w, "=")
+		if len(k) >= min && strings.HasPrefix(full, k) && strings.HasPrefix(k, "--") {
+			return true
+		}
+	}
+	return false
+}
+
+// shortCluster reports a cluster of short options (-dr, -rd) that holds c.
+func shortCluster(args []shell.Word, c byte) bool {
+	for _, w := range args {
+		t := w.Text
+		if len(t) > 2 && t[0] == '-' && t[1] != '-' && strings.IndexByte(t, c) > 0 && strings.Trim(t[1:], "dnprCeiuUjJPchmoaxlLvVqRy") == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func hasArg(args []shell.Word, name string) bool {

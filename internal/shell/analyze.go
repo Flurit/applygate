@@ -170,6 +170,21 @@ type state struct {
 	cdableVars bool
 	// hashed are the programs hash -p bound to names.
 	hashed map[string]Word
+	// allexport is set by set -a (or -o allexport): every later assignment
+	// is exported. proc is the hook's own environment: a name in it is
+	// exported already, so assigning it keeps it exported (AWS_PROFILE=x
+	// changes what a child sees).
+	allexport bool
+	proc      map[string]string
+}
+
+// isExp reports whether a child process sees the variable k.
+func (s *state) isExp(k string) bool {
+	if s.exported[k] || s.allexport {
+		return true
+	}
+	_, ok := s.proc[k]
+	return ok
 }
 
 func newState(opt Options) *state {
@@ -180,6 +195,7 @@ func newState(opt Options) *state {
 		funcs:    map[string]*syntax.Stmt{},
 		aliases:  map[string]string{},
 		paramsOK: true,
+		proc:     opt.Env,
 	}
 	for k, v := range opt.Aliases {
 		st.aliases[k] = v
@@ -230,7 +246,7 @@ func (s *state) clone() *state {
 func (s *state) childState() *state {
 	c := s.clone()
 	for k := range c.vars {
-		if !c.exported[k] {
+		if !c.isExp(k) {
 			delete(c.vars, k)
 		}
 	}
@@ -248,6 +264,16 @@ func (s *state) env() map[string]string {
 			env[k] = v.text
 		} else {
 			env[k] = "" // exported but unresolved
+		}
+	}
+	for k, v := range s.vars {
+		if _, done := env[k]; done || !s.isExp(k) {
+			continue
+		}
+		if v.ok {
+			env[k] = v.text
+		} else {
+			env[k] = ""
 		}
 	}
 	return env
@@ -292,6 +318,11 @@ func short(s string) string {
 }
 
 func (a *analyzer) problem(st *state, via []string, text, reason string) {
+	for _, p := range a.res.Problems {
+		if p.Text == short(text) && p.Reason == reason && p.Dir == st.dir && slices.Equal(p.Via, via) {
+			return
+		}
+	}
 	a.res.Problems = append(a.res.Problems, Problem{
 		Text: short(text), Reason: reason, Via: append([]string(nil), via...), Dir: st.dir,
 		Mentions: Mentions(text),
@@ -320,6 +351,14 @@ func (a *analyzer) source(src string, st *state, via []string, depth int) {
 		// The parser and the walk recurse per level; deeper text would
 		// overflow the stack and kill the process with no verdict.
 		a.unbounded(st, via, src, "nesting deeper than the analyzer follows")
+		return
+	}
+	if chainLength(src) > maxChain {
+		// A long && or | chain, or a long arithmetic sum, parses to a tree
+		// as deep as it is long, and the walk recurses along it: past a few
+		// hundred thousand links the stack overflows and the process dies
+		// with no verdict, and memory runs to hundreds of times the text.
+		a.unbounded(st, via, "", "a chain of more than "+strconv.Itoa(maxChain)+" commands or operands, which the analyzer does not follow")
 		return
 	}
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(src), "")
@@ -456,6 +495,9 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 		a.stmtsIn(c.Cond, st, via, depth, in)
 		a.stmtsIn(c.Do, st, via, depth, in)
 	case *syntax.ForClause:
+		if cl, ok := c.Loop.(*syntax.CStyleLoop); ok {
+			a.arith(cl, st, via, depth)
+		}
 		if wi, ok := c.Loop.(*syntax.WordIter); ok {
 			var items []Word
 			allOK := true
@@ -512,7 +554,9 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 	case *syntax.TestClause, *syntax.ArithmCmd, *syntax.LetClause:
 		// Conditions and arithmetic start no programs, except through
 		// command substitutions, which the word walk below would catch;
-		// we walk the source text for those to stay conservative.
+		// we walk the source text for those to stay conservative. Arithmetic
+		// in them evaluates subscripts, which can run commands.
+		a.arith(s, st, via, depth)
 		a.substitutionsIn(s, st, via, depth)
 	case nil:
 	default:
@@ -567,7 +611,11 @@ func (a *analyzer) declClause(c *syntax.DeclClause, st *state, via []string, dep
 					}
 				}
 			default:
+				if subscriptRuns(w) {
+					a.unbounded(st, via, w.Text, "a declaration names a variable whose subscript holds a command substitution; the shell evaluates the subscript, which runs it")
+				}
 				name, val, eq := strings.Cut(w.Text, "=")
+				a.promptVar(name, val, st, via, depth)
 				a.declare(name, st, local)
 				if eq {
 					st.vars[name] = capped(val, true)
@@ -616,6 +664,7 @@ func (a *analyzer) assign(as *syntax.Assign, st *state, via []string, depth int)
 	if as.Array != nil || as.Index != nil {
 		st.vars[as.Name.Value] = value{}
 		a.substitutionsIn(as, st, via, depth)
+		a.arith(as, st, via, depth)
 		return
 	}
 	var w Word
@@ -626,6 +675,7 @@ func (a *analyzer) assign(as *syntax.Assign, st *state, via []string, depth int)
 	} else {
 		w = Word{Resolved: true}
 	}
+	a.promptVar(as.Name.Value, w.Text, st, via, depth)
 	if as.Append {
 		prev := st.vars[as.Name.Value]
 		st.vars[as.Name.Value] = capped(prev.text+w.Text, prev.ok && w.Resolved)
@@ -922,6 +972,9 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 		if a.quiet == 0 && (x.Exp != nil || x.Repl != nil || x.Slice != nil || x.Index != nil) {
 			// ${x:-$(cmd)} and ${a[$(cmd)]} run cmd.
 			a.substitutionsIn(x, st, via, depth)
+			if x.Slice != nil || x.Index != nil {
+				a.arith(x, st, via, depth)
+			}
 		}
 		v, ok := a.param(x, st)
 		if ok {
@@ -955,6 +1008,9 @@ func (a *analyzer) part(p syntax.WordPart, st *state, via []string, depth int, b
 		// Arithmetic and anything else: not resolved statically, but any
 		// command substitution inside still runs.
 		if a.quiet == 0 {
+			if _, ok := p.(*syntax.ArithmExp); ok {
+				a.arith(p, st, via, depth)
+			}
 			if be, ok := p.(*syntax.BraceExp); ok {
 				// syntax.Walk does not know brace expansions; walk each
 				// element's words.
@@ -1242,6 +1298,28 @@ func nestingDepth(src string) int {
 		}
 	}
 	return m
+}
+
+// maxChain is the most binary operators (&&, ||, |, +) one program may chain.
+const maxChain = 20000
+
+// chainLength counts the operators that nest left to right in the parse
+// tree: &&, || and | between commands, and + - * in arithmetic. Quoting is
+// ignored: an overestimate is safe.
+func chainLength(src string) int {
+	n := 0
+	for i := 0; i < len(src); i++ {
+		switch src[i] {
+		case '&', '|':
+			n++
+			if i+1 < len(src) && src[i+1] == src[i] {
+				i++
+			}
+		case '+':
+			n++
+		}
+	}
+	return n
 }
 
 // zshHook reports whether zsh calls a function of this name on its own:

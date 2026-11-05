@@ -345,12 +345,13 @@ func (Codex) Parse(raw []byte) (policy.Event, bool, error) {
 		}
 	default:
 		ev.Kind = policy.KindOther
-		switch {
-		case isMCPTool(in.ToolName):
+		if isMCPTool(in.ToolName) {
 			ev.Kind, ev.Command, ev.Args = policy.KindMCP, mcpArguments(in.ToolInput), in.ToolInput
-		case cmd != "":
-			// A tool applygate does not know that carries a command runs it.
-			ev.Kind, ev.Command = policy.KindShell, cmd
+			break
+		}
+		// A tool applygate does not know is looked into, not allowed.
+		classifyUnknown(&ev, in.ToolName, ti)
+		if ev.Kind == policy.KindShell {
 			ev.Cwd, ev.DirKnown = workDir(ti, in.Cwd)
 		}
 	}

@@ -275,6 +275,13 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 		*noJudge = true
 		fmt.Fprintln(stderr, "applygate: the model judge is not asked: check asks it only at a terminal")
 	}
+	// A pty is no proof of a person (script, python's pty module and expect
+	// give an agent one), so a process that runs under an agent host's
+	// environment does not ask the judge either.
+	if !*noJudge && cfg.JudgeOn() && inAgentSession(deps.Env) {
+		*noJudge = true
+		fmt.Fprintln(stderr, "applygate: the model judge is not asked: this process runs inside an agent session")
+	}
 	if !*noJudge {
 		var jr *decisionlog.Judge
 		jctx, cancel := context.WithTimeout(context.Background(), cfg.JudgeTimeout()+time.Second)
@@ -1025,4 +1032,15 @@ func lastLine(s string) string {
 		return s[i+1:]
 	}
 	return s
+}
+
+// inAgentSession reports an environment an agent host sets for the shell
+// commands it runs.
+func inAgentSession(env map[string]string) bool {
+	for _, k := range []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_SANDBOX", "CODEX_THREAD_ID", "GEMINI_CLI", "OPENCODE", "CURSOR_AGENT", "COPILOT_AGENT", "CLINE_ACTIVE"} {
+		if env[k] != "" {
+			return true
+		}
+	}
+	return false
 }

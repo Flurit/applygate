@@ -239,3 +239,26 @@ func InPlaceEdit(args []Word) bool {
 	}
 	return false
 }
+
+// TarWrites reports whether a tar command extracts or creates a file (a
+// listing writes nothing).
+func TarWrites(args []Word) bool {
+	for i := 0; i < len(args); i++ {
+		t := args[i].Text
+		switch {
+		case t == "--extract" || t == "--get" || t == "--create":
+			return true
+		case strings.HasPrefix(t, "--"):
+		case strings.HasPrefix(t, "-") || i == 0 && t != "":
+			for _, ch := range strings.TrimPrefix(t, "-") {
+				if ch == 'x' || ch == 'c' || ch == 'r' || ch == 'u' {
+					return true
+				}
+				if strings.ContainsRune("CfITXFKL", ch) {
+					break
+				}
+			}
+		}
+	}
+	return false
+}

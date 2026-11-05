@@ -583,6 +583,9 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		declared = preflight.DeclaredBackend(a.Dir)
 		sig.ProviderProfiles, sig.ProviderRoles, sig.ProviderUnknown = preflight.ProviderAWS(a.Dir, preflight.Vars{Values: a.Vars, Files: a.VarFiles, Env: env, Unknown: a.VarsUnknown})
 		addProviderTargets(&sig, a.Dir, env, deps.ReadFile)
+		if why := preflight.ConfigUnreadable(a.Dir); why != "" && sig.ProviderUnknown == "" {
+			sig.ProviderUnknown = why
+		}
 		if len(a.BackendConfig) > 0 {
 			// An init in this command re-points the directory: judge this
 			// command against the backend it will use, not the old one.
@@ -864,6 +867,9 @@ func DirSignals(dir string, env map[string]string) (config.Signals, *preflight.B
 	sig := config.Signals{Dir: dir, Workspace: preflight.Workspace(dir, env)}
 	sig.ProviderProfiles, sig.ProviderRoles, sig.ProviderUnknown = preflight.ProviderAWS(dir, preflight.Vars{Env: env})
 	addProviderTargets(&sig, dir, env, nil)
+	if why := preflight.ConfigUnreadable(dir); why != "" && sig.ProviderUnknown == "" {
+		sig.ProviderUnknown = why
+	}
 	be := preflight.InitBackendEnv(dir, env)
 	if be == nil {
 		be = preflight.DeclaredBackend(dir)
@@ -880,10 +886,28 @@ func DirSignals(dir string, env map[string]string) (config.Signals, *preflight.B
 	if p := awsProfileEnv(env); p != "" {
 		sig.AWSProfile = p
 	}
-	if _, err := os.Stat(filepath.Join(dir, "terragrunt.hcl")); err == nil {
-		// A Terragrunt unit: its remote_state and local source are
-		// signals too (terragrunt run --all, plan-check in a unit).
-		terragruntSignals(&sig, classify.Action{Dir: dir, Engine: "terragrunt"}, be)
+	// Where the state is: a local backend's path or workspace_dir, and local
+	// state files that are links into another directory.
+	if be != nil && be.Type == "local" {
+		for _, k := range []string{"path", "workspace_dir"} {
+			if be.Config[k] != "" {
+				sig.StateDirs = append(sig.StateDirs, filepath.Dir(shell.PhysicalJoin(dir, be.Config[k])))
+			}
+		}
+	}
+	for _, n := range []string{"terraform.tfstate", "terraform.tfstate.d", "terraform.tfstate.backup"} {
+		p := filepath.Join(dir, n)
+		if r, err := filepath.EvalSymlinks(p); err == nil && filepath.Clean(r) != filepath.Clean(p) {
+			sig.StateDirs = append(sig.StateDirs, filepath.Dir(r))
+		}
+	}
+	for _, n := range []string{"terragrunt.hcl", "terragrunt.hcl.json"} {
+		if _, err := os.Stat(filepath.Join(dir, n)); err == nil {
+			// A Terragrunt unit: its remote_state and local source are
+			// signals too (terragrunt run --all, plan-check in a unit).
+			terragruntSignals(&sig, classify.Action{Dir: dir, Engine: "terragrunt"}, be)
+			break
+		}
 	}
 	return sig, be
 }
@@ -1490,6 +1514,26 @@ func addProviderTargets(sig *config.Signals, dir string, env map[string]string, 
 	}
 	if v := env["KUBE_CTX"]; v != "" {
 		t.KubeContexts = append(t.KubeContexts, v)
+	}
+	// config_path names a kubeconfig, whose current context is the one the
+	// provider uses when it names none; KUBE_CONFIG_PATH(S) does the same
+	// from the environment.
+	kc := append([]string(nil), t.KubeConfigs...)
+	for _, k := range []string{"KUBE_CONFIG_PATH", "KUBE_CONFIG_PATHS"} {
+		if v := env[k]; v != "" {
+			kc = append(kc, filepath.SplitList(v)...)
+			t.UsesKube = true
+		}
+	}
+	for _, p := range kc {
+		if !filepath.IsAbs(p) {
+			p = shell.PhysicalJoin(dir, p)
+		}
+		if c := preflight.KubeContext(map[string]string{"KUBECONFIG": p}, read); c != "" {
+			t.KubeContexts = append(t.KubeContexts, c)
+		} else if t.Unknown == "" {
+			t.Unknown = "the kubeconfig " + p + " names no current context applygate can read"
+		}
 	}
 	if t.UsesKube && len(t.KubeContexts) == 0 && env["KUBE_CTX"] == "" {
 		if c := preflight.KubeContext(env, read); c != "" {

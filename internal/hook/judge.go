@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/Flurit/applygate/internal/classify"
@@ -11,6 +13,7 @@ import (
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/judge"
 	"github.com/Flurit/applygate/internal/policy"
+	"github.com/Flurit/applygate/internal/shell"
 )
 
 // Judge asks the model judge about a call the rules let through without
@@ -19,7 +22,7 @@ import (
 // leaves the rule decision as it is. It returns the decision and the record
 // for the log (nil when the judge was not asked).
 func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.Config, opt Options) (policy.Decision, *decisionlog.Judge) {
-	if !cfg.JudgeOn() || !judge.Residual(d) {
+	if !cfg.JudgeOn() {
 		return d, nil
 	}
 	if ev.Kind == policy.KindMCP && cfg.JudgeSkips(ev.Tool) {
@@ -28,6 +31,9 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 	// The filter sees the call as it is; the judge gets a copy with
 	// secrets redacted.
 	raw := judgeInput(ev, cfg, false)
+	if !judge.ResidualFor(d, raw) {
+		return d, nil
+	}
 	if !judge.Relevant(raw) {
 		return d, nil
 	}
@@ -86,12 +92,15 @@ func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.
 	}
 	rec := &decisionlog.Judge{Model: j.Name(), Verdict: r.Verdict, Reason: r.Reason, MS: r.APIms, Cached: r.Cached, Error: r.Err}
 	merged := judge.Merge(d.Verdict, r)
-	if r.Unjudgeable && in.Tier != config.Disposable {
+	// In a disposable directory an unjudgeable call that names production (a
+	// padded command, text hidden by redaction) is still an ask: the tier
+	// the judge was told is the directory's, not the target's.
+	if r.Unjudgeable && (in.Tier != config.Disposable || config.LooksProd(raw.Command) || config.LooksProd(string(raw.Args))) {
 		// The call kept the judge from answering (too large, refused, no
 		// verdict in the answer): outside a disposable tier that is an ask,
 		// so a call cannot get past the judge by breaking it.
 		merged = policy.Max(merged, policy.Ask)
-		r.Reason = "it could not judge this call (" + r.Err + "), and outside a disposable environment that is an ask."
+		r.Reason = "it could not judge this call (" + r.Err + "), and outside a disposable environment, or where it names production, that is an ask."
 	}
 	if merged == d.Verdict {
 		return d, rec
@@ -152,6 +161,15 @@ func judgeInput(ev policy.Event, cfg *config.Config, redact bool) judge.Input {
 			}
 		}
 	}
+	// The targets the command itself names (a profile, a context, a project,
+	// a workspace, a stack) decide the tier too, whatever the directory.
+	if ev.Kind == policy.KindShell {
+		for _, sig := range commandSignals(ev.Command, ev.Cwd) {
+			if alt := cfg.Resolve(sig); alt.Tier.Rank() > res.Tier.Rank() && !alt.Unknown {
+				res = alt
+			}
+		}
+	}
 	in.Env, in.Tier = res.Env, res.Tier
 	if in.Env == "" {
 		in.Env = "unknown"
@@ -166,4 +184,62 @@ func (b brokenJudge) Name() string { return "judge" }
 
 func (b brokenJudge) Judge(context.Context, judge.Input) judge.Result {
 	return judge.Result{Model: "judge", Err: "the judge cannot run: " + b.err.Error(), Unjudgeable: true}
+}
+
+// commandSignals are the tier signals a shell command carries: tier
+// environment variables set for a program, and the options that name a
+// profile, context, project, subscription, workspace or stack.
+func commandSignals(cmd, cwd string) []config.Signals {
+	res := shell.Analyze(cmd, shell.Options{Dir: cwd, ReadFile: func(string) ([]byte, error) { return nil, os.ErrNotExist }})
+	var out []config.Signals
+	for _, inv := range res.Invocations {
+		sig := config.Signals{Dir: cwd}
+		if inv.Dir != "" {
+			sig.Dir = inv.Dir
+		}
+		set := false
+		env := func(name string, f func(string)) {
+			if v := inv.Env[name]; v != "" {
+				f(v)
+				set = true
+			}
+		}
+		env("AWS_PROFILE", func(v string) { sig.AWSProfile = v })
+		env("AWS_DEFAULT_PROFILE", func(v string) { sig.AWSProfile = v })
+		env("TF_WORKSPACE", func(v string) { sig.Workspace = v })
+		for _, k := range []string{"GOOGLE_PROJECT", "GOOGLE_CLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT", "GCLOUD_PROJECT"} {
+			env(k, func(v string) { sig.GCPProject = v })
+		}
+		for _, k := range []string{"ARM_SUBSCRIPTION_ID", "AZURE_SUBSCRIPTION_ID"} {
+			env(k, func(v string) { sig.AzureSubscription = v })
+		}
+		env("KUBE_CTX", func(v string) { sig.KubeContext = v })
+		for i, w := range inv.Args {
+			t, v, eq := strings.Cut(w.Text, "=")
+			if !eq && i+1 < len(inv.Args) {
+				v = inv.Args[i+1].Text
+			}
+			if v == "" {
+				continue
+			}
+			switch t {
+			case "--profile":
+				sig.AWSProfile, set = v, true
+			case "--context", "--kube-context":
+				sig.KubeContext, set = v, true
+			case "--project":
+				sig.GCPProject, set = v, true
+			case "--subscription":
+				sig.AzureSubscription, set = v, true
+			case "--stack", "-s", "--workspace":
+				if t != "-s" || shell.ProgName(inv.Args[0].Text) == "pulumi" {
+					sig.Backend, set = v, true
+				}
+			}
+		}
+		if set {
+			out = append(out, sig)
+		}
+	}
+	return out
 }

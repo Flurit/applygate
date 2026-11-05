@@ -467,9 +467,12 @@ func ProviderAWS(dir string, vars Vars) (profiles, roles []string, unknown strin
 // blocks in files, under any local name required_providers gives the
 // hashicorp/aws provider.
 func awsProviders(files []*hcl.File, values func(string, hcl.Expression) []string, profiles, roles []string, unknown *string) ([]string, []string) {
-	names := map[string]bool{"aws": true}
+	names := map[string]bool{"aws": true, "awscc": true}
 	for _, file := range files {
 		for n := range awsLocalNames(file.Body) {
+			names[n] = true
+		}
+		for n := range localNames(file.Body, "hashicorp/awscc") {
 			names[n] = true
 		}
 	}
@@ -555,11 +558,20 @@ func localNames(body hcl.Body, source string) map[string]bool {
 // moduleDirs are the directories of the modules dir's configuration calls:
 // local sources, and the modules init downloaded.
 func moduleDirs(dir string) []string {
+	out, _ := moduleDirsDepth(dir)
+	return out
+}
+
+// moduleDirsDepth is moduleDirs, and whether a chain of local modules was
+// followed to its depth limit with more below it.
+func moduleDirsDepth(dir string) ([]string, bool) {
 	var out []string
+	deep := false
 	seen := map[string]bool{filepath.Clean(dir): true}
 	var walk func(d string, depth int)
 	walk = func(d string, depth int) {
 		if depth > 10 {
+			deep = true
 			return
 		}
 		for _, f := range parsedFiles(d) {
@@ -602,7 +614,40 @@ func moduleDirs(dir string) []string {
 		}
 		return nil
 	})
-	return out
+	return out, deep
+}
+
+// ConfigUnreadable says why dir's configuration cannot be read in full, or
+// "". A target signal (a provider's profile, project, context or
+// subscription, a variable's value, a Terragrunt remote_state) lives in
+// those files, so a file the hook cannot read, or does not parse, or a
+// chain of local modules it stops following, makes the target unknown, not
+// absent: an agent must not be able to hide a signal by padding the file
+// past the size cap.
+func ConfigUnreadable(dir string) string {
+	mods, deep := moduleDirsDepth(dir)
+	if deep {
+		return "local modules nest deeper than applygate follows"
+	}
+	for _, d := range append([]string{dir}, mods...) {
+		tf, tofu := configFiles(d)
+		for _, f := range append(tf, tofu...) {
+			if _, why := readConfig(f); why != "" {
+				return why
+			}
+		}
+	}
+	var vf []string
+	for _, pat := range []string{"terraform.tfvars", "terraform.tfvars.json", "*.auto.tfvars", "*.auto.tfvars.json", "terragrunt.hcl", "terragrunt.hcl.json"} {
+		m, _ := filepath.Glob(filepath.Join(dir, pat))
+		vf = append(vf, m...)
+	}
+	for _, f := range vf {
+		if _, why := readConfig(f); why != "" {
+			return why
+		}
+	}
+	return ""
 }
 
 // parsedFiles parses dir's configuration files, Terraform's and OpenTofu's,
@@ -619,6 +664,10 @@ func parsedFiles(dir string) []*hcl.File {
 		if file := parseFile(f); file != nil {
 			out = append(out, file)
 		}
+	}
+	// What a Terragrunt generate block writes into this directory.
+	if tg := ReadTerragrunt(dir); tg != nil {
+		out = append(out, tg.Generated...)
 	}
 	return out
 }
@@ -1155,7 +1204,10 @@ func applyConfigFile(be *Backend, path string, src []byte) error {
 // Targets are what the non-AWS provider blocks of a configuration point at.
 type Targets struct {
 	GCPProjects, KubeContexts, AzureSubscriptions []string
-	Unknown                                       string // why one is not known
+	// KubeConfigs are the kubeconfig files a kubernetes or helm provider's
+	// config_path names; the context each selects is read by the caller.
+	KubeConfigs []string
+	Unknown     string // why one is not known
 	// UsesKube is set when a kubernetes or helm provider block names no
 	// config_context: it acts on the context the environment selects
 	// (KUBE_CTX, KUBECONFIG, the default kubeconfig's current context).
@@ -1181,7 +1233,7 @@ func ProviderTargets(dir string) Targets {
 	kinds := []kind{
 		{"project", []string{"hashicorp/google", "hashicorp/google-beta"}, &t.GCPProjects, "google provider's project"},
 		{"config_context", []string{"hashicorp/kubernetes", "hashicorp/helm", "gavinbunney/kubectl", "alekc/kubectl"}, &t.KubeContexts, "kubernetes provider's config_context"},
-		{"subscription_id", []string{"hashicorp/azurerm"}, &t.AzureSubscriptions, "azurerm provider's subscription_id"},
+		{"subscription_id", []string{"hashicorp/azurerm", "azure/azapi"}, &t.AzureSubscriptions, "azurerm provider's subscription_id"},
 	}
 	for si, set := range sets {
 		for _, k := range kinds {
@@ -1222,5 +1274,6 @@ func ProviderTargets(dir string) Targets {
 			}
 		}
 	}
+	t.kubeForms(sets)
 	return t
 }

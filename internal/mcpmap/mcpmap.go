@@ -155,6 +155,18 @@ func (t *Table) Translate(fullName string, raw json.RawMessage, cwd string) (Res
 	tool := ToolName(fullName)
 	var args map[string]any
 	parseErr := json.Unmarshal(raw, &args)
+	if parseErr != nil || args == nil {
+		// Arguments that are not an object (a JSON string, an array, null)
+		// cannot be matched against the table, but a tool that is in it is
+		// still known: it is asked about, not allowed as an unknown tool.
+		for _, s := range t.Servers {
+			for _, tl := range s.Tools {
+				if contains(tl.Names, tool) {
+					return Result{Server: s.Name, Command: unresolved(tool, "its arguments are not a JSON object"), Note: tl.Note, Persistent: tl.Persistent}, true
+				}
+			}
+		}
+	}
 	// Every server whose tool this call fits is judged: decoy arguments
 	// must not steer the call to the mildest of them.
 	var all []Result
@@ -171,6 +183,20 @@ func (t *Table) Translate(fullName string, raw json.RawMessage, cwd string) (Res
 			return r, true
 		}
 		return Result{}, false
+	}
+	// A tool in the table that is sent a program and an argument list (a
+	// server of the same name may take both) is also judged as the joined
+	// command.
+	if parseErr == nil {
+		for _, ak := range argvArgs {
+			if _, has := args[ak]; has {
+				if r, ok := genericShell(tool, args, nil); ok {
+					r.Server = "a server of the same tool name that takes an argument list"
+					all = append(all, r)
+				}
+				break
+			}
+		}
 	}
 	if len(all) == 1 {
 		return all[0], true
@@ -274,21 +300,36 @@ func translateOne(s Server, tl Tool, tool string, args map[string]any, parseErr 
 			}
 		}
 	}
+	// Every case the arguments fit is judged, not the first: a decoy field
+	// the server ignores must not select the mildest reading.
+	var readings []string
 	for _, c := range tl.Cases {
-		if matches(c.When, args) {
-			var cmd, op string
-			if why, ok := strings.CutPrefix(c.Command, "?"); ok {
-				w, _ := expand(strings.TrimSpace(why), args)
-				r.Command = unresolved(tool, w)
-			} else if cmd, op = expand(c.Command, args); op != "" {
-				r.Command = unresolved(tool, "an argument holds the shell operator "+quote(op))
-			} else {
-				r.Command = withStdin(tool, cmd, args, tl.Stdin)
-			}
-			return r
+		if !matches(c.When, args) {
+			continue
+		}
+		var cmd, op string
+		if why, ok := strings.CutPrefix(c.Command, "?"); ok {
+			w, _ := expand(strings.TrimSpace(why), args)
+			readings = append(readings, unresolved(tool, w))
+		} else if cmd, op = expand(c.Command, args); op != "" {
+			readings = append(readings, unresolved(tool, "an argument holds the shell operator "+quote(op)))
+		} else {
+			readings = append(readings, withStdin(tool, cmd, args, tl.Stdin))
 		}
 	}
-	r.Command = unresolved(tool, "its arguments match no known form")
+	switch len(readings) {
+	case 0:
+		r.Command = unresolved(tool, "its arguments match no known form")
+	case 1:
+		r.Command = readings[0]
+	default:
+		var b strings.Builder
+		for _, c := range readings {
+			b.WriteString("( " + c + "\n)\n")
+		}
+		r.Command = b.String()
+		r.Note = strings.TrimSpace(r.Note + " (the arguments fit several forms; each is judged)")
+	}
 	return r
 }
 
@@ -302,46 +343,117 @@ var genericShellTools = map[string]bool{"run_in_terminal": true, "execute_comman
 	"execute": true, "terminal": true, "shell_exec": true, "run_shell": true, "execute_shell": true, "bash_command": true,
 	"run_command": true, "execute_shell_command": true, "run_process": true, "command": true, "sh": true}
 
-var genericCommandArgs = []string{"command", "cmd", "script", "commandLine", "command_line", "code", "input"}
+var genericCommandArgs = []string{"command", "cmd", "script", "commandLine", "command_line", "cmdline", "cmd_text", "shell_command", "shellCommand", "code", "input"}
 
-// genericShell judges a shell tool of a server the table does not know.
-// Its directory argument is not trusted, since nothing says the server
-// honours it.
+// strongCommandArgs name a shell command whatever the tool is called.
+var strongCommandArgs = []string{"command", "cmd", "script", "commandLine", "command_line", "cmdline", "cmd_text", "shell_command", "shellCommand"}
+
+// argvArgs hold the arguments of a program a command argument names.
+var argvArgs = []string{"args", "arguments", "argv", "params", "argument_list"}
+
+// shellishName reports a tool name that says it runs a command or code.
+func shellishName(tool string) bool {
+	n := snakeName(tool)
+	if genericShellTools[n] {
+		return true
+	}
+	for _, w := range []string{"exec", "run", "shell", "terminal", "bash", "command", "cmd", "script", "eval", "python", "node", "powershell", "invoke"} {
+		if strings.Contains(n, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// genericShell judges a shell tool of a server the table does not know: one
+// whose name says it runs commands, or whose arguments carry a command. Every
+// command argument present is judged (a decoy command does not hide a later
+// script), with its program's argument list appended. Its directory argument
+// is not trusted, since nothing says the server honours it.
 func genericShell(tool string, args map[string]any, parseErr error) (Result, bool) {
-	if !genericShellTools[snakeName(tool)] {
+	strong := false
+	for _, k := range strongCommandArgs {
+		if v, ok := args[k]; ok && len(list(v, false)) > 0 {
+			strong = true
+		}
+	}
+	if !shellishName(tool) && !strong {
 		return Result{}, false
 	}
-	r := Result{Server: "a server applygate does not know", Note: "a shell tool name; judged as a shell command"}
+	r := Result{Server: "a server applygate does not know", Note: "a shell tool name or command argument; judged as a shell command"}
 	if parseErr != nil {
 		r.Command = unresolved(tool, "its arguments are not a JSON object")
 		return r, true
 	}
+	var readings []string
 	for _, k := range genericCommandArgs {
-		if v, ok := args[k]; ok {
-			cmds := list(v, false)
-			if len(cmds) == 0 {
-				r.Command = unresolved(tool, "argument "+k+" is not text")
-				return r, true
+		v, ok := args[k]
+		if !ok {
+			continue
+		}
+		cmds := list(v, false)
+		if len(cmds) == 0 {
+			if str, isStr := v.(string); isStr && strings.TrimSpace(str) == "" {
+				continue // an empty command is not a command
 			}
-			cmd := strings.Join(cmds, "\n")
-			if _, isArray := v.([]any); isArray {
-				// An array is one command: a program's argv, or words a
-				// server joins with spaces for a shell. Both readings are
-				// judged, not one line per element.
-				q := make([]string, len(cmds))
-				for i, c := range cmds {
-					q[i] = quote(c)
-				}
-				cmd = strings.Join(q, " ") + "\n" + strings.Join(cmds, " ")
-			}
-			r.Command = withStdin(tool, cmd, args, []string{"stdin", "stdin_text", "input"})
-			if sh := str(args["shell"]); sh != "" {
-				r.Command = viaShell(tool, sh, r.Command)
-			}
+			r.Command = unresolved(tool, "argument "+k+" is not text")
 			return r, true
 		}
+		cmd := strings.Join(cmds, "\n")
+		_, isArray := v.([]any)
+		// The program's argument list: command "terraform" with args
+		// ["destroy"] runs terraform destroy.
+		var extra []string
+		if !isArray && (k == "command" || k == "cmd") {
+			for _, ak := range argvArgs {
+				if av, ok := args[ak]; ok {
+					if as := list(av, false); len(as) > 0 {
+						extra = append(extra, as...)
+					} else if str, isStr := av.(string); isStr && strings.TrimSpace(str) != "" {
+						extra = append(extra, str)
+					} else if _, isMap := av.(map[string]any); isMap {
+						r.Command = unresolved(tool, "argument "+ak+" is an object")
+						return r, true
+					}
+				}
+			}
+		}
+		switch {
+		case isArray:
+			// An array is one command: a program's argv, or words a server
+			// joins with spaces for a shell. Both readings are judged, not
+			// one line per element.
+			q := make([]string, len(cmds))
+			for i, c := range cmds {
+				q[i] = quote(c)
+			}
+			cmd = strings.Join(q, " ") + "\n" + strings.Join(cmds, " ")
+		case len(extra) > 0:
+			q := []string{quote(cmd)}
+			for _, e := range extra {
+				q = append(q, quote(e))
+			}
+			cmd = strings.Join(q, " ") + "\n" + cmd + " " + strings.Join(extra, " ")
+		}
+		readings = append(readings, cmd)
 	}
-	r.Command = unresolved(tool, "no command argument applygate knows")
+	if len(readings) == 0 {
+		r.Command = unresolved(tool, "no command argument applygate knows")
+		return r, true
+	}
+	if len(readings) == 1 {
+		r.Command = readings[0]
+	} else {
+		var b strings.Builder
+		for _, c := range readings {
+			b.WriteString("( " + c + "\n)\n")
+		}
+		r.Command = b.String()
+	}
+	r.Command = withStdin(tool, r.Command, args, []string{"stdin", "stdin_text", "input"})
+	if sh := str(args["shell"]); sh != "" {
+		r.Command = viaShell(tool, sh, r.Command)
+	}
 	return r, true
 }
 

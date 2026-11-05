@@ -216,15 +216,69 @@ func (c call) toEvent(agent string) (policy.Event, error) {
 	case readTools[c.tool]:
 		ev.Kind, ev.Paths = policy.KindRead, filePaths(c.tool, c.input)
 	default:
-		ev.Kind = policy.KindOther
-		// A tool applygate does not know (Claude Code's Monitor or
-		// PowerShell, a host's new shell tool) that carries a command runs
-		// it, so it is judged as a shell call.
-		if cmd := commandOf(c.input); strings.TrimSpace(cmd) != "" {
-			ev.Kind, ev.Command = policy.KindShell, asShell(c.tool, cmd)
-		}
+		classifyUnknown(&ev, c.tool, c.input)
 	}
 	return ev, nil
+}
+
+// quietTools run nothing and name no file: the host's own bookkeeping and
+// network tools. Every other tool a table does not describe is looked into.
+var quietTools = toolSet(
+	"TodoWrite", "Task", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskOutput",
+	"WebFetch", "WebSearch", "AskUserQuestion", "ExitPlanMode", "EnterPlanMode", "Skill", "ToolSearch",
+	"SendMessage", "ListMcpResourcesTool", "ReadMcpResourceTool", "BashOutput", "KillShell",
+)
+
+// infraWord matches the programs applygate judges, anywhere in a string.
+var infraWord = regexp.MustCompile(`(?i)\b(terraform|tofu|opentofu|terragrunt|kubectl|helm|aws|gcloud|gsutil|az|pulumi|cdk|eksctl|docker|podman|kustomize|argocd|applygate)\b`)
+
+// classifyUnknown decides what an event is for a tool no table describes
+// (Claude Code's Monitor or PowerShell, a host's new shell or file tool). It
+// is never allowed unseen on the strength of its name: a command field, in
+// any of the usual spellings, is judged as a shell call; a string anywhere
+// in its arguments that names an infrastructure program is judged as shell
+// text; and every other call is checked for guard files by walking its
+// arguments (as an unknown MCP tool's are) and logged.
+func classifyUnknown(ev *policy.Event, tool string, in map[string]json.RawMessage) {
+	ev.Kind = policy.KindOther
+	if quietTools[tool] {
+		return
+	}
+	if cmd := commandOf(in); strings.TrimSpace(cmd) != "" {
+		ev.Kind, ev.Command = policy.KindShell, asShell(tool, cmd)
+		return
+	}
+	raw, _ := json.Marshal(in)
+	var texts []string
+	var walk func(v any, depth int)
+	walk = func(v any, depth int) {
+		if depth > 8 || len(texts) > 64 {
+			return
+		}
+		switch x := v.(type) {
+		case string:
+			if len(x) <= 64<<10 && infraWord.MatchString(x) {
+				texts = append(texts, x)
+			}
+		case []any:
+			for _, e := range x {
+				walk(e, depth+1)
+			}
+		case map[string]any:
+			for _, e := range x {
+				walk(e, depth+1)
+			}
+		}
+	}
+	var tree any
+	if json.Unmarshal(raw, &tree) == nil {
+		walk(tree, 0)
+	}
+	if len(texts) > 0 {
+		ev.Kind, ev.Command = policy.KindShell, asShell(tool, strings.Join(texts, "\n"))
+		return
+	}
+	ev.Kind, ev.Command, ev.Args = policy.KindMCP, mcpArguments(raw), raw
 }
 
 // asShell is the shell command a tool's command amounts to. A PowerShell
@@ -241,7 +295,7 @@ func asShell(tool, cmd string) string {
 // argv array), cmd, command_line (Windsurf) or commands (Cline, a list of
 // strings or {command, args} run one after another).
 func commandOf(in map[string]json.RawMessage) string {
-	for _, k := range []string{"command", "cmd", "command_line"} {
+	for _, k := range []string{"command", "cmd", "command_line", "cmdline", "commandLine", "cmd_text", "script", "shell_command", "shellCommand"} {
 		if s := commandField(in[k]); s != "" {
 			return s
 		}
