@@ -23,14 +23,47 @@ func init() {
 		"file", "du", "df", "basename", "dirname", "realpath", "readlink", "mkdir", "touch", "cp", "mv", "rm", "ln",
 		"chmod", "find", "jq", "yq", "column", "xxd", "od", "base64", "sha256sum", "shasum", "md5sum", "gzip", "gunzip",
 		"unzip", "nl", "fold", "comm", "join", "paste", "seq", "id", "whoami", "uname", "hostname", "printenv",
-		"gofmt", "terraform", "tofu", "tfsec", "terraform-docs", "shellcheck", "gsutil", "applygate", "env",
+		"gofmt", "terraform", "tofu", "tfsec", "shellcheck", "gsutil", "applygate", "env",
 	} {
 		shapes[n] = nil
 	}
 	shapes["printf"] = denyOpts("-v")
 	// curl -K reads options (output files, more URLs) from a file.
 	shapes["curl"] = denyOpts("-K", "--config")
-	shapes["infracost"] = denyOpts("--terraform-binary")
+	// infracost runs terraform init and plan in the directory, with init and
+	// plan flags it passes through and a config file that names a binary:
+	// only its version and help read nothing.
+	shapes["infracost"] = func(args []Word, _ Invocation) string {
+		for _, w := range args {
+			switch optText(w) {
+			case "--version", "-v", "version", "--help", "-h", "help", "configure", "auth":
+				return ""
+			}
+		}
+		return "infracost runs terraform init and plan in the directory"
+	}
+	// terraform-docs writes the files its options and .terraform-docs.yml
+	// name (output.file), guard files included.
+	tfdocs := denyOpts("-c", "--config", "--output-file", "--output-mode", "--output-template", "--output-check", "--output-format")
+	shapes["terraform-docs"] = func(args []Word, inv Invocation) string {
+		if why := tfdocs(args, inv); why != "" {
+			return why
+		}
+		dirs := []string{inv.Dir}
+		for _, w := range args {
+			if t := optText(w); !strings.HasPrefix(t, "-") && t != "" && inv.Dir != "" {
+				dirs = append(dirs, PhysicalJoin(inv.Dir, t))
+			}
+		}
+		for _, d := range dirs {
+			for _, n := range []string{".terraform-docs.yml", ".terraform-docs.yaml"} {
+				if _, err := os.Stat(filepath.Join(d, n)); d == "" || err == nil {
+					return "terraform-docs with a " + n + " config in " + d
+				}
+			}
+		}
+		return ""
+	}
 	shapes["actionlint"] = denyOpts("-shellcheck", "-pyflakes")
 	// tflint runs the plugins its config names.
 	shapes["tflint"] = denyOpts("--config", "-c", "--init", "--plugin-dir")
@@ -677,6 +710,30 @@ func gitShape(args []Word, inv Invocation) string {
 		if why := gitConfigShape(rest); why != "" {
 			return why
 		}
+	}
+	// The provider lock check trusts the upstream branch's copy: what moves
+	// or re-points that branch (a push, a tracking change, a remote edit)
+	// is not plain, so the agent cannot make the two agree.
+	switch sub {
+	case "push":
+		return "git push moves the upstream branch the provider lock check trusts"
+	case "remote":
+		for _, w := range rest {
+			switch optText(w) {
+			case "add", "remove", "rm", "rename", "set-url", "set-head", "set-branches", "prune", "update":
+				return "git remote " + optText(w) + " changes the remotes the upstream check trusts"
+			}
+		}
+	case "branch":
+		for _, w := range rest {
+			t := optText(w)
+			if t == "-u" || t == "--set-upstream-to" || strings.HasPrefix(t, "--set-upstream-to=") || t == "--unset-upstream" || t == "-f" || t == "--force" ||
+				t == "-m" || t == "-M" || t == "-c" || t == "-C" || t == "--move" || t == "--copy" || t == "-d" || t == "-D" || t == "--delete" || t == "--edit-description" {
+				return "git branch " + t + " changes a branch or its upstream"
+			}
+		}
+	case "update-ref", "symbolic-ref":
+		return "git " + sub + " writes a reference"
 	}
 	return gitState(dir, sub)
 }

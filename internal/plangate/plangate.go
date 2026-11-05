@@ -734,19 +734,39 @@ var restrictingKeys = map[string]bool{"aws:principalorgid": true, "aws:principal
 	"aws:federatedprovider": true, "cognito-identity.amazonaws.com:aud": true, "aws:vpcsourceip": true, "elasticfilesystem:accesspointarn": true,
 	"lambda:eventsourcetoken": true, "s3:resourceaccount": true}
 
-// restricts reports whether a Condition limits who the statement reaches.
+// restricts reports whether a Condition limits who the statement reaches: a
+// positive operator on a limiting key with a value that is not a wildcard.
+// A negative operator (StringNotEquals, NotIpAddress, ArnNotLike) names who
+// is left out, everyone else being let in; a value of "*", a CIDR of the
+// whole internet or an ARN pattern that matches every ARN limits nobody.
 func restricts(raw json.RawMessage) bool {
-	var cond map[string]map[string]any
+	var cond map[string]map[string]json.RawMessage
 	if json.Unmarshal(raw, &cond) != nil {
 		var any1 map[string]any
 		return json.Unmarshal(raw, &any1) == nil && len(any1) > 0 // an unreadable form: assume it restricts
 	}
 	for op, keys := range cond {
-		if strings.HasPrefix(strings.ToLower(op), "null") {
-			continue // Null tests whether a key is present, not who the caller is
+		lop := strings.ToLower(op)
+		if strings.HasPrefix(lop, "null") || strings.Contains(lop, "not") {
+			continue // Null tests whether a key is present; a negative operator excludes, it does not limit
 		}
-		for k := range keys {
-			if restrictingKeys[strings.ToLower(k)] {
+		for k, vraw := range keys {
+			if !restrictingKeys[strings.ToLower(k)] {
+				continue
+			}
+			vals := stringsOf(vraw)
+			if len(vals) == 0 {
+				var b bool
+				var n float64
+				if json.Unmarshal(vraw, &b) == nil || json.Unmarshal(vraw, &n) == nil {
+					return true
+				}
+				continue
+			}
+			for _, v := range vals {
+				if v == "*" || v == "" || strings.Trim(v, "*?:/") == "" || wideCIDR(v) || strings.HasPrefix(v, "arn:aws:*") || v == "arn:aws:iam::*:*" {
+					continue
+				}
 				return true
 			}
 		}

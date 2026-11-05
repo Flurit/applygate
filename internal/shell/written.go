@@ -142,15 +142,8 @@ func (a *analyzer) noteWrites(bn string, rest []Word, st *state) {
 				a.wrote(st, Word{Text: v, Resolved: w.Resolved, Prefix: v}, wroteFile)
 			}
 		}
-	case "sed", "gsed", "perl":
-		inPlace := false
-		for _, w := range rest {
-			if strings.HasPrefix(w.Text, "-i") || w.Text == "--in-place" || strings.HasPrefix(w.Text, "--in-place=") ||
-				bn == "perl" && strings.HasPrefix(w.Text, "-") && !strings.HasPrefix(w.Text, "--") && strings.Contains(w.Text, "i") {
-				inPlace = true
-			}
-		}
-		if inPlace {
+	case "sed", "gsed", "perl", "yq", "ruby":
+		if InPlaceEdit(rest) {
 			for _, w := range pos {
 				a.wrote(st, w, wroteFile)
 			}
@@ -216,4 +209,33 @@ func decodeUTF16Base64(w Word) (Word, bool) {
 	}
 	s := string(utf16.Decode(u))
 	return Word{Text: s, Resolved: true, Prefix: s}, true
+}
+
+// InPlaceEdit reports whether a sed, perl, ruby or yq command line edits
+// its files in place: --in-place or --inplace, or an -i inside a cluster of
+// short options (-i, -Ei, -ni, -pi, -Pi, -yi, -i.bak) before any option that
+// takes the rest of the word as its argument.
+func InPlaceEdit(args []Word) bool {
+	for _, w := range args {
+		t := w.Text
+		if t == "--" {
+			return false
+		}
+		if t == "--in-place" || t == "--inplace" || strings.HasPrefix(t, "--in-place=") || strings.HasPrefix(t, "--inplace=") {
+			return true
+		}
+		if len(t) < 2 || t[0] != '-' || t[1] == '-' {
+			continue
+		}
+		for k := 1; k < len(t); k++ {
+			c := t[k]
+			if c == 'i' {
+				return true
+			}
+			if strings.IndexByte("efFlmMIxV0", c) >= 0 {
+				break
+			}
+		}
+	}
+	return false
 }

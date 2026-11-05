@@ -48,6 +48,9 @@ var runCLI = func(ctx context.Context, bin string, args ...string) ([]byte, erro
 	return out.Bytes(), nil
 }
 
+// maxAudited bounds how many profiles and contexts one run audits; more are reported, not skipped silently.
+const maxAudited = 500
+
 // credsTimeout bounds each CLI call; an SSO profile may be slow to answer.
 var credsTimeout = 20 * time.Second
 
@@ -120,10 +123,11 @@ func auditAWS(cfg *config.Config) []credsFinding {
 		}
 	}
 	sort.Strings(profiles)
-	if len(profiles) > 50 {
-		profiles = profiles[:50]
-	}
 	var res []credsFinding
+	if len(profiles) > maxAudited {
+		res = append(res, credsFinding{"WARN", fmt.Sprintf("aws: %d profiles listed, only the first %d are audited; the rest are not checked", len(profiles), maxAudited)})
+		profiles = profiles[:maxAudited]
+	}
 	// The environment's own credentials (AWS_ACCESS_KEY_ID, AWS_PROFILE)
 	// are what a call with no --profile uses.
 	if os.Getenv("AWS_ACCESS_KEY_ID") != "" || os.Getenv("AWS_PROFILE") != "" || len(profiles) == 0 {
@@ -263,7 +267,8 @@ func auditKube(cfg *config.Config) []credsFinding {
 		if c = strings.TrimSpace(c); c == "" {
 			continue
 		}
-		if n++; n > 50 {
+		if n++; n > maxAudited {
+			res = append(res, credsFinding{"WARN", fmt.Sprintf("kube: more than %d contexts, the rest are not audited", maxAudited)})
 			break
 		}
 		tier, env, matched := tierOf(cfg, config.Signals{KubeContext: c})

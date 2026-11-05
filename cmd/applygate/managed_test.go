@@ -141,3 +141,37 @@ func TestTrustRefusesASwappedConfig(t *testing.T) {
 		t.Fatalf("the config is not shown with its line breaks:\n%s", out.String())
 	}
 }
+
+// The documented upgrade (install --managed, without --exclusive) keeps the
+// exclusivity of the install it replaces.
+func TestManagedUpgradeKeepsExclusive(t *testing.T) {
+	d := t.TempDir()
+	old := []string{config.SystemDir, config.ManagedBinDir, config.ClaudeManagedDir, config.CodexManagedDir}
+	oldRoot, oldEuid := config.RequireRootOwned, euid
+	t.Cleanup(func() {
+		config.SystemDir, config.ManagedBinDir, config.ClaudeManagedDir, config.CodexManagedDir = old[0], old[1], old[2], old[3]
+		config.RequireRootOwned, euid = oldRoot, oldEuid
+	})
+	config.SystemDir, config.ManagedBinDir = filepath.Join(d, "etc", "applygate"), filepath.Join(d, "libexec", "applygate")
+	config.ClaudeManagedDir, config.CodexManagedDir = filepath.Join(d, "ClaudeCode"), filepath.Join(d, "codex")
+	config.RequireRootOwned = false
+	euid = func() int { return 0 }
+	var out, errb bytes.Buffer
+	if rc := run([]string{"install", "--managed", "--exclusive"}, nil, &out, &errb); rc != 0 {
+		t.Fatalf("install: rc %d %s", rc, errb.String())
+	}
+	drop := filepath.Join(config.ClaudeManagedDir, "managed-settings.d", "applygate.json")
+	if b, _ := os.ReadFile(drop); !strings.Contains(string(b), `"allowManagedHooksOnly": true`) {
+		t.Fatalf("not exclusive after install --exclusive: %s", b)
+	}
+	out.Reset()
+	if rc := run([]string{"install", "--managed"}, nil, &out, &errb); rc != 0 {
+		t.Fatalf("upgrade: rc %d %s", rc, errb.String())
+	}
+	if b, _ := os.ReadFile(drop); !strings.Contains(string(b), `"allowManagedHooksOnly": true`) {
+		t.Fatalf("the upgrade dropped allowManagedHooksOnly: %s", b)
+	}
+	if !strings.Contains(out.String(), "exclusive:") {
+		t.Errorf("the upgrade did not say it kept exclusivity: %s", out.String())
+	}
+}

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Red-team round 8 fixes** (`review/v0.6.0/2026-11-04-red-team-round-8.md`): fixed by rule where a rule covers the family, not by listing the reported spelling.
+  - **Writers and redirections:** `>&` and `<&` with a file word are writes; `env` is parsed as GNU env is (option clusters, unique-prefix long options, `-S`, `-C`, `-u`); `sed`, `gsed`, `perl`, `ruby`, `yq` in-place clusters, `find -fprint*`, `tar c`, decompressors, `tree -o`, `git --output`, `aws s3api get-object` and `gh`/`glab` checkouts write their targets (8C1, 8C2, 8C4, 8C5, 8C10).
+  - **Checks that skipped a case:** init and state calls scan the backend; `check` blocks, shell resources, provider `exec` forms and computed Terragrunt backends are covered; `init -plugin-dir`, `-upgrade`, `get -update` and an `init` the lock file does not vouch for count as installs (8C6, 8C7, 8C8, 8H13, 8H14).
+  - **Effects across directories:** git config keys that run programs, hooks and the repository config, `EDITOR` and the other program variables, process substitution, `make --dir` abbreviations and credential files named by environment variables are judged where they run (8C3, 8C9, 8C11, 8C12, 8C13, 8C14).
+  - **Names and state:** a default value in a guard file's name, `patch` text naming a guard file, unscoped agent packages in `npx`/`bunx`, `git replace`, glob and directory removal and copies of state, symlinked state directories, `GOOGLE_PROJECT` and `ARM_SUBSCRIPTION_ID` tier signals (8H1, 8H2, 8H3, 8H4, 8H6, 8H15, 8H16).
+  - **Strict shapes:** `git push`, remote and branch mutators, `infracost` and `terraform-docs` options are not plain (8H7, 8H8, 8H9); unresolved contexts and profiles ask (8H10); the judge's filter matches abbreviated options and `applygate trust`/`doctor --creds` mentions (8H11).
+  - The attack pack gains 72 round-8 reproductions and controls (602 in all).
+  - Cost on the agent trial: 59 of 162 calls in a protected directory are asked about or blocked, against 54; staging and dev are unchanged.
+
 - **Red-team round 7 fixes, R7-3: the highs** (`review/v0.6.0/2026-11-04-red-team-round-7.md`, plan in `2026-11-04-round-7-fix-plan.md`):
   - **Shapes:** `terragrunt version` and `fmt` are not plain (only `--version`, `hclfmt`, `hcl fmt` and help); checkov's config is looked for in the home directory and each `-d` directory; `podman --runtime`, `--conmon` and the other options that name a program are not plain; Git LFS's `extension`, `customtransfer` and `standalonetransferagent` keys are off the safe list, and with LFS configured a command that writes the working tree checks the credential helper too (7H4, 7H7, 7H8, 7H12).
   - **Makefiles:** one that uses `define`, conditionals, pattern or default rules, `.DEFAULT_GOAL`, `.RECIPEPREFIX`, `.SHELLFLAGS`, `$(eval)`, `$(call)` or `$(shell)` is not analyzed, and `make` then runs in an unknown directory (7H11).

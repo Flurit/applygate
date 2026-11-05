@@ -55,9 +55,13 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 		return
 	}
 	record := func() {
-		a.res.Invocations = append(a.res.Invocations, Invocation{
+		inv := Invocation{
 			Args: args, Dir: cmdSt.dir, Env: cmdSt.env(), Redirs: redirs, Via: append([]string(nil), via...),
-		})
+		}
+		if in.present && in.known {
+			inv.Stdin = in.text
+		}
+		a.res.Invocations = append(a.res.Invocations, inv)
 	}
 	if !args[0].Resolved {
 		record()
@@ -382,13 +386,13 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 			return
 		}
 		if !rest[0].Resolved {
-			a.problem(st, via, joinWords(args), "source of a file whose name cannot be resolved")
+			a.unbounded(st, via, joinWords(args), "source of a file whose name cannot be resolved (a process substitution, a variable), which may run anywhere")
 			st.dir = ""
 			return
 		}
 		b, err := a.read(st, rest[0].Text)
 		if err != nil {
-			a.problem(st, via, joinWords(args), "source of a file that cannot be read: "+err.Error())
+			a.unbounded(st, via, joinWords(args), "source of a file that cannot be read: "+err.Error())
 			st.dir = ""
 			return
 		}
@@ -639,53 +643,123 @@ func (a *analyzer) call(args []Word, redirs []Redir, cmdSt, st *state, via []str
 func (a *analyzer) env(rest []Word, redirs []Redir, cmdSt, st *state, via []string, depth int, in stdin) {
 	es := cmdSt.clone()
 	i := 0
+	// optArg returns an option's argument: the rest of its own word when it
+	// has one, else the next word.
+	optArg := func(own string, w Word) (Word, bool) {
+		if own != "" {
+			return Word{Text: own, Resolved: w.Resolved, Prefix: own}, true
+		}
+		if i+1 < len(rest) {
+			i++
+			return rest[i], true
+		}
+		return Word{}, false
+	}
+	chdir := func(v Word) {
+		if v.Resolved {
+			es.dir = a.abs(es, v.Text)
+		} else {
+			es.dir = ""
+		}
+	}
+	// split runs env -S text: it has its own quoting, escapes and ${VAR},
+	// so only plain words are split here.
+	split := func(sw Word, next int) bool {
+		if !sw.Resolved || strings.ContainsAny(sw.Text, "'\"\\$#") {
+			a.problem(st, via, "env -S "+sw.Text, "env -S with text that cannot be resolved")
+			return false
+		}
+		nr := append(lits(strings.Fields(sw.Text)...), rest[next:]...)
+		a.env(nr, redirs, es, st, append(via, "env -S"), depth+1, in)
+		return true
+	}
 	for i < len(rest) {
 		w := rest[i]
 		t := w.Text
 		switch {
-		case t == "-i" || t == "--ignore-environment" || t == "-0" || t == "--null" || t == "-v":
+		case t == "--":
 			i++
-		case t == "-u" || t == "--unset":
-			if i+1 < len(rest) {
-				delete(es.vars, rest[i+1].Text)
-			}
-			i += 2
-		case t == "-C" || isAbbrev(t, "--chdir", 3):
-			if i+1 < len(rest) {
-				if rest[i+1].Resolved {
-					es.dir = a.abs(es, rest[i+1].Text)
-				} else {
-					es.dir = ""
+			a.call(rest[i:], redirs, es, st, append(via, "env"), depth+1, in)
+			return
+		case strings.HasPrefix(t, "--"):
+			name, val, hasVal := strings.Cut(t, "=")
+			var matches []string
+			for _, o := range envLong {
+				if strings.HasPrefix("--"+o, name) {
+					matches = append(matches, o)
 				}
 			}
-			i += 2
-		case strings.HasPrefix(t, "--c") && strings.Contains(t, "=") && isAbbrev(t[:strings.Index(t, "=")], "--chdir", 3):
-			es.dir = a.abs(es, t[strings.Index(t, "=")+1:])
-			i++
-		case t == "-S" || t == "--split-string" || strings.HasPrefix(t, "-S") || strings.HasPrefix(t, "--split-string="):
-			sw, next := Word{}, i+1
-			switch {
-			case t == "-S" || t == "--split-string":
-				if i+1 >= len(rest) {
+			own := ""
+			if hasVal {
+				own = val
+			}
+			if len(matches) > 1 {
+				// An abbreviation getopt_long reports as ambiguous, or that
+				// could be --chdir or --split-string: not followed.
+				for _, m := range matches {
+					if m == "chdir" || m == "split-string" {
+						a.unbounded(st, via, joinWords(rest), "an env option that may be --chdir or --split-string")
+						return
+					}
+				}
+				i++
+				continue
+			}
+			if len(matches) == 0 {
+				i++
+				continue
+			}
+			switch matches[0] {
+			case "chdir":
+				v, ok := optArg(own, w)
+				if !ok {
 					return
 				}
-				sw, next = rest[i+1], i+2
-			case strings.HasPrefix(t, "-S"):
-				sw = Word{Text: t[2:], Resolved: w.Resolved, Prefix: t[2:]}
-			default:
-				v := strings.TrimPrefix(t, "--split-string=")
-				sw = Word{Text: v, Resolved: w.Resolved, Prefix: v}
-			}
-			// env -S has its own quoting, escapes and ${VAR}: only plain
-			// words are split here.
-			if !sw.Resolved || strings.ContainsAny(sw.Text, "'\"\\$#") {
-				a.problem(st, via, "env -S "+sw.Text, "env -S with text that cannot be resolved")
+				chdir(v)
+				i++
+			case "split-string":
+				sw, ok := optArg(own, w)
+				if !ok {
+					return
+				}
+				split(sw, i+1)
 				return
+			case "unset", "argv0":
+				v, ok := optArg(own, w)
+				if matches[0] == "unset" && ok {
+					delete(es.vars, v.Text)
+				}
+				i++
+			default:
+				i++
 			}
-			nr := append(lits(strings.Fields(sw.Text)...), rest[next:]...)
-			a.env(nr, redirs, es, st, append(via, "env -S"), depth+1, in)
-			return
-		case strings.HasPrefix(t, "-"):
+		case strings.HasPrefix(t, "-") && len(t) > 1:
+			// A cluster of short options: -i -0 -v take nothing; -u -C -S -P
+			// -a take the rest of the word, or the next word.
+			consumed := false
+			for k := 1; k < len(t) && !consumed; k++ {
+				switch t[k] {
+				case 'u', 'C', 'S', 'P', 'a':
+					v, ok := optArg(t[k+1:], w)
+					if !ok {
+						if t[k] == 'S' {
+							return
+						}
+						consumed = true
+						break
+					}
+					switch t[k] {
+					case 'u':
+						delete(es.vars, v.Text)
+					case 'C':
+						chdir(v)
+					case 'S':
+						split(v, i+1)
+						return
+					}
+					consumed = true
+				}
+			}
 			i++
 		case strings.Contains(t, "=") && !strings.HasPrefix(t, "="):
 			k, v, _ := strings.Cut(t, "=")
@@ -698,6 +772,11 @@ func (a *analyzer) env(rest []Word, redirs []Redir, cmdSt, st *state, via []stri
 		}
 	}
 }
+
+// envLong are the long options of env (GNU coreutils), which getopt_long
+// accepts by any unique prefix.
+var envLong = []string{"ignore-environment", "null", "unset", "chdir", "split-string", "debug", "argv0", "block-signal",
+	"default-signal", "ignore-signal", "list-signal-handling", "help", "version"}
 
 // shell handles sh/bash/zsh invocations: -c strings, script files and stdin.
 func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string, depth int, in stdin) {
@@ -742,7 +821,7 @@ func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string,
 			return
 		}
 		if !rest[0].Resolved {
-			a.problem(st, via, bn+" -c "+rest[0].Text, bn+" -c with a command string that cannot be resolved statically")
+			a.unbounded(st, via, bn+" -c "+rest[0].Text, bn+" -c with a command string that cannot be resolved statically, which may run anywhere")
 			return
 		}
 		// sh -c 'cmd' arg0 arg1...: the first word after the string is $0.
@@ -753,7 +832,7 @@ func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string,
 		a.source(rest[0].Text, child, append(via, label+" -c"), depth+1)
 	case len(rest) > 0:
 		if !rest[0].Resolved {
-			a.problem(st, via, bn+" "+joinWords(rest), bn+" running a script whose name cannot be resolved")
+			a.unbounded(st, via, bn+" "+joinWords(rest), bn+" running a script whose name cannot be resolved (a process substitution, a variable), which may run anywhere")
 			return
 		}
 		b, err := a.read(st, rest[0].Text)
@@ -772,7 +851,7 @@ func (a *analyzer) shell(bn string, rest []Word, cmdSt, st *state, via []string,
 		a.source(string(b), child, append(via, bn+" "+rest[0].Text), depth+1)
 	case in.present:
 		if !in.known {
-			a.problem(st, via, in.desc+" | "+bn, "text piped into "+bn+" cannot be resolved statically")
+			a.unbounded(st, via, in.desc+" | "+bn, "text piped into "+bn+" cannot be resolved statically, which may run anywhere")
 			return
 		}
 		a.source(in.text, child, append(via, in.desc+" | "+bn), depth+1)
@@ -1721,7 +1800,7 @@ func joinWords(ws []Word) string {
 	return strings.Join(parts, " ")
 }
 
-var mentionRe = regexp.MustCompile(`(?i)\bapplygate\W+(approve|telemetry\W+o(n|ff)|init|disable|hook\W+(remove|uninstall))\b|\b(terraform|tofu|terragrunt|kubectl)\b|\baws\s+[a-z0-9-]+\s+[a-z0-9-]+|\.claude/settings|managed-settings|\.codex/(hooks\.json|config\.toml)|\.applygate\.ya?ml|\.seatbelt\.ya?ml|\.aws/credentials|\.tfstate\b|\b(boto3|botocore|aws-sdk)\b|@aws-sdk/|github\.com/aws/aws-sdk-go`)
+var mentionRe = regexp.MustCompile(`(?i)\bapplygate\W+(approve|trust|telemetry\W+o(n|ff)|init|disable|hook\W+(remove|uninstall)|(un)?install|doctor\W+--creds)\b|\b(terraform|tofu|terragrunt|kubectl)\b|\baws\s+[a-z0-9-]+\s+[a-z0-9-]+|\.claude/settings|managed-settings|\.codex/(hooks\.json|config\.toml)|\.applygate\.ya?ml|\.seatbelt\.ya?ml|\.aws/credentials|\.tfstate\b|\b(boto3|botocore|aws-sdk)\b|@aws-sdk/|github\.com/aws/aws-sdk-go`)
 
 // Mentions returns the infrastructure or guard-file words found in text.
 func Mentions(text string) []string {
@@ -2027,7 +2106,8 @@ var gitExecKeys = toSet("core.pager", "core.sshcommand", "core.fsmonitor", "core
 
 // gitExecEnv are environment variables whose value is a command git runs.
 var gitExecEnv = []string{"GIT_SSH_COMMAND", "GIT_SSH", "GIT_PAGER", "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "GIT_EXTERNAL_DIFF",
-	"GIT_ASKPASS", "GIT_PROXY_COMMAND"}
+	"GIT_ASKPASS", "GIT_PROXY_COMMAND", "EDITOR", "VISUAL", "PAGER", "SSH_ASKPASS", "SUDO_EDITOR", "KUBE_EDITOR", "GH_EDITOR",
+	"HELM_EDITOR", "GLAB_EDITOR", "PSQL_EDITOR", "FCEDIT"}
 
 // git analyzes the commands git runs through its own options: -c alias.X=!cmd
 // when X is the subcommand, -c keys whose value is a command, bisect run,

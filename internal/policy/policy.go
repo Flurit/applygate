@@ -14,6 +14,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/Flurit/applygate/internal/guard"
 	"github.com/Flurit/applygate/internal/plangate"
 	"github.com/Flurit/applygate/internal/preflight"
+	"github.com/Flurit/applygate/internal/safefile"
 	"github.com/Flurit/applygate/internal/shell"
 )
 
@@ -403,6 +405,26 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 		res := shell.Analyze(ev.Command, ShellOptions(cfg, copt, ev.Cwd, deps.Env, deps.ReadFile))
 		actions = classify.Invocations(res, copt)
 		notes = res.Notes
+		for _, a := range actions {
+			// A credentials file the command points a CLI at that names a
+			// program runs it whatever the verb is, and whatever the tier.
+			why := ""
+			if a.Engine != "" {
+				env := mergeEnv(deps.Env, a.Env)
+				for k, v := range a.TargetEnv {
+					env[k] = v
+				}
+				a.Env, a.TargetEnv = env, nil
+				why = credFileRuns(a)
+				if why == "" && strings.Contains(a.TargetUnknown, "names a file an earlier step") {
+					why = a.TargetUnknown
+				}
+			}
+			if why != "" {
+				actions = append(actions, classify.Action{Class: classify.CredentialAccess, Engine: "file", Command: ev.Command, Dir: a.Dir, Why: why})
+				break
+			}
+		}
 		if why := classify.UnknownGuardChange(res, ev.Command, ev.Cwd, copt); why != "" {
 			actions = append(actions, classify.Action{Class: classify.Tampering, Engine: "file", Command: ev.Command, Dir: ev.Cwd, Why: why})
 		}
@@ -560,7 +582,7 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		recorded = preflight.InitBackendEnv(a.Dir, env)
 		declared = preflight.DeclaredBackend(a.Dir)
 		sig.ProviderProfiles, sig.ProviderRoles, sig.ProviderUnknown = preflight.ProviderAWS(a.Dir, preflight.Vars{Values: a.Vars, Files: a.VarFiles, Env: env, Unknown: a.VarsUnknown})
-		addProviderTargets(&sig, a.Dir)
+		addProviderTargets(&sig, a.Dir, env, deps.ReadFile)
 		if len(a.BackendConfig) > 0 {
 			// An init in this command re-points the directory: judge this
 			// command against the backend it will use, not the old one.
@@ -593,6 +615,17 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		}
 		if be != nil && be.Type == "local" && be.Config["path"] != "" {
 			sig.StateDirs = append(sig.StateDirs, filepath.Dir(shell.PhysicalJoin(a.Dir, be.Config["path"])))
+		}
+		if be != nil && be.Type == "local" && be.Config["workspace_dir"] != "" {
+			sig.StateDirs = append(sig.StateDirs, filepath.Dir(shell.PhysicalJoin(a.Dir, be.Config["workspace_dir"])))
+		}
+		// The implicit local state files are where they resolve to: a link
+		// to another environment's state is that environment's.
+		for _, n := range []string{"terraform.tfstate", "terraform.tfstate.d", "terraform.tfstate.backup"} {
+			p := filepath.Join(a.Dir, n)
+			if r, err := filepath.EvalSymlinks(p); err == nil && filepath.Clean(r) != filepath.Clean(p) {
+				sig.StateDirs = append(sig.StateDirs, filepath.Dir(r))
+			}
 		}
 		if a.StateUnknown {
 			sig.BackendUnknown = "a -state path cannot be resolved statically"
@@ -830,7 +863,7 @@ func SavedPlanVerdict(res *plangate.Result, t config.Tier) Verdict {
 func DirSignals(dir string, env map[string]string) (config.Signals, *preflight.Backend) {
 	sig := config.Signals{Dir: dir, Workspace: preflight.Workspace(dir, env)}
 	sig.ProviderProfiles, sig.ProviderRoles, sig.ProviderUnknown = preflight.ProviderAWS(dir, preflight.Vars{Env: env})
-	addProviderTargets(&sig, dir)
+	addProviderTargets(&sig, dir, env, nil)
 	be := preflight.InitBackendEnv(dir, env)
 	if be == nil {
 		be = preflight.DeclaredBackend(dir)
@@ -871,6 +904,9 @@ func terragruntSignals(sig *config.Signals, a classify.Action, be *preflight.Bac
 			}
 		}
 		sig.BackendValues = vals
+		if tg.Unknown != "" && sig.BackendUnknown == "" {
+			sig.BackendUnknown = tg.Unknown
+		}
 		if source == "" {
 			source = tg.Source
 		}
@@ -1278,6 +1314,10 @@ func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action
 		// before the command runs; a step that rewrites what they read
 		// comes first.
 		for _, a := range acts {
+			if isTerraform(a.Engine) && (a.InstalledEarlier || a.InitEarlier && !preflight.InitSafe(ctxOf(deps), a.Dir)) && startsProviders(a.Sub, nil) {
+				ok, why = false, "an earlier step installs providers or modules in "+a.Dir+" that "+a.Engine+" then runs, from somewhere the committed lock file does not vouch for"
+				break
+			}
 			if isTerraform(a.Engine) && (a.ConfigWritten || a.DataDirWritten) && startsProviders(a.Sub, nil) {
 				ok, why = false, "an earlier step writes the configuration or .terraform in "+a.Dir+" that "+a.Engine+" then reads"
 				break
@@ -1341,7 +1381,7 @@ func subtreeResolve(cfg *config.Config, dir string, sig config.Signals, env map[
 				complete = false
 				return filepath.SkipAll
 			}
-			if name := d.Name(); p != dir && (name == ".git" || name == ".terraform" || name == ".terragrunt-cache" || name == "node_modules") {
+			if name := d.Name(); p != dir && (name == ".git" || name == ".terraform" || name == ".terragrunt-cache") {
 				return filepath.SkipDir
 			}
 			return nil
@@ -1351,7 +1391,7 @@ func subtreeResolve(cfg *config.Config, dir string, sig config.Signals, env map[
 			complete = false
 			return nil
 		}
-		if d.Name() != "terragrunt.hcl" {
+		if d.Name() != "terragrunt.hcl" && d.Name() != "terragrunt.hcl.json" {
 			return nil
 		}
 		usig, _ := DirSignals(filepath.Dir(p), env)
@@ -1371,6 +1411,9 @@ func subtreeResolve(cfg *config.Config, dir string, sig config.Signals, env map[
 func unknownSignal(a classify.Action) string {
 	if a.Engine == "" {
 		return ""
+	}
+	if why := credFileRuns(a); why != "" {
+		return why
 	}
 	if a.TargetUnknown != "" {
 		return a.TargetUnknown
@@ -1426,10 +1469,88 @@ func streamPath(p string) bool {
 
 // addProviderTargets adds what the google, kubernetes and azurerm provider
 // blocks in dir name to sig.
-func addProviderTargets(sig *config.Signals, dir string) {
+func addProviderTargets(sig *config.Signals, dir string, env map[string]string, read func(string) ([]byte, error)) {
 	t := preflight.ProviderTargets(dir)
+	if read == nil {
+		read = os.ReadFile
+	}
+	// What the providers read from the environment when the block names
+	// nothing: the project, the subscription, the kube context.
+	if sig.GCPProject == "" {
+		for _, k := range []string{"GOOGLE_PROJECT", "GOOGLE_CLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT", "GCLOUD_PROJECT"} {
+			if v := env[k]; v != "" {
+				t.GCPProjects = append(t.GCPProjects, v)
+			}
+		}
+	}
+	for _, k := range []string{"ARM_SUBSCRIPTION_ID", "AZURE_SUBSCRIPTION_ID"} {
+		if v := env[k]; v != "" {
+			t.AzureSubscriptions = append(t.AzureSubscriptions, v)
+		}
+	}
+	if v := env["KUBE_CTX"]; v != "" {
+		t.KubeContexts = append(t.KubeContexts, v)
+	}
+	if t.UsesKube && len(t.KubeContexts) == 0 && env["KUBE_CTX"] == "" {
+		if c := preflight.KubeContext(env, read); c != "" {
+			t.KubeContexts = append(t.KubeContexts, c)
+		}
+	}
 	sig.ProviderProjects, sig.ProviderContexts, sig.ProviderSubscriptions = t.GCPProjects, t.KubeContexts, t.AzureSubscriptions
 	if t.Unknown != "" && sig.ProviderUnknown == "" {
 		sig.ProviderUnknown = t.Unknown
 	}
+}
+
+var (
+	credProcessRe = regexp.MustCompile(`(?mi)^\s*(credential_process|credentials_process)\s*=|^\s*exec\s*:|^\s*auth-provider\s*:|^\s*command\s*:`)
+)
+
+// credFileRuns reports a credentials or kube config file the command points
+// the CLI at, other than the user's own (a guard file), that names a
+// program to run: credential_process in an AWS config, exec or
+// auth-provider in a kubeconfig. An unreadable file is not a finding: it
+// runs nothing.
+func credFileRuns(a classify.Action) string {
+	for _, k := range classify.CredFileEnv() {
+		v := a.Env[k]
+		if tv := a.TargetEnv[k]; tv != "" {
+			v = tv
+		}
+		if v == "" {
+			continue
+		}
+		for _, p := range filepath.SplitList(v) {
+			if p == "" {
+				continue
+			}
+			if !filepath.IsAbs(p) && a.Dir != "" {
+				p = shell.PhysicalJoin(a.Dir, p)
+			}
+			if p == os.DevNull || p == "/dev/null" {
+				// The null device is empty by definition: pointing a CLI at it
+				// (as sandboxes do) names no program, and no content can
+				// arrive through it.
+				continue
+			}
+			b, err := safefile.ReadFileMax(p, 1<<20)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					return k + " names " + p + ", which cannot be read, so what it runs is unknown"
+				}
+				continue
+			}
+			if credProcessRe.Match(b) {
+				return k + " names " + p + ", which names a program to run (credential_process, exec)"
+			}
+		}
+	}
+	return ""
+}
+
+func ctxOf(deps Deps) context.Context {
+	if deps.Ctx != nil {
+		return deps.Ctx
+	}
+	return context.Background()
 }

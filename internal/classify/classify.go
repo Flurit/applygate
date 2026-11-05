@@ -89,6 +89,12 @@ type Action struct {
 	// PlanStateDirs are the directories of the -state files the plan -out
 	// that wrote PlanFile read.
 	PlanStateDirs []string `json:"-"`
+	// InstalledEarlier is set when an earlier step of the same command ran
+	// init or get with an option that installs from somewhere the lock file
+	// does not vouch for (-upgrade, -plugin-dir, -from-module, get -update,
+	// providers lock or mirror); InitEarlier when it ran a plain init or get,
+	// which installs what the lock file lists.
+	InstalledEarlier, InitEarlier bool `json:"-"`
 	// ConfigWritten is set when an earlier step of the same command writes
 	// the configuration, .terraform, lock file, state or a tree under this
 	// directory: what the hook read on disk is not what the call will use.
@@ -206,10 +212,15 @@ func Invocations(res *shell.Result, opt Options) []Action {
 	// -state=PATH copied into the workspace it selected: later commands
 	// there run on that state.
 	seeded := map[string][]string{}
+	installed := map[string]bool{} // dir -> an earlier step ran init or get with an unvouched option
+	initial := map[string]bool{}   // dir -> an earlier step ran a plain init or get
 	for _, inv := range res.Invocations {
 		acts := invocation(inv, opt)
 		for i := range acts {
 			a := &acts[i]
+			if isEngine(a.Engine) && a.Dir != "" {
+				a.InstalledEarlier, a.InitEarlier = installed[a.Dir], initial[a.Dir]
+			}
 			if (a.Engine == "terraform" || a.Engine == "tofu") && a.Dir != "" {
 				if a.Sub == "workspace new" && len(a.StateFiles) > 0 {
 					seeded[a.Dir] = append(seeded[a.Dir], a.StateFiles...)
@@ -228,8 +239,25 @@ func Invocations(res *shell.Result, opt Options) []Action {
 					a.PlanStateDirs = originState[guard.Fold(filepath.Clean(plan))]
 				}
 			}
+			if a.Engine != "" && a.TargetUnknown == "" {
+				// A credentials file the command points the CLI at (AWS_CONFIG_FILE,
+				// KUBECONFIG, --kubeconfig) that an earlier step wrote may hold a
+				// credential_process or exec entry: a program the hook cannot see.
+				for _, k := range credFileEnv {
+					paths := a.Env[k]
+					if tv := a.TargetEnv[k]; tv != "" {
+						paths = tv
+					}
+					for _, p := range filepath.SplitList(paths) {
+						if p != "" && a.Dir != "" && (slices.Contains(written, writtenUnknown) || writtenAt(written, absPath(a.Dir, p, opt.Home))) {
+							a.TargetUnknown = k + " names a file an earlier step of this command writes, which may name a program (credential_process, exec) the hook cannot see"
+						}
+					}
+				}
+			}
 			if a.Engine == "terraform" || a.Engine == "tofu" || a.Engine == "terragrunt" {
 				dataDir := ".terraform"
+
 				if d := a.Env["TF_DATA_DIR"]; d != "" {
 					dataDir = d
 				}
@@ -245,6 +273,22 @@ func Invocations(res *shell.Result, opt Options) []Action {
 			}
 		}
 		out = append(out, acts...)
+		for _, a := range acts {
+			if !isEngine(a.Engine) || a.Dir == "" {
+				continue
+			}
+			switch a.Sub {
+			case "init", "get":
+				risky := a.Sub == "get" && hasOpt(inv.Args, "update") || a.Sub == "init" && (hasOpt(inv.Args, "upgrade") || hasOpt(inv.Args, "plugin-dir") || hasOpt(inv.Args, "from-module") || hasOpt(inv.Args, "lockfile") || hasOpt(inv.Args, "get-plugins"))
+				if risky {
+					installed[a.Dir] = true
+				} else {
+					initial[a.Dir] = true
+				}
+			case "providers lock", "providers mirror":
+				installed[a.Dir] = true
+			}
+		}
 		ws := stepWrites(inv, opt)
 		planDir := ""
 		var planState []string
@@ -365,6 +409,7 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 	if !inv.Args[0].Resolved {
 		a := base
 		a.Class, a.Why = Dynamic, "program name cannot be resolved statically"
+		a.AnyDir = true // what it is, and so where it goes, is not known
 		return append(out, a)
 	}
 	name := shell.ProgName(inv.Args[0].Text)
@@ -404,6 +449,15 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		a.Class, a.Engine, a.Why = Tampering, "applygate", why
 		return append(out, a)
 	}
+	// patch, git apply and git am write the files their patch text names,
+	// which is not on the command line.
+	if name == "patch" || name == "git" && len(args) > 0 && (args[0].Text == "apply" || args[0].Text == "am") || name == "applypatch" {
+		if p := patchGuard(inv, args, opt); p != "" {
+			a := base
+			a.Class, a.Engine, a.Why = Tampering, "file", name+" applies a patch that changes guard file "+p
+			return append(out, a)
+		}
+	}
 	// Default-deny near guard files: a program that names one, or (when it
 	// writes, removes or extracts) a directory that holds one, is
 	// tampering unless it only reads. This does not depend on knowing how
@@ -418,6 +472,20 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		a := base
 		a.Class, a.Engine, a.Why = Tampering, "agent", why
 		return append(out, a)
+	}
+	if name == "aws" || name == "gsutil" || name == "gcloud" || name == "rclone" || name == "scp" {
+		// A download writes a local file the command names last: a state
+		// file or a guard file in the way is overwritten.
+		if tw := stateWrites(base, name, args, inv.Dir, opt); len(tw) > 0 {
+			return append(out, tw...)
+		}
+		for _, t := range writeTargets(name, args, inv.Dir, opt.Home) {
+			if opt.touches(t) {
+				a := base
+				a.Class, a.Engine, a.Why = Tampering, "file", name+" writes "+t+", which holds a guard file"
+				return append(out, a)
+			}
+		}
 	}
 	if e, ok := engines[name]; ok {
 		a := base
@@ -561,6 +629,9 @@ func absPath(dir, p, home string) string {
 }
 
 func isStateFile(p string) bool {
+	if filepath.Base(filepath.Dir(p)) == ".terraform" {
+		return false // the backend cache, not a state
+	}
 	b := filepath.Base(p)
 	return strings.HasSuffix(b, ".tfstate") || strings.HasSuffix(b, ".tfstate.backup")
 }
@@ -613,12 +684,8 @@ func fileOps(base Action, name string, args []shell.Word, dir string, opt Option
 		}
 	}
 	inPlace := false
-	if name == "sed" || name == "perl" || name == "ruby" {
-		for _, w := range args {
-			if strings.HasPrefix(w.Text, "-i") || w.Text == "--in-place" || strings.HasPrefix(w.Text, "-pi") {
-				inPlace = true
-			}
-		}
+	if name == "sed" || name == "gsed" || name == "perl" || name == "ruby" || name == "yq" {
+		inPlace = inPlaceEdit(args)
 	}
 	isWriter := writers[name] || inPlace
 	for _, w := range args {
@@ -723,6 +790,52 @@ func stepWrites(inv shell.Invocation, opt Options) []string {
 	out = append(out, writeTargets(name, args, inv.Dir, opt.Home)...)
 	if name == "git" {
 		out = append(out, gitTreeWrites(args, inv.Dir, opt.Home)...)
+	}
+	if name == "gh" || name == "glab" {
+		// pr checkout, pr merge, repo sync, mr checkout and the like run git
+		// in the repository and rewrite its tree.
+		var pos []string
+		for _, w := range args {
+			if !strings.HasPrefix(w.Text, "-") {
+				pos = append(pos, w.Text)
+			}
+		}
+		if len(pos) >= 2 && inv.Dir != "" {
+			switch pos[0] + " " + pos[1] {
+			case "pr checkout", "pr merge", "repo sync", "mr checkout", "mr merge", "repo clone", "repo fork", "pr create", "mr create", "co":
+				out = append(out, inv.Dir)
+			}
+		} else if len(pos) >= 1 && pos[0] == "co" && inv.Dir != "" {
+			out = append(out, inv.Dir)
+		}
+		if len(pos) >= 2 && inv.Dir == "" {
+			out = append(out, writtenUnknown)
+		}
+	}
+	if (name == "sed" || name == "gsed" || name == "perl" || name == "ruby" || name == "yq") && inPlaceEdit(args) {
+		// The first operand is the script (the expression for yq) unless -e,
+		// -f or --expression gave one; the rest are the files edited.
+		given := false
+		for _, w := range args {
+			if w.Text == "-e" || w.Text == "-f" || strings.HasPrefix(w.Text, "--expression") || strings.HasPrefix(w.Text, "--file") {
+				given = true
+			}
+		}
+		first := !given && name != "perl" && name != "ruby"
+		for _, w := range args {
+			if strings.HasPrefix(w.Text, "-") && w.Text != "-" {
+				continue
+			}
+			if first {
+				first = false
+				continue
+			}
+			if w.Resolved && w.Text != "" {
+				out = append(out, absPath(inv.Dir, w.Text, opt.Home))
+			} else if !w.Resolved {
+				out = append(out, writtenUnknown)
+			}
+		}
 	}
 	// cp, mv, ln and tee write their last argument even when it is a file.
 	switch name {
@@ -986,6 +1099,18 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 				out = append(out, abs("."))
 			}
 		}
+		// Creating an archive writes the file -f names.
+		create := has("-c", "--create")
+		if len(args) > 0 && !strings.HasPrefix(args[0].Text, "--") && strings.Contains(strings.TrimPrefix(args[0].Text, "-"), "c") {
+			create = true
+		}
+		if create {
+			if f, ok := flagValue('f', "--file"); ok && f != "-" {
+				out = append(out, abs(f))
+			} else if len(args) > 1 && len(args[0].Text) > 1 && strings.Contains(args[0].Text, "f") && !strings.HasPrefix(args[0].Text, "--") {
+				out = append(out, abs(args[1].Text)) // tar cf FILE: the old syntax
+			}
+		}
 	case name == "7z" || name == "7za" || name == "7zz" || name == "7zr":
 		if len(args) > 0 && (args[0].Text == "x" || args[0].Text == "e") {
 			d := "."
@@ -1063,11 +1188,20 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 				out = append(out, abs(p))
 			}
 		}
-	case name == "gzip" || name == "gunzip" || name == "bzip2" || name == "xz" || name == "zstd" || name == "compress":
-		// In place unless -c writes to stdout: the file is replaced.
+	case name == "gzip" || name == "gunzip" || name == "bzip2" || name == "bunzip2" || name == "xz" || name == "unxz" || name == "zstd" || name == "unzstd" || name == "compress" || name == "uncompress":
+		// In place unless -c writes to stdout: the file is replaced, and
+		// decompressing writes the name without its suffix.
 		if !has("-c", "--stdout", "--to-stdout") {
+			dec := strings.HasPrefix(name, "un") || name == "gunzip" || name == "bunzip2" || has("-d", "--decompress", "--uncompress")
 			for _, p := range paths(args) {
 				out = append(out, abs(p))
+				if dec {
+					for _, suf := range []string{".gz", ".bz2", ".xz", ".zst", ".Z", ".z"} {
+						if strings.HasSuffix(p, suf) {
+							out = append(out, abs(strings.TrimSuffix(p, suf)))
+						}
+					}
+				}
 			}
 		}
 	case name == "zip":
@@ -1093,6 +1227,78 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 		}
 	case name == "git":
 		out = append(out, gitTargets(args, dir, home)...)
+	}
+	out = append(out, outputTargets(name, args, abs)...)
+	if name == "aws" {
+		// aws s3api get-object BUCKET KEY FILE writes FILE.
+		var sub []string
+		for _, w := range args {
+			if !strings.HasPrefix(w.Text, "-") {
+				sub = append(sub, w.Text)
+			}
+		}
+		if len(sub) >= 3 && sub[0] == "s3api" && sub[1] == "get-object" {
+			out = append(out, abs(sub[len(sub)-1]))
+		}
+	}
+	return out
+}
+
+// outputOpts are the options by which a program writes a file other than
+// the ones it reads: its report, its dump, its output. The value is the
+// next word or follows "=". A program not listed here may have such an
+// option too; ask for those is the judge's and strict shapes' job.
+var outputOpts = map[string][]string{
+	"curl":           {"-o", "--output", "-D", "--dump-header", "-c", "--cookie-jar", "--trace", "--trace-ascii", "--stderr", "--libcurl"},
+	"wget":           {"-O", "--output-document", "-o", "--output-file", "-a", "--append-output"},
+	"tree":           {"-o", "--output"},
+	"tfsec":          {"--out", "-O", "--output-file"},
+	"terraform-docs": {"--output-file"},
+	"trivy":          {"-o", "--output"},
+	"checkov":        {"--output-file-path"},
+	"tflint":         {"--out", "--output-file"},
+	"infracost":      {"--out-file"},
+	"go":             {"-o", "-outputdir", "-modfile", "-overlay", "-coverprofile", "-cpuprofile", "-memprofile", "-trace"},
+	"gofmt":          {},
+	"git":            {"--output"},
+	"find":           {"-fprint", "-fprint0", "-fprintf", "-fls"},
+	"fd":             {},
+}
+
+// outputTargets returns the files a program's output options name.
+func outputTargets(name string, args []shell.Word, abs func(string) string) []string {
+	opts := outputOpts[name]
+	if len(opts) == 0 && name != "git" {
+		return nil
+	}
+	var out []string
+	for i, w := range args {
+		t := w.Text
+		if !w.Resolved {
+			continue
+		}
+		k, v, eq := strings.Cut(t, "=")
+		for _, o := range opts {
+			match := k == o
+			// GNU long options may be abbreviated to any unique prefix.
+			if !match && name == "git" && strings.HasPrefix(o, "--") && len(k) >= 5 && strings.HasPrefix(o, k) {
+				match = true
+			}
+			if !match && !eq && len(o) == 2 && o[0] == '-' && !strings.HasPrefix(t, "--") && len(t) > 2 && t[:2] == o {
+				// -ofile
+				out = append(out, abs(t[2:]))
+				continue
+			}
+			if !match {
+				continue
+			}
+			switch {
+			case eq && v != "":
+				out = append(out, abs(v))
+			case !eq && i+1 < len(args) && args[i+1].Resolved:
+				out = append(out, abs(args[i+1].Text))
+			}
+		}
 	}
 	return out
 }
@@ -1181,6 +1387,14 @@ func gitTargets(args []shell.Word, dir, home string) []string {
 			}
 		}
 	case "checkout", "reset":
+		for _, w := range rest {
+			// These replace the working tree with the committed one,
+			// modified state files included.
+			if sub == "reset" && (w.Text == "--hard" || w.Text == "--keep" || w.Text == "--merge") ||
+				sub == "checkout" && (w.Text == "-f" || w.Text == "--force" || w.Text == "-B" || w.Text == "--discard-changes" || w.Text == "--merge") {
+				out = append(out, abs("."))
+			}
+		}
 		out = append(out, afterDashes()...)
 		if sub == "checkout" {
 			// "git checkout ref path": without --, an argument that is a
@@ -1258,6 +1472,10 @@ func selfTamper(args []shell.Word, loose bool) string {
 	case "hook":
 		if len(pos) >= 2 && (pos[1] == "install" || pos[1] == "remove" || pos[1] == "uninstall") && (loose || has("--agent") || has("--scope")) {
 			return "changes applygate's hook installation, which only a person may do"
+		}
+	case "doctor":
+		if has("--creds") {
+			return "audits the credentials on this machine, which runs their credential helpers and calls the cloud: only a person may run it"
 		}
 	case "telemetry":
 		if len(pos) >= 2 && (pos[1] == "on" || pos[1] == "off") {
@@ -1341,12 +1559,34 @@ func plantsCommand(inv shell.Invocation) string {
 			}
 			args = args[1:]
 		}
+		if len(args) > 0 && args[0].Text == "replace" {
+			for _, w := range args[1:] {
+				if w.Text == "-l" || w.Text == "--list" || w.Text == "--format" {
+					return ""
+				}
+			}
+			// refs/replace makes git read other content for any object, a
+			// lock file included, without changing a commit or a branch.
+			return "git replace changes what git reads for an object"
+		}
 		if len(args) == 0 || args[0].Text != "config" {
 			return ""
 		}
 		op, why := shell.GitConfigOp(args[1:])
 		if op.Scope == "" {
-			return "" // the repository's own config: strict shapes judges it
+			// The repository's own config: a key that runs a command, an
+			// alias that is a shell command or a value off the safe list
+			// makes the next plain git call run it, from wherever the
+			// repository is. That is tampering in every tier, not only
+			// where strict shapes asks.
+			if op.Write && !shell.GitSafeKey(op.Key, op.Value, true) {
+				return "git config " + op.Key + " in the repository sets something git runs later"
+			}
+			// Which branch is upstream is what the provider lock check trusts.
+			if op.Write && strings.HasPrefix(op.Key, "branch.") && (strings.HasSuffix(op.Key, ".remote") || strings.HasSuffix(op.Key, ".merge") || strings.HasSuffix(op.Key, ".pushremote")) {
+				return "git config " + op.Key + " re-points the upstream branch the provider lock check trusts"
+			}
+			return ""
 		}
 		if why != "" && why != "git config --edit runs an editor" {
 			return "git config outside the repository: " + why
@@ -1470,18 +1710,26 @@ func readOnlyUse(name string, args []shell.Word) bool {
 	}
 	switch name {
 	case "cat", "head", "tail", "less", "more", "ls", "stat", "file", "wc", "diff", "cmp", "test", "[", "sha256sum",
-		"shasum", "md5sum", "sha1sum", "readlink", "realpath", "basename", "dirname", "tree", "du", "echo", "printf",
+		"shasum", "md5sum", "sha1sum", "readlink", "realpath", "basename", "dirname", "du", "echo", "printf",
 		"bat", "strings", "od", "hexdump", "jq", "grep", "egrep", "fgrep", "ack", "ag", "which", "type", "command":
 		return true
 	case "rg":
 		return !has("--pre", "--pre-glob")
 	case "yq":
-		return !has("-i", "--inplace")
+		return !inPlaceEdit(args)
+	case "tree":
+		return !has("-o", "--output")
 	case "find", "fd":
 		return !has("-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls", "-x", "-X", "--exec", "--exec-batch")
 	case "git":
 		switch first {
 		case "status", "log", "diff", "show", "blame", "ls-files", "add", "commit", "cat-file", "ls-tree", "check-ignore", "check-attr", "rev-parse":
+			// --output=FILE writes it, and git takes any unique prefix.
+			for _, w := range args {
+				if k, _, _ := strings.Cut(w.Text, "="); len(k) >= 5 && strings.HasPrefix("--output", k) || k == "-o" && first != "add" {
+					return false
+				}
+			}
 			return true
 		}
 	case "applygate", "seatbelt":
@@ -1504,7 +1752,7 @@ func namesGuard(name string, args []shell.Word, dir string, opt Options) string 
 	if opt.Guard == nil || readOnlyUse(name, args) {
 		return ""
 	}
-	changes := writers[name] || removers[name] || copiers[name] || name == "tar" || name == "bsdtar" || name == "gtar" ||
+	changes := writers[name] || removers[name] || copiers[name] || (name == "sed" || name == "gsed" || name == "perl" || name == "ruby" || name == "yq") && inPlaceEdit(args) || name == "tar" || name == "bsdtar" || name == "gtar" ||
 		name == "unzip" || name == "7z" || name == "cpio" || name == "pax" || name == "find" || name == "fd" || name == "git" ||
 		name == "busybox" || name == "toybox"
 	var needles []string
@@ -1527,6 +1775,16 @@ func namesGuard(name string, args []shell.Word, dir string, opt Options) string 
 		if strings.ContainsAny(t, "*?[") {
 			if opt.Guard.GlobTouches(absPath(dir, t, opt.Home)) {
 				return t
+			}
+		}
+		// A word with a part that is not known (${E:-settings.json}, $(…),
+		// $X) after a literal prefix may be any name that starts with it.
+		if pre := w.Prefix; changes && pre != "" {
+			if i := strings.LastIndex(pre, "="); i >= 0 && (strings.HasPrefix(pre, "-") || strings.HasPrefix(pre, "of=")) {
+				pre = pre[i+1:] // --output=~/.claude/${X}, of=~/.claude/${X}
+			}
+			if pre != "" && opt.Guard.GlobTouches(absPath(dir, pre+"*", opt.Home)) {
+				return w.Prefix + "<?>"
 			}
 		}
 		if needles == nil {
@@ -1659,7 +1917,7 @@ func gitTreeWrites(args []shell.Word, dir, home string) []string {
 		return nil
 	}
 	switch args[i].Text {
-	case "checkout", "switch", "merge", "reset", "rebase", "pull", "cherry-pick", "revert", "am", "apply", "stash", "restore", "worktree", "read-tree", "clean":
+	case "checkout", "switch", "merge", "reset", "rebase", "pull", "cherry-pick", "revert", "am", "apply", "stash", "restore", "worktree", "read-tree", "clean", "sparse-checkout", "update-index", "submodule":
 		return []string{base}
 	}
 	return nil
@@ -1679,6 +1937,14 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 	}
 	switch {
 	case copiers[name] || name == "mv" || name == "ln":
+		// A glob among the sources is expanded here, as the shell will do.
+		for i, w := range args {
+			if w.Resolved || strings.HasPrefix(w.Text, "-") || !strings.ContainsAny(w.Text, "*?[") || i == len(args)-1 {
+				continue
+			}
+			ms, _ := filepath.Glob(absPath(dir, w.Text, opt.Home))
+			pos = append([]string(nil), append(pos[:len(pos)-1], append(ms, pos[len(pos)-1])...)...)
+		}
 		if len(pos) < 2 {
 			return nil
 		}
@@ -1686,10 +1952,17 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 		for _, p := range pos[:len(pos)-1] {
 			if isStateFile(p) {
 				sources = append(sources, p)
+			} else if sf := stateIn(p); sf != "" {
+				// cp -a ../prod/. . copies the state files in the directory.
+				sources = append(sources, sf)
+			} else if filepath.Base(p) == "terraform.tfstate.d" {
+				sources = append(sources, filepath.Join(p, "terraform.tfstate"))
 			}
 		}
 		if isStateFile(dst) {
 			targets = append(targets, dst)
+		} else if filepath.Base(dst) == "terraform.tfstate.d" && len(sources) > 0 {
+			targets = append(targets, filepath.Join(dst, "terraform.tfstate"))
 		} else if fi, err := os.Stat(dst); len(sources) > 0 && err == nil && fi.IsDir() {
 			targets = append(targets, filepath.Join(dst, filepath.Base(sources[0])))
 		} else if len(sources) > 0 && name == "mv" {
@@ -1697,11 +1970,38 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 		}
 		if name == "mv" {
 			targets = append(targets, sources...)
+			// Moving a directory takes the state files in it along.
+			for _, p := range pos[:len(pos)-1] {
+				if sf := stateIn(p); sf != "" {
+					targets = append(targets, sf)
+				}
+			}
 		}
-	case writers[name] || (name == "sed" || name == "perl") && inPlaceEdit(args):
+	case writers[name] || (name == "sed" || name == "gsed" || name == "perl" || name == "ruby" || name == "yq") && inPlaceEdit(args):
 		for _, p := range pos {
 			if isStateFile(p) {
 				targets = append(targets, p)
+			} else if removers[name] || name == "mv" || name == "rmdir" || name == "shred" {
+				// Removing or moving a directory takes the state files in it.
+				if sf := stateIn(p); sf != "" {
+					targets = append(targets, sf)
+				} else if filepath.Base(p) == "terraform.tfstate.d" {
+					targets = append(targets, filepath.Join(p, "terraform.tfstate"))
+				}
+			}
+		}
+		// A glob is expanded here, as the shell will: rm -f terraform.tfstate*
+		for _, w := range args {
+			if w.Resolved || strings.HasPrefix(w.Text, "-") || !strings.ContainsAny(w.Text, "*?[") {
+				continue
+			}
+			ms, _ := filepath.Glob(absPath(dir, w.Text, opt.Home))
+			for _, m := range ms {
+				if isStateFile(m) {
+					targets = append(targets, m)
+				} else if sf := stateIn(m); (removers[name] || name == "mv") && sf != "" {
+					targets = append(targets, sf)
+				}
 			}
 		}
 	default:
@@ -1742,7 +2042,16 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 	var all []string
 	if len(sources) > 0 && name != "mv" {
 		dst := targets[0]
-		into := filepath.Dir(dst) != filepath.Dir(sources[0]) && tfDir(filepath.Dir(dst))
+		// The copy brings the configuration along when it copies a
+		// directory or a .tf file too: the destination is then a copy of
+		// that environment, state included.
+		cfg := false
+		for _, p := range pos[:len(pos)-1] {
+			if fi, err := os.Stat(p); err == nil && (fi.IsDir() || tfFile(filepath.Base(p)) && !strings.Contains(p, ".tfstate")) {
+				cfg = true
+			}
+		}
+		into := filepath.Dir(dst) != filepath.Dir(sources[0]) && (tfDir(filepath.Dir(dst)) || cfg)
 		switch {
 		case into:
 			all = append(all, dst)
@@ -1786,15 +2095,8 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 	return out
 }
 
-// inPlaceEdit reports sed's or perl's -i.
-func inPlaceEdit(args []shell.Word) bool {
-	for _, w := range args {
-		if strings.HasPrefix(w.Text, "-i") || w.Text == "--in-place" || strings.HasPrefix(w.Text, "--in-place=") || strings.HasPrefix(w.Text, "-pi") {
-			return true
-		}
-	}
-	return false
-}
+// inPlaceEdit reports sed's, perl's, ruby's or yq's in-place editing.
+func inPlaceEdit(args []shell.Word) bool { return shell.InPlaceEdit(args) }
 
 // tfDir reports whether d holds Terraform or OpenTofu configuration.
 func tfDir(d string) bool {
@@ -1813,6 +2115,9 @@ func tfDir(d string) bool {
 // stateIn returns a state file held in directory d (or in its
 // terraform.tfstate.d), "" when d holds none or is not a directory.
 func stateIn(d string) string {
+	if filepath.Base(d) == ".terraform" {
+		return "" // the backend cache, not a state
+	}
 	ents, err := os.ReadDir(d)
 	if err != nil {
 		return ""
@@ -1881,3 +2186,73 @@ func hostInstall(name string, args []shell.Word) string {
 	}
 	return ""
 }
+
+// credFileEnv are the variables that name a credentials or kube config
+// file whose entries can run a program.
+var credFileEnv = []string{"AWS_CONFIG_FILE", "AWS_SHARED_CREDENTIALS_FILE", "KUBECONFIG", "KUBE_CONFIG_PATH"}
+
+// CredFileEnv returns the variables that name a credentials or kube config
+// file.
+func CredFileEnv() []string { return credFileEnv }
+
+// patchGuard returns a guard file the patch text fed to patch or git apply
+// names (the ---, +++, diff --git, rename and copy lines), at any strip
+// level: patch -p0 takes the path as written, -p1 drops a component, and
+// the default drops none to all depending on the version. "" when none or
+// when the patch text is not known.
+func patchGuard(inv shell.Invocation, args []shell.Word, opt Options) string {
+	if opt.Guard == nil || inv.Stdin == "" {
+		return ""
+	}
+	for _, line := range strings.Split(inv.Stdin, "\n") {
+		var p string
+		switch {
+		case strings.HasPrefix(line, "--- "), strings.HasPrefix(line, "+++ "):
+			p = strings.TrimSpace(line[4:])
+		case strings.HasPrefix(line, "rename to "), strings.HasPrefix(line, "rename from "), strings.HasPrefix(line, "copy to "):
+			p = strings.TrimSpace(line[strings.LastIndex(line, " ")+1:])
+		case strings.HasPrefix(line, "diff --git "):
+			for _, f := range strings.Fields(line)[2:] {
+				if g := patchPathGuard(f, inv.Dir, opt); g != "" {
+					return g
+				}
+			}
+			continue
+		default:
+			continue
+		}
+		// A timestamp may follow the name, after a tab.
+		if i := strings.IndexByte(p, '\t'); i >= 0 {
+			p = p[:i]
+		}
+		if g := patchPathGuard(p, inv.Dir, opt); g != "" {
+			return g
+		}
+	}
+	return ""
+}
+
+func patchPathGuard(p, dir string, opt Options) string {
+	p = strings.Trim(p, "\"")
+	if p == "" || p == "/dev/null" {
+		return ""
+	}
+	for strip := 0; strip <= 6; strip++ {
+		parts := strings.Split(strings.TrimPrefix(p, "/"), "/")
+		if strip >= len(parts) {
+			break
+		}
+		rest := strings.Join(parts[strip:], "/")
+		cand := rest
+		if strip == 0 && strings.HasPrefix(p, "/") {
+			cand = "/" + rest
+		}
+		abs := absPath(dir, cand, opt.Home)
+		if opt.Guard.Protected(abs) {
+			return abs
+		}
+	}
+	return ""
+}
+
+func isEngine(e string) bool { return e == "terraform" || e == "tofu" || e == "terragrunt" }

@@ -605,6 +605,14 @@ func knownProgram(v string, set map[string]bool) bool {
 	if len(f) == 0 {
 		return false
 	}
+	// Editors, pagers and signers have options that run code (vim -S, emacs
+	// -l, nano --rcfile, bat --pager, gpg --agent-program): the value is
+	// the program, or the program with a few flags known to change nothing.
+	for _, o := range f[1:] {
+		if !harmlessFlag[o] {
+			return false
+		}
+	}
 	p := f[0]
 	if strings.Contains(p, "/") {
 		if !filepath.IsAbs(p) || !gitSystemBins[filepath.Dir(p)] {
@@ -770,3 +778,11 @@ func isDirPath(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
 }
+
+// harmlessFlag are the flags an editor, pager or signer named in git config
+// may carry: they wait for the editor, set a paging or display mode, or
+// silence the program, and run no code.
+var harmlessFlag = toSet("-w", "--wait", "-n", "--new-window", "--reuse-window", "-nw", "-F", "-R", "-X", "-S", "-i", "-r", "-E",
+	"-M", "-q", "-FRX", "-FRSX", "-FRXi", "-RFX", "-XFR", "-+F", "-+X", "-+S", "-FX", "-FR", "-RX", "--quit-if-one-screen",
+	"--RAW-CONTROL-CHARS", "--no-init", "--ignore-case", "--batch", "--no-tty", "--quiet", "--no-greeting", "--no-pager",
+	"-p", "--paging=never", "--plain", "--style=plain")

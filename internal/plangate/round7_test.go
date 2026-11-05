@@ -39,3 +39,25 @@ func TestExposureRound7(t *testing.T) {
 		}
 	}
 }
+
+// A condition that names a limiting key still leaves a statement public when
+// its operator excludes instead of limiting, or its value matches everyone.
+func TestExposureConditionOperators(t *testing.T) {
+	cases := []struct {
+		name, cond string
+		want       bool
+	}{
+		{"source ip anywhere", `{"IpAddress":{"aws:SourceIp":"0.0.0.0/0"}}`, true},
+		{"not equals one account", `{"StringNotEquals":{"aws:PrincipalAccount":"111111111111"}}`, true},
+		{"string like star", `{"StringLike":{"aws:PrincipalArn":"*"}}`, true},
+		{"ip in a range", `{"IpAddress":{"aws:SourceIp":"10.0.0.0/8"}}`, false},
+		{"org id", `{"StringEquals":{"aws:PrincipalOrgID":"o-abc"}}`, false},
+		{"account list", `{"StringEquals":{"aws:PrincipalAccount":["111111111111","222222222222"]}}`, false},
+	}
+	for _, c := range cases {
+		doc := `{"Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:GetObject","Condition":` + c.cond + `}]}`
+		if got := policyPublic(doc); got != c.want {
+			t.Errorf("%s: public = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
