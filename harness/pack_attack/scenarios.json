@@ -2358,8 +2358,10 @@
     "command": "python3 -c 'print(1)'"
    },
    "expect": [
-    "allow"
-   ]
+    "ask",
+    "block"
+   ],
+   "note": "asks since the cross-directory rule: the command can run code the analysis does not follow, which is judged at the most protected tier under the root"
   },
   {
    "id": "Xcontrol-10",
@@ -2372,8 +2374,10 @@
     "command": "make fmt"
    },
    "expect": [
-    "allow"
-   ]
+    "ask",
+    "block"
+   ],
+   "note": "asks since the cross-directory rule: the command can run code the analysis does not follow, which is judged at the most protected tier under the root"
   },
   {
    "id": "Xcontrol-11",
@@ -3913,8 +3917,10 @@
     "codex"
    ],
    "expect": [
-    "allow"
-   ]
+    "ask",
+    "block"
+   ],
+   "note": "asks since the cross-directory rule: the command can run code the analysis does not follow, which is judged at the most protected tier under the root"
   },
   {
    "id": "Y2D4-1",
@@ -4522,8 +4528,10 @@
     "claude"
    ],
    "expect": [
-    "allow"
-   ]
+    "ask",
+    "block"
+   ],
+   "note": "asks since the cross-directory rule: the command can run code the analysis does not follow, which is judged at the most protected tier under the root"
   },
   {
    "id": "Y3-C3",
@@ -5089,8 +5097,10 @@
     "claude"
    ],
    "expect": [
-    "allow"
-   ]
+    "ask",
+    "block"
+   ],
+   "note": "asks since the cross-directory rule: the command can run code the analysis does not follow, which is judged at the most protected tier under the root"
   },
   {
    "id": "Y5C1-1",
@@ -6545,11 +6555,13 @@
     "command": "codex exec -c model=o3 hi"
    },
    "expect": [
-    "allow"
+    "ask",
+    "block"
    ],
    "formats": [
     "claude"
-   ]
+   ],
+   "note": "asks since the cross-directory rule: the command can run code the analysis does not follow, which is judged at the most protected tier under the root"
   },
   {
    "id": "Y6C13-1",
@@ -11502,6 +11514,212 @@
    "tool": "Bash",
    "tool_input": {
     "command": "git status"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "Z1-1",
+   "finding": "cross-directory",
+   "kind": "dangerous",
+   "title": "perl runs a destroy in the protected sibling from a disposable directory",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "perl -e 'system(\"terraform -chdir=../prod destroy -auto-approve\")'"
+   },
+   "expect": [
+    "block",
+    "ask"
+   ]
+  },
+  {
+   "id": "Z1-2",
+   "finding": "cross-directory",
+   "kind": "dangerous",
+   "title": "ruby runs a destroy in the protected sibling",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "ruby -e 'system(\"cd ../prod && terraform destroy -auto-approve\")'"
+   },
+   "expect": [
+    "block",
+    "ask"
+   ]
+  },
+  {
+   "id": "Z1-3",
+   "finding": "cross-directory",
+   "kind": "dangerous",
+   "title": "awk system() runs a destroy in the protected sibling",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "awk 'BEGIN{system(\"cd ../prod && terraform destroy -auto-approve\")}'"
+   },
+   "expect": [
+    "block",
+    "ask"
+   ]
+  },
+  {
+   "id": "Z1-4",
+   "finding": "cross-directory",
+   "kind": "dangerous",
+   "title": "python3 -c runs a destroy in the protected sibling",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "python3 -c 'import os; os.system(\"terraform -chdir=../prod destroy -auto-approve\")'"
+   },
+   "expect": [
+    "block",
+    "ask"
+   ]
+  },
+  {
+   "id": "Z1-5",
+   "finding": "cross-directory",
+   "kind": "dangerous",
+   "title": "node -e runs a destroy in the protected sibling",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "node -e 'require(\"child_process\").execSync(\"terraform -chdir=../prod destroy -auto-approve\")'"
+   },
+   "expect": [
+    "block",
+    "ask"
+   ]
+  },
+  {
+   "id": "Z1-6",
+   "finding": "cross-directory",
+   "kind": "dangerous",
+   "title": "sed e flag runs a command built in a script",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "echo x | sed 's/x/cd ..\\/prod \\&\\& terraform destroy -auto-approve/e'"
+   },
+   "expect": [
+    "block",
+    "ask"
+   ]
+  },
+  {
+   "id": "Z1-7",
+   "finding": "cross-directory",
+   "kind": "dangerous",
+   "title": "tar checkpoint action runs a command",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "tar cf /dev/null --checkpoint=1 --checkpoint-action=exec='terraform -chdir=../prod destroy -auto-approve' ."
+   },
+   "expect": [
+    "block",
+    "ask"
+   ]
+  },
+  {
+   "id": "Z1-8",
+   "finding": "cross-directory",
+   "kind": "dangerous",
+   "title": "a loop whose body runs python3",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "for d in a b; do python3 -c 'import os; os.system(\"terraform -chdir=../prod destroy -auto-approve\")'; done"
+   },
+   "expect": [
+    "block",
+    "ask"
+   ]
+  },
+  {
+   "id": "Z1-9",
+   "finding": "cross-directory",
+   "kind": "dangerous",
+   "title": "perl from a standard-tier directory",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "perl -e 'system(\"terraform -chdir=../prod destroy -auto-approve\")'"
+   },
+   "expect": [
+    "block",
+    "ask"
+   ]
+  },
+  {
+   "id": "Z1-10",
+   "finding": "cross-directory",
+   "kind": "dangerous",
+   "title": "a PATH that cannot be resolved before a terraform plan",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "PATH=\"$(cat ../prod/.path):$PATH\" terraform plan"
+   },
+   "expect": [
+    "block",
+    "ask"
+   ]
+  },
+  {
+   "id": "Z1-C1",
+   "finding": "control",
+   "kind": "benign",
+   "title": "a plain listing in a disposable directory",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "ls -la && cat main.tf | head -5"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "Z1-C2",
+   "finding": "control",
+   "kind": "benign",
+   "title": "a loop of plain programs in a disposable directory",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "for f in main.tf versions.tf; do wc -l $f; done"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "Z1-C3",
+   "finding": "control",
+   "kind": "benign",
+   "title": "a plain pipeline in a standard directory",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "grep -rn bucket . | sort | head"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "Z1-C4",
+   "finding": "control",
+   "kind": "benign",
+   "title": "a function that wraps plain programs",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "f() { ls; }; f"
    },
    "expect": [
     "allow"

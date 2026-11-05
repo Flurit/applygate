@@ -42,7 +42,9 @@
 | mutating (import, refresh, test) | ask | allow | allow | added |
 | cloud-write (create/update calls) | ask | allow | allow | added |
 | credential-access | ask | ask | ask | added (scenario S10) |
-| complex-shape (strict shapes) | ask | allow | allow | added (red-team round 4) |
+| complex-shape (strict shapes) | ask | allow* | allow* | added (red-team round 4); cross-directory rule (2026-11-05) |
+
+\* A complex-shape command that can also run code the analysis does not follow (python3, perl, an unresolved program name, a nested agent) is judged a second time at the most protected tier under the repository root, so it asks in a standard or disposable directory when a protected environment is under the root (`docs/limits.md`, costs of the cross-directory rule).
 
 `init -reconfigure` is state surgery only when it is bare or migrates state: with `-backend-config` (resolved files or `key=value` pairs) and without `-migrate-state`/`-force-copy` it is read-only, because it only re-points the working directory. Later commands in the same command line are then judged against the backend the config describes, and the config file's name is a name hint (`production.backend` → protected). This deviates from the original plan, which lists `init -reconfigure` as state surgery; the open-source corpus trial found it used routinely to switch environments ([oss-corpus-trial.md](oss-corpus-trial.md)).
 

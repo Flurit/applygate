@@ -2192,7 +2192,7 @@
     "command": "python3 ../../scripts/cleanup_logs.py /aws/eks/dev"
    },
    "expect": [
-    "allow"
+    "ask"
    ],
    "origin": "added for the init -reconfigure and AWS SDK policy changes (docs/oss-corpus-trial.md)"
   },
@@ -2815,7 +2815,7 @@
     "command": "mkdir mysql-replica && cp mysql/terragrunt.hcl mysql-replica/terragrunt.hcl && python3 -I - <<'EOF'\np='mysql-replica/terragrunt.hcl'\ns=open(p).read()\ni=s.index('# ----', s.index('terraform {'))\ns=s[:i]+'''# ---------------------------------------------------------------------------------------------------------------------\n# Override the name so the replica does not collide with the primary mysql database in this environment.\n# ---------------------------------------------------------------------------------------------------------------------\ninputs = {\n  name = \"mysql_replica_${include.envcommon.locals.env}\"\n}\n'''\nopen(p,'w').write(s)\nEOF\ntail -12 mysql-replica/terragrunt.hcl; git status --short"
    },
    "expect": [
-    "allow"
+    "ask"
    ],
    "origin": "agent-driven trial 2026-10-29: Claude Code edit script that only reads and writes files (false positive in v0.1.3)"
   },
