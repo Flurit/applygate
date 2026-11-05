@@ -54,7 +54,6 @@ func init() {
 		}
 		return ""
 	}
-	shapes["vault"] = denySub("agent", "proxy", "ssh", "server", "plugin")
 	// terragrunt evaluates terragrunt.hcl, whose run_cmd() and hooks run
 	// programs, and runs terraform in a cache the plan check does not see:
 	// only formatting and its version are plain. make runs its recipes in
@@ -136,8 +135,6 @@ func init() {
 		}
 		return podman(args, inv)
 	}
-	shapes["kubectl"] = kubectlShape
-	shapes["helm"] = helmShape
 	shapes["kustomize"] = denyOpts("--enable-alpha-plugins", "--enable-exec", "--enable-helm", "--helm-command")
 	// checkov loads Python checks from a directory its options or a
 	// .checkov.yaml in the directory name.
@@ -180,9 +177,6 @@ func init() {
 	}
 	shapes["conftest"] = subcommands("test", "verify", "parse", "fmt", "version")
 	shapes["opa"] = subcommands("eval", "test", "fmt", "check", "version", "inspect", "parse", "build")
-	shapes["aws"] = awsShape
-	shapes["az"] = denySub("extension", "upgrade", "interactive")
-	shapes["gcloud"] = denySub("components", "interactive")
 	// `go env -w` and `-u` write the go environment file, which later
 	// builds read.
 	goShape := shapes["go"]

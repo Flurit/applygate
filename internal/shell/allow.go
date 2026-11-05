@@ -105,7 +105,9 @@ func (p *prog) check(name string, args []Word) string {
 			endOpts = true
 			continue
 		}
-		if !w.Resolved && (t == "" || strings.HasPrefix(t, "-")) && !(p.loose && !strings.HasPrefix(t, "-")) {
+		// An unresolved word is read by its literal prefix: -var=x=$Y names -var.
+		knownName := !w.Resolved && strings.HasPrefix(t, "-") && strings.Contains(t, "=")
+		if !w.Resolved && (t == "" || strings.HasPrefix(t, "-")) && !knownName && !(p.loose && !strings.HasPrefix(t, "-")) {
 			return "a word that cannot be resolved may be an option of " + name
 		}
 		if !strings.HasPrefix(t, "-") || t == "-" || p.opWord != nil && w.Resolved && p.opWord(t) {
@@ -160,6 +162,14 @@ func (p *prog) check(name string, args []Word) string {
 			continue
 		}
 		if p.num && digitsRE.MatchString(t[1:]) {
+			continue
+		}
+		// -name=value, as Go's flag package and Terraform read them.
+		if k, v, eq := strings.Cut(t, "="); eq && len(k) > 2 && (p.flags[k] || p.vals[k]) {
+			val := Word{Text: v, Resolved: w.Resolved}
+			if why := use(k, map[bool]*Word{true: &val, false: nil}[p.vals[k]]); why != "" {
+				return why
+			}
 			continue
 		}
 		for j := 1; j < len(t); j++ {
@@ -315,7 +325,7 @@ func init() {
 		}
 		return valuedSubcommands(nil, "ls", "cat", "stat", "du", "hash", "version", "help")(args, Invocation{})
 	}
-	shapes["find"] = findShape
+	shapes["find"] = func(args []Word, inv Invocation) string { return findShape(args, inv) }
 	// cd takes one directory: zsh's two-operand form, CDPATH-sensitive plain
 	// names are the analysis's, and "-" is the previous directory, which the
 	// analysis does not know.
@@ -334,7 +344,7 @@ func init() {
 		shapes[n] = nil
 	}
 	// Programs handled by their own shape elsewhere.
-	for _, n := range []string{"terraform", "tofu", "applygate", "env"} {
+	for _, n := range []string{"applygate", "env"} {
 		shapes[n] = nil
 	}
 }
@@ -353,7 +363,7 @@ var modeWordRE = regexp.MustCompile(`^-[rwxXstugoa]+$`)
 // point that cannot be resolved may be an expression, and a word that is not
 // a listed primary (-exec, -execdir, -ok, -okdir, -delete, -fprint, -fprint0,
 // -fprintf, -fls and any other) is not plain.
-func findShape(args []Word, _ Invocation) string {
+func findShape(args []Word, inv Invocation) string {
 	none := toSet("-print", "-print0", "-prune", "-depth", "-d", "-empty", "-true", "-false", "-xdev", "-mount", "-readable", "-writable",
 		"-executable", "-nouser", "-nogroup", "-quit", "-daystart", "-ignore_readdir_race", "-noignore_readdir_race", "-noleaf", "-ls",
 		"-a", "-o", "-and", "-or", "-not", "!", "(", ")", "-follow", "-nowarn", "-warn")
@@ -386,6 +396,13 @@ func findShape(args []Word, _ Invocation) string {
 		}
 		switch {
 		case none[t]:
+		case (t == "-exec" || t == "-execdir" || t == "-ok" || t == "-okdir") && inv.Followed:
+			// The analysis took the command apart and judges it as an
+			// invocation of its own; skip to its terminator.
+			for i+1 < len(args) && optText(args[i+1]) != ";" && optText(args[i+1]) != "+" {
+				i++
+			}
+			i++
 		case one[t], newerXY.MatchString(t):
 			if i+1 >= len(args) {
 				return "the find primary " + t + " without its value"

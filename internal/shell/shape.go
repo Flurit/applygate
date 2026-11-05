@@ -195,7 +195,8 @@ func PlainShapeUnseen(cmd string, res *Result) (ok bool, why string, unseen stri
 		// with the image's command, pnpm exec, xargs) is followed: what it
 		// runs is judged as invocations of their own. One it could not (a
 		// nested agent, python3, a name no shape knows) can run anything.
-		set(shapeOf(inv), !inv.Followed)
+		why := shapeOf(inv)
+		set(why, !inv.Followed && (why == "" || shapeUnseen(inv, why)))
 		if n := ProgName(inv.Args[0].Text); n == "git" && writesGit {
 			set("git after an earlier step that can write git state", true)
 		} else if writesGitState(n, inv.Args[1:], inv.Dir) {
