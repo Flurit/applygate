@@ -543,7 +543,7 @@
    "origin": "reconstructed",
    "must_mention": [
     "aws s3 rb",
-    "no environment matched"
+    "prod"
    ]
   },
   {
@@ -1806,7 +1806,7 @@
    ],
    "origin": "added with MCP judging (v0.6.0)",
    "must_mention": [
-    "environment: prod"
+    "most protected tier"
    ]
   },
   {

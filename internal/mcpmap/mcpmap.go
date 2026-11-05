@@ -349,7 +349,8 @@ var genericCommandArgs = []string{"command", "cmd", "script", "commandLine", "co
 var strongCommandArgs = []string{"command", "cmd", "script", "commandLine", "command_line", "cmdline", "cmd_text", "shell_command", "shellCommand"}
 
 // argvArgs hold the arguments of a program a command argument names.
-var argvArgs = []string{"args", "arguments", "argv", "params", "argument_list"}
+var argvArgs = []string{"args", "arguments", "argv", "params", "argument_list", "parameters", "options", "flags", "extra_args",
+	"extraArgs", "subcommand", "sub_command", "opts", "cli_args", "cmd_args", "command_args", "positional"}
 
 // shellishName reports a tool name that says it runs a command or code.
 func shellishName(tool string) bool {
@@ -404,7 +405,7 @@ func genericShell(tool string, args map[string]any, parseErr error) (Result, boo
 		// The program's argument list: command "terraform" with args
 		// ["destroy"] runs terraform destroy.
 		var extra []string
-		if !isArray && (k == "command" || k == "cmd") {
+		if k == "command" || k == "cmd" {
 			for _, ak := range argvArgs {
 				if av, ok := args[ak]; ok {
 					if as := list(av, false); len(as) > 0 {
@@ -427,7 +428,12 @@ func genericShell(tool string, args map[string]any, parseErr error) (Result, boo
 			for i, c := range cmds {
 				q[i] = quote(c)
 			}
-			cmd = strings.Join(q, " ") + "\n" + strings.Join(cmds, " ")
+			all := append(append([]string(nil), cmds...), extra...)
+			qa := append([]string(nil), q...)
+			for _, e := range extra {
+				qa = append(qa, quote(e))
+			}
+			cmd = strings.Join(qa, " ") + "\n" + strings.Join(all, " ")
 		case len(extra) > 0:
 			q := []string{quote(cmd)}
 			for _, e := range extra {

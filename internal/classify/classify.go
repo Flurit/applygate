@@ -45,8 +45,15 @@ type Action struct {
 	Command string // the resolved command, for messages
 	Why     string
 	Dir     string
-	Env     map[string]string
-	Profile string // AWS profile from --profile or the environment
+	// S3Object is the s3://bucket/key an aws s3 or s3api call writes, moves
+	// or deletes. A bucket that holds a protected environment's state
+	// (backends: in the config) makes the call state surgery.
+	S3Object string
+	// ApproxDir is set when Dir is only the session directory (the host
+	// does not report the command's own), so a relative -chdir is unknown.
+	ApproxDir bool
+	Env       map[string]string
+	Profile   string // AWS profile from --profile or the environment
 	// Target is the cluster or cloud named on the command line: the kube
 	// context of kubectl (--context) and helm (--kube-context), the gcloud
 	// project (--project), the az subscription (--subscription).
@@ -366,7 +373,7 @@ func words(inv shell.Invocation) []string {
 
 func invocation(inv shell.Invocation, opt Options) []Action {
 	cmdText := strings.Join(words(inv), " ")
-	base := Action{Dir: inv.Dir, Env: inv.Env, Command: cmdText, Via: inv.Via, AnyDir: inv.Dir == ""}
+	base := Action{Dir: inv.Dir, Env: inv.Env, Command: cmdText, Via: inv.Via, AnyDir: inv.Dir == "", ApproxDir: inv.Approx}
 	var out []Action
 	if why := plantsCommand(inv); why != "" {
 		a := base
@@ -392,13 +399,25 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 				out = append(out, a)
 			}
 			// true > terraform.tf*: the shell writes the file the glob matches.
+			matched := false
 			for _, m := range globMatches(r.Target, inv.Dir, opt.Home) {
 				if isStateFile(m) {
 					a := base
+					a.Dir, a.AnyDir = filepath.Dir(m), false
 					a.Class, a.Engine, a.Why, a.TouchesState = StateSurgery, "file", "redirect writes to state file "+m+" (through a glob)", true
 					out = append(out, a)
+					matched = true
 					break
 				}
+			}
+			if !matched && !strings.HasPrefix(r.Target.Text, "&") {
+				// > "$f", > $OUT: the shell writes whatever the word holds,
+				// which may be a state file in any directory under the root.
+				a := base
+				a.Class, a.Engine, a.AnyDir = ComplexShape, "file", true
+				a.AnyDirWhy = "a redirect writes to a file named by a word the analysis cannot resolve, which may be a state file in any directory under the root"
+				a.Why = a.AnyDirWhy
+				out = append(out, a)
 			}
 			continue
 		}
@@ -414,6 +433,7 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 				out = append(out, a)
 			} else if isStateFile(p) {
 				a := base
+				a.Dir, a.AnyDir = filepath.Dir(p), false
 				a.Class, a.Engine, a.Why, a.TouchesState = StateSurgery, "file", "redirect writes to state file "+p, true
 				out = append(out, a)
 			}
@@ -489,6 +509,17 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		a := base
 		a.Class, a.Engine, a.Why = Tampering, "agent", why
 		return append(out, a)
+	}
+	if _, isEngine := engines[name]; !isEngine && name != "aws" && name != "gsutil" && name != "gcloud" && name != "rclone" && name != "scp" {
+		// az rest --output-file FILE, kubectl cp pod:/x FILE, docker cp: a
+		// cloud or cluster CLI that names a state file may write it.
+		if f := namedState(name, args, inv.Dir, opt); f != "" {
+			a := base
+			a.Dir, a.AnyDir = filepath.Dir(f), false
+			a.Class, a.Engine, a.TouchesState = StateSurgery, "file", true
+			a.Why = name + " names state file " + f + "; only reading it is allowed"
+			return append(out, a)
+		}
 	}
 	if name == "aws" || name == "gsutil" || name == "gcloud" || name == "rclone" || name == "scp" {
 		// A download writes a local file the command names last: a state
@@ -613,8 +644,102 @@ func invocation(inv shell.Invocation, opt Options) []Action {
 		}
 	}
 
+	if a, ok := httpMutation(base, name, args); ok {
+		out = append(out, a)
+	}
 	out = append(out, fileOps(base, name, args, inv.Dir, opt)...)
 	return out
+}
+
+// httpMutation classifies curl and wget calls that send a request other than
+// a read: a DELETE to a cloud or cluster API deletes what it names, with
+// whatever credentials the call or an earlier one obtained; a signed or
+// socket request with another method changes it.
+func httpMutation(base Action, name string, args []shell.Word) (Action, bool) {
+	if name == "gh" || name == "glab" {
+		// gh api -X DELETE, gh repo delete, gh secret delete and
+		// gh workflow run (which starts a pipeline that can apply or
+		// destroy) act on the remote repository and its automation.
+		var pos []string
+		method := ""
+		for i, w := range args {
+			t := w.Text
+			k, v, eq := strings.Cut(t, "=")
+			switch {
+			case (t == "-X" || t == "--method") && i+1 < len(args):
+				method = strings.ToUpper(args[i+1].Text)
+			case strings.HasPrefix(t, "-X") && len(t) > 2:
+				method = strings.ToUpper(t[2:])
+			case k == "--method" && eq:
+				method = strings.ToUpper(v)
+			case !strings.HasPrefix(t, "-"):
+				pos = append(pos, t)
+			}
+		}
+		a := base
+		a.Engine = "http"
+		switch {
+		case len(pos) > 0 && pos[0] == "api" && method == "DELETE",
+			len(pos) > 1 && pos[1] == "delete" && (pos[0] == "repo" || pos[0] == "secret" || pos[0] == "variable" || pos[0] == "release" || pos[0] == "workflow" || pos[0] == "run"):
+			a.Class, a.Why = CloudDestructive, name+" "+strings.Join(pos, " ")+" deletes what it names on the remote"
+			return a, true
+		case len(pos) > 1 && pos[0] == "workflow" && pos[1] == "run", len(pos) > 0 && pos[0] == "api" && method != "" && method != "GET" && method != "HEAD":
+			a.Class, a.Why = CloudWrite, name+" "+strings.Join(pos, " ")+" changes the remote or starts its automation"
+			return a, true
+		}
+		return Action{}, false
+	}
+	if name != "curl" && name != "wget" {
+		return Action{}, false
+	}
+	method := ""
+	signed := false
+	for i, w := range args {
+		t := w.Text
+		k, v, eq := strings.Cut(t, "=")
+		switch {
+		case name == "curl" && (t == "-X" || t == "--request") && i+1 < len(args):
+			method = strings.ToUpper(args[i+1].Text)
+		case name == "curl" && strings.HasPrefix(t, "-X") && len(t) > 2:
+			method = strings.ToUpper(t[2:])
+		case name == "curl" && k == "--request" && eq:
+			method = strings.ToUpper(v)
+		case name == "wget" && k == "--method" && eq:
+			method = strings.ToUpper(v)
+		case name == "wget" && t == "--method" && i+1 < len(args):
+			method = strings.ToUpper(args[i+1].Text)
+		case k == "--aws-sigv4" || k == "--unix-socket" || k == "--abstract-unix-socket" || k == "--cert" || t == "-E":
+			signed = true
+		}
+	}
+	local := false
+	for _, w := range args {
+		if strings.Contains(w.Text, "://") || strings.HasPrefix(w.Text, "localhost") {
+			t := strings.ToLower(w.Text)
+			if strings.Contains(t, "://localhost") || strings.Contains(t, "://127.0.0.1") || strings.Contains(t, "://[::1]") || strings.HasPrefix(t, "localhost") {
+				local = true
+			} else {
+				local = false
+				break
+			}
+		}
+	}
+	if local && !signed {
+		return Action{}, false // a service on this machine: ordinary work
+	}
+	switch {
+	case method == "DELETE":
+		a := base
+		a.Class, a.Engine = CloudDestructive, "http"
+		a.Why = name + " sends a DELETE request, which deletes the resource it names"
+		return a, true
+	case signed && method != "" && method != "GET" && method != "HEAD":
+		a := base
+		a.Class, a.Engine = CloudWrite, "http"
+		a.Why = name + " sends a " + method + " request signed with credentials or through a socket, which changes the resource it names"
+		return a, true
+	}
+	return Action{}, false
 }
 
 var destructiveWord = regexp.MustCompile(`(?i)(^|[^a-z])(destroy|teardown|tear-down|nuke|obliterate|decommission|wipe)([^a-z]|$)`)
@@ -692,6 +817,18 @@ func fileOps(base Action, name string, args []shell.Word, dir string, opt Option
 		out = append(out, a)
 	}
 	out = append(out, stateWrites(base, name, args, dir, opt)...)
+	// Default-deny near state files, as near guard files: a program that is
+	// not known to only read, and that names a state file, may overwrite it
+	// whatever its option for doing so is called.
+	if !slices.ContainsFunc(out, func(a Action) bool { return a.Class == StateSurgery }) {
+		if f := namedState(name, args, dir, opt); f != "" {
+			a := base
+			a.Dir, a.AnyDir = filepath.Dir(f), false
+			a.Class, a.Engine, a.TouchesState = StateSurgery, "file", true
+			a.Why = name + " names state file " + f + "; only reading it is allowed"
+			out = append(out, a)
+		}
+	}
 	// A program that removes or overwrites files, given a name the analysis
 	// cannot resolve (a loop variable, a command substitution, xargs input),
 	// may name a state file in any directory under the root.
@@ -773,11 +910,14 @@ func stepWrites(inv shell.Invocation, opt Options) []string {
 			switch v, ok := strings.CutPrefix(t, "chdir="); {
 			case ok && rest[0].Resolved:
 				dir = absPath(dir, v, opt.Home)
+				if inv.Approx && !filepath.IsAbs(v) {
+					dir = ""
+				}
 			case ok:
 				dir = ""
 			case t == "chdir" && len(rest) > 1:
 				dir = absPath(dir, rest[1].Text, opt.Home)
-				if !rest[1].Resolved {
+				if !rest[1].Resolved || inv.Approx && !filepath.IsAbs(rest[1].Text) {
 					dir = ""
 				}
 				rest = rest[1:]
@@ -1236,7 +1376,7 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 	case name == "zip":
 		if ps := paths(args); len(ps) > 0 {
 			out = append(out, abs(ps[0]))
-			if has("-m", "--move") {
+			if has("-m", "--move") || clusterHas(args, 'm') {
 				for _, p := range ps[1:] {
 					out = append(out, abs(p))
 				}
@@ -1244,12 +1384,24 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 		}
 	case name == "find":
 		if has("-delete") || execRemoves(args) {
-			for _, w := range args {
-				t := w.Text
+			// The global options come first (-P -H -L -Ox -D opts -f PATH,
+			// BSD -s -x -E -X), then the starting points.
+			for i := 0; i < len(args); i++ {
+				t := args[i].Text
+				switch {
+				case t == "-P" || t == "-H" || t == "-L" || t == "-s" || t == "-x" || t == "-E" || t == "-X" || t == "-d" || strings.HasPrefix(t, "-O") && len(t) > 2:
+					continue
+				case t == "-D" || t == "-f":
+					if t == "-f" && i+1 < len(args) && args[i+1].Resolved {
+						out = append(out, abs(args[i+1].Text))
+					}
+					i++
+					continue
+				}
 				if strings.HasPrefix(t, "-") || t == "(" || t == "!" {
 					break
 				}
-				if w.Resolved {
+				if args[i].Resolved {
 					out = append(out, abs(t))
 				}
 			}
@@ -1266,8 +1418,19 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 				sub = append(sub, w.Text)
 			}
 		}
-		if len(sub) >= 3 && sub[0] == "s3api" && sub[1] == "get-object" {
+		// Every get-* call that saves its answer takes the file as the last
+		// word (apigateway get-export, iot-data get-thing-shadow, glacier
+		// get-job-output, s3api get-object-torrent), and eks
+		// update-kubeconfig rewrites the file --kubeconfig names.
+		if len(sub) >= 3 && strings.HasPrefix(sub[1], "get-") {
 			out = append(out, abs(sub[len(sub)-1]))
+		}
+		for i, w := range args {
+			if k, v, eq := strings.Cut(w.Text, "="); k == "--kubeconfig" && eq && v != "" {
+				out = append(out, abs(v))
+			} else if w.Text == "--kubeconfig" && i+1 < len(args) && args[i+1].Resolved {
+				out = append(out, abs(args[i+1].Text))
+			}
 		}
 	}
 	return out
@@ -1811,6 +1974,27 @@ func namesGuard(name string, args []shell.Word, dir string, opt Options) string 
 		name == "busybox" || name == "toybox"
 	var needles []string
 	for _, w := range args {
+		if name == "git" && strings.HasPrefix(w.Text, ":") && len(w.Text) > 1 && w.Text[1] != ':' {
+			// A pathspec with magic: :(top).claude and :/.claude are from the
+			// repository root, :(glob)**/settings.json is a pattern.
+			rest, top := gitMagic(w.Text)
+			if rest != "" || top {
+				base := dir
+				if top {
+					base = repoRoot(dir)
+				}
+				p := absPath(base, rest, opt.Home)
+				if strings.ContainsAny(rest, "*?[") {
+					// A pattern may reach any directory of the repository.
+					if opt.Guard.GlobTouches(p) || opt.Guard.GlobTouches(absPath(repoRoot(dir), rest, opt.Home)) {
+						return w.Text
+					}
+				} else if opt.Guard.Protected(p) || changes && opt.Guard.Touches(p) {
+					return p
+				}
+			}
+			continue
+		}
 		if w.Resolved {
 			// The word, and each part of a list (100644,sha,.applygate.yaml)
 			// or an option value (--out=~/.claude/settings.json).
@@ -1857,6 +2041,34 @@ func namesGuard(name string, args []shell.Word, dir string, opt Options) string 
 		}
 	}
 	return ""
+}
+
+// gitMagic splits a git pathspec with magic (:(top,glob)path, :/path,
+// :!path) into the path and whether it is from the repository root. Excluding
+// magic (:!, :^, :(exclude)) names nothing.
+func gitMagic(spec string) (path string, top bool) {
+	rest := spec[1:]
+	switch {
+	case strings.HasPrefix(rest, "("):
+		end := strings.Index(rest, ")")
+		if end < 0 {
+			return "", false
+		}
+		for _, m := range strings.Split(rest[1:end], ",") {
+			switch m {
+			case "top":
+				top = true
+			case "exclude":
+				return "", false
+			}
+		}
+		return rest[end+1:], top
+	case strings.HasPrefix(rest, "/"):
+		return rest[1:], true
+	case strings.HasPrefix(rest, "!") || strings.HasPrefix(rest, "^"):
+		return "", false
+	}
+	return rest, false
 }
 
 // packageTamper reports a package manager that removes, replaces or
@@ -1991,13 +2203,36 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 	}
 	switch {
 	case copiers[name] || name == "mv" || name == "ln":
+		// -t DIR, -tDIR, --target-directory DIR and --target-directory=DIR
+		// name the destination; the words that are left are the sources.
+		if td, rest, ok := targetDirectory(args); ok && name != "rsync" && name != "ditto" {
+			args = rest
+			pos = pos[:0]
+			for _, w := range args {
+				if w.Resolved && w.Text != "" && !strings.HasPrefix(w.Text, "-") {
+					pos = append(pos, absPath(dir, w.Text, opt.Home))
+				}
+			}
+			if td.Resolved {
+				pos = append(pos, absPath(dir, td.Text, opt.Home))
+			} else {
+				args = append(append([]shell.Word(nil), args...), td)
+			}
+		}
 		// A glob among the sources is expanded here, as the shell will do.
 		for i, w := range args {
 			if w.Resolved || strings.HasPrefix(w.Text, "-") || !strings.ContainsAny(w.Text, "*?[") || i == len(args)-1 {
 				continue
 			}
 			ms, _ := filepath.Glob(absPath(dir, w.Text, opt.Home))
+			if len(pos) == 0 {
+				pos = append(pos, ms...)
+				continue
+			}
 			pos = append([]string(nil), append(pos[:len(pos)-1], append(ms, pos[len(pos)-1])...)...)
+		}
+		if len(args) == 0 {
+			return nil
 		}
 		if last := args[len(args)-1]; !last.Resolved {
 			// cp x terraform.tf*: the destination is whatever the glob matches.
@@ -2174,6 +2409,156 @@ func stateWrites(base Action, name string, args []shell.Word, dir string, opt Op
 	return out
 }
 
+// ModelledProgram reports whether the classifier reads the arguments of the
+// program name: it writes, removes, copies, reads, runs code or is an engine.
+// A repository config may not declare such a program a wrapper (which would
+// skip the arguments the classifier reads), in its plain, g-prefixed
+// (gtar, gmv) or versioned (python3.11) spelling.
+func ModelledProgram(name string) bool {
+	known := func(n string) bool {
+		_, eng := engines[n]
+		return eng || writers[n] || removers[n] || copiers[n] || readers[n] || destroysFiles[n] || stateReaders[n] || tableHandled[n] ||
+			codeRunners[n] || knownProgram(n) || shell.KnownProgram(n) || n == "busybox" || n == "toybox" || n == "rename" || n == "claude" ||
+			n == "codex" || n == "gemini" || n == "expect" || n == "runuser" || n == "taskset" || n == "ionice" || n == "chronic"
+	}
+	if known(name) || strings.HasPrefix(name, "g") && known(name[1:]) {
+		return true
+	}
+	if base := versionSuffix.ReplaceAllString(name, ""); base != name && base != "" && known(base) {
+		return true
+	}
+	return false
+}
+
+// versionSuffix is the version at the end of a program's file name
+// (python3.11, terraform-1.5.7, node_v20).
+var versionSuffix = regexp.MustCompile(`[-_]?v?[0-9][0-9.]*$`)
+
+// stateReaders are programs that only read the files they are given (their
+// options that write one are in outputOpts); naming a state file to them is
+// fine. sed and awk are here for a file named as a word of its own, not for
+// one named inside their script.
+var stateReaders = map[string]bool{
+	"cut": true, "sort": true, "tac": true, "rev": true, "nl": true, "column": true, "comm": true, "join": true, "paste": true,
+	"fold": true, "wc": true, "expand": true, "unexpand": true, "fmt": true, "pr": true, "tr": true, "colrm": true, "awk": true,
+	"gawk": true, "mawk": true, "nawk": true, "sed": true, "gsed": true, "uniq": true, "jless": true, "fx": true, "gron": true,
+	"dasel": true, "hexdump": true, "zcat": true, "gzcat": true, "bzcat": true, "xzcat": true, "lsof": true, "fuser": true,
+	"tfsec": true, "trivy": true, "checkov": true, "tflint": true, "infracost": true, "terraform-docs": true, "tree": true,
+	"ls": true, "lsattr": true, "getfattr": true, "mdls": true, "xattr": true, "open": true, "code": true, "view": true,
+	"hd": true, "xxd": true, "b2sum": true, "sha224sum": true, "sha384sum": true, "sha512sum": true, "cksum": true, "sum": true,
+}
+
+// tableHandled programs have their own rules for which words they write
+// (writeTargets); the naming rule does not second-guess those.
+var tableHandled = map[string]bool{
+	"zip": true, "tar": true, "bsdtar": true, "gtar": true, "7z": true, "7za": true, "7zz": true, "7zr": true, "unzip": true, "cpio": true,
+	"gzip": true, "gunzip": true, "bzip2": true, "bunzip2": true, "xz": true, "unxz": true, "zstd": true, "unzstd": true,
+	"compress": true, "uncompress": true, "base64": true, "openssl": true, "gpg": true, "age": true, "patch": true, "find": true, "fd": true,
+}
+
+// codeRunners run code the analysis reads separately (or does not follow
+// and asks about); the words they are given are not file operands.
+var codeRunners = map[string]bool{
+	"sh": true, "bash": true, "zsh": true, "dash": true, "ksh": true, "fish": true, "csh": true, "tcsh": true, "python": true,
+	"python2": true, "python3": true, "node": true, "nodejs": true, "deno": true, "bun": true, "perl": true, "ruby": true, "php": true,
+	"lua": true, "luajit": true, "tclsh": true, "swift": true, "java": true, "julia": true, "Rscript": true, "R": true, "osascript": true,
+	"pwsh": true, "powershell": true, "make": true, "gmake": true, "go": true, "cargo": true, "npm": true, "pnpm": true, "yarn": true,
+	"npx": true, "env": true, "xargs": true, "sudo": true, "time": true, "nohup": true, "timeout": true, "watch": true, "eval": true,
+	"exec": true, "source": true, ".": true,
+}
+
+var stateToken = regexp.MustCompile("[^\\s\"'`<>|;&(){}=,:]*\\.tfstate(?:\\.backup)?")
+
+// namedState returns a state file a program names, in any spelling: a word,
+// an option's value (--out FILE, --out=FILE, -oFILE), a part of a list, or a
+// file written inside a script word. "" when it names none, or when it is
+// known to only read.
+func namedState(name string, args []shell.Word, dir string, opt Options) string {
+	if writers[name] || copiers[name] || removers[name] || name == "mv" || name == "ln" || tableHandled[name] || codeRunners[name] || readOnlyUse(name, args) {
+		return ""
+	}
+	reader := stateReaders[name]
+	check := func(c string) string {
+		if c == "" || c == "-" || strings.Contains(c, "://") {
+			return ""
+		}
+		if p := absPath(dir, c, opt.Home); isStateFile(p) {
+			return p
+		}
+		return ""
+	}
+	for _, w := range args {
+		if !w.Resolved || w.Text == "" {
+			continue
+		}
+		t := w.Text
+		script := strings.ContainsAny(t, " \t\n\"'`{}") // a word that holds more than a name
+		if reader && !script {
+			continue
+		}
+		if reader && name != "awk" && name != "gawk" && name != "mawk" && name != "nawk" && name != "sed" && name != "gsed" {
+			continue
+		}
+		if strings.Contains(t, "://") {
+			continue
+		}
+		if p := check(t); p != "" && !reader {
+			return p
+		}
+		for _, part := range strings.FieldsFunc(t, func(r rune) bool { return r == '=' || r == ',' || r == ':' }) {
+			if p := check(part); p != "" && !reader {
+				return p
+			}
+		}
+		if len(t) > 2 && t[0] == '-' && t[1] != '-' && !reader {
+			if p := check(t[2:]); p != "" { // -oFILE
+				return p
+			}
+		}
+		if script {
+			for _, m := range stateToken.FindAllString(t, -1) {
+				if p := check(m); p != "" {
+					return p
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// targetDirectory finds the destination directory given by -t DIR, -tDIR,
+// --target-directory DIR or --target-directory=DIR (any unique prefix of the
+// long option, as GNU takes it) and returns the other words.
+func targetDirectory(args []shell.Word) (shell.Word, []shell.Word, bool) {
+	for i, w := range args {
+		t := w.Text
+		if !w.Resolved || !strings.HasPrefix(t, "-") || t == "--" {
+			continue
+		}
+		switch {
+		case t == "-t" || len(t) >= 4 && strings.HasPrefix("--target-directory", t):
+			if i+1 >= len(args) {
+				continue
+			}
+		case strings.HasPrefix(t, "--") && strings.Contains(t, "="):
+			k, val, _ := strings.Cut(t, "=")
+			if len(k) < 4 || !strings.HasPrefix("--target-directory", k) {
+				continue
+			}
+			rest := append(append([]shell.Word(nil), args[:i]...), args[i+1:]...)
+			return shell.Word{Text: val, Resolved: true, Prefix: val}, rest, true
+		case strings.HasPrefix(t, "-t") && !strings.HasPrefix(t, "--") && len(t) > 2:
+			rest := append(append([]shell.Word(nil), args[:i]...), args[i+1:]...)
+			return shell.Word{Text: t[2:], Resolved: true, Prefix: t[2:]}, rest, true
+		default:
+			continue
+		}
+		rest := append(append([]shell.Word(nil), args[:i]...), args[i+2:]...)
+		return args[i+1], rest, true
+	}
+	return shell.Word{}, nil, false
+}
+
 // inPlaceEdit reports sed's, perl's, ruby's or yq's in-place editing.
 func inPlaceEdit(args []shell.Word) bool { return shell.InPlaceEdit(args) }
 
@@ -2200,7 +2585,8 @@ func tarModes(args []shell.Word) (extract, create bool) {
 		switch {
 		case t == "--extract" || t == "--get":
 			extract = true
-		case t == "--create":
+		case t == "--create" || t == "--append" || t == "--update" || t == "--concatenate" || t == "--catenate" || t == "--delete":
+			// Each writes the archive named by -f.
 			create = true
 		case strings.HasPrefix(t, "--"):
 			if k, _, eq := strings.Cut(t, "="); !eq && (k == "--directory" || k == "--file" || k == "--files-from" || k == "--exclude-from" || k == "--transform" || k == "--use-compress-program" || k == "--to-command") {
@@ -2212,7 +2598,7 @@ func tarModes(args []shell.Word) (extract, create bool) {
 				switch ch {
 				case 'x':
 					extract = true
-				case 'c':
+				case 'c', 'r', 'u', 'A':
 					create = true
 				case 'C', 'f', 'I', 'T', 'X', 'F', 'K', 'L':
 					if j == len(cluster)-1 {

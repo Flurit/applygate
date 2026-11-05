@@ -380,7 +380,7 @@ func GuardOptions(cfg *config.Config, env map[string]string) classify.Options {
 // ShellOptions returns the analyzer options for a command run in dir.
 func ShellOptions(cfg *config.Config, copt classify.Options, dir string, env map[string]string, read func(string) ([]byte, error)) shell.Options {
 	return shell.Options{Dir: dir, Env: env, Aliases: cfg.Aliases, Wrappers: cfg.ShellWrappers(), ReadFile: read, IsDir: isDir,
-		ProtectedPaths: copt.ProtectedPaths, ProtectedPath: copt.Guard.Protected, GuardNeedles: copt.Guard.Needles(copt.Home)}
+		UnknownBase: copt.UnknownCwd && cfg.UnknownDirMostProtected(), ProtectedPaths: copt.ProtectedPaths, ProtectedPath: copt.Guard.Protected, GuardNeedles: copt.Guard.Needles(copt.Home)}
 }
 
 func isDir(p string) bool {
@@ -682,6 +682,12 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 			r.Findings = append(r.Findings, preflight.Finding{Rule: "live-identity", Severity: preflight.Info, Message: "STS identity check failed: " + err.Error()})
 		}
 	}
+	if a.S3Object != "" && sig.Backend == "" {
+		// aws s3 cp/mv/rm/sync and s3api writes name a bucket: one that holds
+		// an environment's state (backends: in the config) is that
+		// environment's, whatever directory the command runs in.
+		sig.Backend = a.S3Object
+	}
 	var res config.Resolution
 	switch {
 	case a.Subtree && a.Dir != "" && a.UnitsUnknown:
@@ -781,6 +787,15 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	}
 
 	class := a.Class
+	if a.S3Object != "" && class != classify.StateSurgery {
+		for _, m := range r.Matched {
+			if m == "backend "+sig.Backend {
+				class = classify.StateSurgery
+				r.Matched = append(r.Matched, "aws changes "+a.S3Object+", an object in a bucket that holds an environment's Terraform state")
+				break
+			}
+		}
+	}
 	if class == classify.ApplySavedPlan {
 		class = planGate(&r, a, cfg, deps, recorded, declared)
 	}
@@ -988,6 +1003,13 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 		}
 		r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-unverifiable", Severity: preflight.Critical,
 			Message: "an earlier step of this command writes the saved plan " + a.PlanFile + ", so the plan that would be applied cannot be checked; run the steps separately"})
+		return classify.ApplySavedPlan
+	}
+	if a.Dir == "" && a.PlanFile != "" && !filepath.IsAbs(a.PlanFile) && a.PlanFile != "-" {
+		// A relative plan file from a directory that is not known: which file
+		// this opens, and what is in it, cannot be told.
+		r.Findings = append(r.Findings, preflight.Finding{Rule: "plan-ambiguous", Severity: preflight.Critical,
+			Message: "the directory this command runs in is not known, so the saved plan file " + a.PlanFile + " cannot be identified and read"})
 		return classify.ApplySavedPlan
 	}
 	planPath := a.PlanFile

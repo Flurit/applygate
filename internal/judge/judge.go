@@ -258,6 +258,9 @@ func WriteContent(input json.RawMessage) string {
 		if old == "" {
 			return new
 		}
+		if new == "" {
+			return "remove:\n" + old
+		}
 		return "replace:\n" + old + "\nwith:\n" + new
 	}
 	var parts []string
@@ -273,16 +276,19 @@ func WriteContent(input json.RawMessage) string {
 	// (old_str/new_str), OpenCode's edit (oldString/newString).
 	pairs := [][2]string{{"old_string", "new_string"}, {"old_str", "new_str"}, {"oldString", "newString"}}
 	for _, p := range pairs {
-		if s := str(p[1]); s != "" {
-			parts = append(parts, edit(str(p[0]), s))
+		// A deletion has an empty replacement: the text taken out is what the
+		// judge needs (an `if:` guard removed from a deploy workflow).
+		if s, o := str(p[1]), str(p[0]); s != "" || o != "" {
+			parts = append(parts, edit(o, s))
 		}
 	}
 	if edits, ok := m["edits"].([]any); ok {
 		for _, e := range edits {
 			if em, ok := e.(map[string]any); ok {
 				for _, p := range pairs {
-					if n, _ := em[p[1]].(string); n != "" {
-						o, _ := em[p[0]].(string)
+					n, _ := em[p[1]].(string)
+					o, _ := em[p[0]].(string)
+					if n != "" || o != "" {
 						parts = append(parts, edit(o, n))
 					}
 				}

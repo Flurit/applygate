@@ -109,8 +109,11 @@ func terraformArgs(a *Action, args []shell.Word) {
 		}
 		if v, ok := strings.CutPrefix(strings.TrimLeft(t, "-"), "chdir="); ok {
 			a.Dir = absPath(a.Dir, v, "")
+			if a.ApproxDir && !filepath.IsAbs(v) {
+				a.Dir, a.AnyDir = "", true
+			}
 		} else if strings.TrimLeft(t, "-") == "chdir" && len(args) > 1 {
-			if args[1].Resolved {
+			if args[1].Resolved && !(a.ApproxDir && !filepath.IsAbs(args[1].Text)) {
 				a.Dir = absPath(a.Dir, args[1].Text, "")
 			} else {
 				a.Dir, a.AnyDir = "", true
@@ -548,11 +551,19 @@ func awsArgsOne(base Action, args []shell.Word) (Action, bool) {
 			return a, true
 		}
 	}
+	a.S3Object = s3Written(svc, op, pos[2:], args)
 	if obj := remoteStateObject(svc, op, pos[2:], args); obj != "" {
 		a.Class, a.Why = StateSurgery, "aws "+svc+" "+op+" writes or removes "+obj+", a Terraform state object"
 		return a, true
 	}
 	switch {
+	case svc == "secretsmanager" && (op == "get-secret-value" || op == "batch-get-secret-value"),
+		svc == "ssm" && (op == "get-parameter" || op == "get-parameters" || op == "get-parameters-by-path") && (strings.Contains(all, "--with-decryption") || abbrevOpt(strings.Fields(all), "--with-decryption", 7)),
+		svc == "sts" && (op == "get-session-token" || op == "get-federation-token"),
+		svc == "ecr" && (op == "get-login-password" || op == "get-authorization-token"),
+		svc == "eks" && op == "get-token", svc == "rds" && op == "generate-db-auth-token",
+		svc == "iam" && (op == "create-access-key" || op == "create-login-profile"):
+		a.Class, a.Why = CredentialAccess, "aws "+svc+" "+op+" prints a secret, token or password into the transcript"
 	case svc == "configure" && (op == "get" && len(pos) > 2 && isSecretEnv(strings.ToUpper(pos[2])) || op == "export-credentials"):
 		a.Class, a.Why = CredentialAccess, "aws configure "+op+" prints credentials"
 	case svc == "configure" && (op == "set" || op == "import" || op == "add-model" || op == "" || op == "sso" || op == "sso-session"):
@@ -581,7 +592,7 @@ func awsArgsOne(base Action, args []shell.Word) (Action, bool) {
 		a.Class, a.Why = ReadOnly, "aws s3 "+op
 	case svc == "s3api" && op == "put-bucket-versioning" && strings.Contains(all, "Suspended"):
 		a.Class, a.Why = CloudDestructive, "suspends bucket versioning"
-	case strings.Contains(op, "delete") || hasAnyPrefix(op, "terminate", "remove-", "deregister", "purge", "schedule-key-deletion", "disable-key", "release-", "revoke-"):
+	case strings.Contains(op, "delete") || hasAnyPrefix(op, "terminate", "remove-", "deregister", "purge", "schedule-key-deletion", "disable-key", "release-", "revoke-", "close-", "leave-", "disassociate-", "cancel-", "reject-"):
 		a.Class, a.Why = CloudDestructive, "aws "+svc+" "+op+" deletes or terminates resources"
 	case op == "update-kubeconfig" || op == "login" || svc == "ecr" && op == "get-login-password":
 		// Write only local client configuration (kubeconfig, SSO token cache).
@@ -656,6 +667,11 @@ func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 		}
 		return a, true
 	}
+	if pos[0] == "get" && len(pos) > 1 && isSecretKind(pos[1]) && kubectlPrintsValues(args) ||
+		pos[0] == "config" && len(pos) > 1 && pos[1] == "view" && hasArg(args, "--raw") {
+		a.Class, a.Why = CredentialAccess, "kubectl "+strings.Join(pos, " ")+" prints secret values into the transcript"
+		return a, true
+	}
 	switch pos[0] {
 	case "delete", "drain":
 		a.Class, a.Why = CloudDestructive, "kubectl "+strings.Join(pos, " ")
@@ -668,6 +684,46 @@ func kubectlArgs(base Action, args []shell.Word) (Action, bool) {
 		a.Class, a.Why = CloudWrite, "kubectl "+pos[0]+" changes resources"
 	}
 	return a, true
+}
+
+// isSecretKind reports a kubectl resource name for Secrets (secret,
+// secrets, secret/name, secrets.v1, secret,cm).
+func isSecretKind(k string) bool {
+	for _, part := range strings.Split(strings.ToLower(k), ",") {
+		part, _, _ = strings.Cut(part, "/")
+		part, _, _ = strings.Cut(part, ".")
+		if part == "secret" || part == "secrets" {
+			return true
+		}
+	}
+	return false
+}
+
+// kubectlPrintsValues reports an output format that shows the values of the
+// objects (yaml, json, jsonpath, go-template, custom columns), not just
+// their names.
+func kubectlPrintsValues(args []shell.Word) bool {
+	for i, w := range args {
+		t := w.Text
+		var v string
+		switch {
+		case (t == "-o" || t == "--output") && i+1 < len(args):
+			v = args[i+1].Text
+		case strings.HasPrefix(t, "--output="):
+			v = strings.TrimPrefix(t, "--output=")
+		case strings.HasPrefix(t, "-o") && len(t) > 2 && !strings.HasPrefix(t, "--"):
+			v = t[2:]
+		default:
+			continue
+		}
+		v = strings.ToLower(v)
+		for _, f := range []string{"yaml", "json", "jsonpath", "go-template", "custom", "template"} {
+			if strings.HasPrefix(v, f) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // kubectlBool are kubectl's global flags that take no value.
@@ -757,6 +813,16 @@ func cloudCLIArgs(base Action, name string, args []shell.Word) (Action, bool) {
 	}
 	a.Sub = strings.Join(pos, " ")
 	cmd := name + " " + strings.Join(pos, " ")
+	if name == "gcloud" && a.Target == "" && len(pos) >= 3 && pos[0] == "projects" {
+		// gcloud projects delete PROJECT: the project the verb names is the
+		// target, as --project is.
+		a.Target = pos[2]
+	}
+	if name == "az" && len(pos) >= 3 && pos[0] == "keyvault" && pos[1] == "secret" && (pos[2] == "show" || pos[2] == "download") ||
+		name == "gcloud" && len(pos) >= 3 && pos[0] == "secrets" && pos[1] == "versions" && pos[2] == "access" {
+		a.Class, a.Why = CredentialAccess, cmd+" prints a secret value into the transcript"
+		return a, true
+	}
 	// Access tokens printed are credentials, as aws configure
 	// export-credentials is.
 	if name == "gcloud" && (slices.Contains(pos, "print-access-token") || slices.Contains(pos, "print-identity-token") || slices.Contains(pos, "print-refresh-token")) ||
@@ -1147,6 +1213,9 @@ func terragruntDir(a *Action, args []shell.Word) []shell.Word {
 			t = w.Prefix
 		}
 		name, val, eq := strings.Cut(t, "=")
+		if strings.HasPrefix(name, "-") && !strings.HasPrefix(name, "--") {
+			name = "-" + name // the CLI takes one dash as it takes two
+		}
 		set := setDir
 		switch name {
 		case "--working-dir", "--terragrunt-working-dir":
@@ -1154,6 +1223,15 @@ func terragruntDir(a *Action, args []shell.Word) []shell.Word {
 			set = setConfig
 		case "--source", "--terragrunt-source":
 			set = setSource
+		case "--queue-include-dir", "--terragrunt-include-dir", "--include-dir":
+			// The units in that directory run too (run --all, --graph).
+			set = func(w shell.Word) {
+				if w.Resolved && w.Text != "" {
+					a.ConfigDir = absPath(a.Dir, w.Text, "")
+				} else {
+					a.Dir, a.AnyDir = "", true
+				}
+			}
 		default:
 			out = append(out, w)
 			continue
@@ -1247,6 +1325,58 @@ func firstText(ws []shell.Word) string {
 		return ""
 	}
 	return ws[0].Text
+}
+
+// s3Written returns the s3://bucket/key an aws s3 or s3api call writes,
+// moves or deletes, "" when it changes none.
+func s3Written(svc, op string, pos []string, args []shell.Word) string {
+	switch svc {
+	case "s3":
+		switch op {
+		case "cp", "sync":
+			if n := len(pos); n > 0 && strings.HasPrefix(pos[n-1], "s3://") {
+				return pos[n-1]
+			}
+		case "mv", "rm":
+			for _, p := range pos {
+				if strings.HasPrefix(p, "s3://") {
+					return p
+				}
+			}
+		case "mb", "rb":
+			for _, p := range pos {
+				if strings.HasPrefix(p, "s3://") {
+					return p
+				}
+			}
+		}
+	case "s3api":
+		if strings.HasPrefix(op, "get-") || strings.HasPrefix(op, "list-") || strings.HasPrefix(op, "head-") {
+			return ""
+		}
+		bucket, key := "", ""
+		for i, w := range args {
+			for _, f := range []string{"--bucket", "--key"} {
+				v := ""
+				if x, ok := strings.CutPrefix(w.Text, f+"="); ok {
+					v = x
+				} else if w.Text == f && i+1 < len(args) {
+					v = args[i+1].Text
+				} else {
+					continue
+				}
+				if f == "--bucket" {
+					bucket = v
+				} else {
+					key = v
+				}
+			}
+		}
+		if bucket != "" {
+			return "s3://" + bucket + "/" + key
+		}
+	}
+	return ""
 }
 
 // remoteStateObject returns the Terraform state object an aws s3 or s3api

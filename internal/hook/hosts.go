@@ -227,6 +227,10 @@ var quietTools = toolSet(
 	"TodoWrite", "Task", "Agent", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TaskOutput",
 	"WebFetch", "WebSearch", "AskUserQuestion", "ExitPlanMode", "EnterPlanMode", "Skill", "ToolSearch",
 	"SendMessage", "ListMcpResourcesTool", "ReadMcpResourceTool", "BashOutput", "KillShell",
+	// Planning, scheduling, notification and publishing tools of the hosts:
+	// their text may mention a program without running it.
+	"update_plan", "EnterWorktree", "ExitWorktree", "ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "PushNotification",
+	"Artifact", "ArtifactComments", "ArtifactData", "LSP", "view_image", "ReadNotifications", "SuggestSkills", "SearchPlugins",
 )
 
 // infraWord matches the programs applygate judges, anywhere in a string.
@@ -247,7 +251,7 @@ func classifyUnknown(ev *policy.Event, tool string, in map[string]json.RawMessag
 	if cmd := commandOf(in); strings.TrimSpace(cmd) != "" {
 		// A program and its arguments in separate fields ({"command":
 		// "terraform", "args": ["destroy"]}) are one command.
-		for _, k := range []string{"args", "arguments", "argv", "params", "parameters"} {
+		for _, k := range []string{"args", "arguments", "argv", "params", "parameters", "options", "flags", "extra_args", "subcommand"} {
 			if extra := commandField(in[k]); extra != "" {
 				cmd += " " + extra
 			}

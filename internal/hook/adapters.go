@@ -376,7 +376,7 @@ func mcpArguments(raw json.RawMessage) string {
 		buf.Reset()
 		buf.Write(raw)
 	}
-	return decisionlog.RedactCut(buf.String(), maxMCPArgs)
+	return decisionlog.RedactJSONCut(buf.String(), maxMCPArgs)
 }
 
 // workDir returns the directory a Codex shell command runs in: the first of

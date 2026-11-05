@@ -658,10 +658,15 @@ func TestCodexUnknownDirFailsClosed(t *testing.T) {
 	if got, e := run("", root); got != "deny" || e.Actions[0].Tier != "protected" {
 		t.Fatalf("repo config must not loosen unknown_dir: got %s tier %q", got, e.Actions[0].Tier)
 	}
-	// A cd inside the command establishes the directory.
-	o := Run(Codex{}, strings.NewReader(event("Bash", root, map[string]any{"command": "cd dev && terraform destroy -auto-approve"})), Options{NoLog: true, NoGit: true, Env: map[string]string{}})
+	// An absolute cd inside the command establishes the directory; a
+	// relative one does not (the session directory is not where it starts).
+	o := Run(Codex{}, strings.NewReader(event("Bash", root, map[string]any{"command": "cd " + filepath.Join(root, "dev") + " && terraform destroy -auto-approve"})), Options{NoLog: true, NoGit: true, Env: map[string]string{}})
 	if got := decision(t, o); got != "allow" {
-		t.Fatalf("cd inside the command should make the directory known: got %s (%s)", got, o.Stdout)
+		t.Fatalf("an absolute cd inside the command should make the directory known: got %s (%s)", got, o.Stdout)
+	}
+	o = Run(Codex{}, strings.NewReader(event("Bash", root, map[string]any{"command": "cd dev && terraform destroy -auto-approve"})), Options{NoLog: true, NoGit: true, Env: map[string]string{}})
+	if got := decision(t, o); got != "deny" {
+		t.Fatalf("a relative cd from an unreported directory must stay unknown: got %s (%s)", got, o.Stdout)
 	}
 }
 

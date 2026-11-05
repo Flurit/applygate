@@ -168,7 +168,7 @@ log "sha256 verified"
 
 # --- extract only the binary -------------------------------------------------
 tar -xzf "${tmp}/${archive}" -C "$tmp" applygate || die "could not extract applygate from ${archive}"
-[ -f "${tmp}/applygate" ] || die "archive did not contain a applygate binary"
+[ -f "${tmp}/applygate" ] && [ ! -L "${tmp}/applygate" ] || die "archive did not contain a applygate binary (a link is not one)"
 chmod 755 "${tmp}/applygate"
 
 # --- install dir -------------------------------------------------------------

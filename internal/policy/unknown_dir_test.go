@@ -165,18 +165,33 @@ func TestUnknownDirMostProtected(t *testing.T) {
 			t.Fatalf("got %s %s", d.Verdict, d.Actions[0].Tier)
 		}
 	})
-	t.Run("cd and -chdir in the command establish the directory", func(t *testing.T) {
+	t.Run("an absolute cd or -chdir establishes the directory, a relative one does not", func(t *testing.T) {
 		root := writeRepo(t, mixedRepo, "examples/simple", "envs/prod")
 		cfg := loadCfg(t, "", root)
-		for _, cmd := range []string{"cd examples/simple && terraform destroy -auto-approve", "terraform -chdir=examples/simple destroy -auto-approve"} {
+		simple := filepath.Join(root, "examples", "simple")
+		for _, cmd := range []string{"cd " + simple + " && terraform destroy -auto-approve", "terraform -chdir=" + simple + " destroy -auto-approve"} {
 			d := Decide(codexEvent(cmd, root), cfg, deps)
 			if d.Verdict != Allow || d.Actions[0].Tier != config.Disposable {
 				t.Fatalf("%s: got %s %s: %v", cmd, d.Verdict, d.Actions[0].Tier, d.Actions[0].Matched)
 			}
 		}
-		d := Decide(codexEvent("cd envs/prod && terraform destroy -auto-approve", root), cfg, deps)
+		// The session directory is not where the command starts: a relative
+		// path from it may lead anywhere (the model chooses the workdir).
+		for _, cmd := range []string{"cd examples/simple && terraform destroy -auto-approve", "terraform -chdir=examples/simple destroy -auto-approve", "pushd examples/simple && terraform destroy -auto-approve"} {
+			d := Decide(codexEvent(cmd, root), cfg, deps)
+			if d.Verdict != Block || d.Actions[0].Tier != config.Protected {
+				t.Fatalf("%s: got %s %s, want a block at the most protected tier", cmd, d.Verdict, d.Actions[0].Tier)
+			}
+		}
+		d := Decide(codexEvent("cd "+filepath.Join(root, "envs", "prod")+" && terraform destroy -auto-approve", root), cfg, deps)
 		if d.Verdict != Block {
 			t.Fatalf("cd into prod: got %s", d.Verdict)
+		}
+		// session_root says the person accepts the session directory as the base.
+		cfg = loadCfg(t, "unknown_dir: session_root\n", root)
+		d = Decide(codexEvent("cd examples/simple && terraform destroy -auto-approve", root), cfg, deps)
+		if d.Verdict != Allow || d.Actions[0].Tier != config.Disposable {
+			t.Fatalf("session_root: got %s %s", d.Verdict, d.Actions[0].Tier)
 		}
 	})
 	t.Run("workspace and profile matchers count under an unknown directory", func(t *testing.T) {

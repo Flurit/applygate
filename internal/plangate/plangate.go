@@ -181,6 +181,11 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 				crit(&protection, rc.Address+": "+pr.What+" while it is being replaced")
 			case onChange && (acts.Update() || repl) && afterUnsafe && !beforeUnsafe:
 				crit(&protection, rc.Address+": "+pr.What)
+			case onChange && (acts.Update() || repl) && bok && !beforeUnsafe && !aok && !afterUnknownAt(rc, pr.Attr):
+				// Deleting the attribute or the block (true to null, a
+				// removed block) leaves the provider's default, which the
+				// plan does not show and which is often the unsafe value.
+				crit(&protection, rc.Address+": "+pr.What+" (the setting is removed, so the provider's default applies)")
 			}
 		}
 		// F11 (narrowed): a database created with no safety net at all —
@@ -541,6 +546,17 @@ func exposed(rc *tfjson.ResourceChange, after map[string]any, rules *Rules) []st
 				if open(v...) {
 					return true
 				}
+				// A list of blocks that together cover the internet
+				// (32 prefixes of /5) is as open as 0.0.0.0/0.
+				var strs []string
+				for _, e := range v {
+					if str, ok := e.(string); ok {
+						strs = append(strs, str)
+					}
+				}
+				if cidrsWide(strs) {
+					return true
+				}
 			}
 		}
 		return false
@@ -770,7 +786,7 @@ func restricts(raw json.RawMessage) bool {
 			// only when every one of them does.
 			limits := true
 			for _, v := range vals {
-				if v == "*" || v == "" || strings.Trim(v, "*?:/") == "" || wideCIDR(v) || strings.HasPrefix(v, "arn:aws:*") || v == "arn:aws:iam::*:*" || arnAnyAccount(v) {
+				if v == "*" || v == "" || strings.Trim(v, "*?:/") == "" || wideCIDR(v) || broadWildcard(v) || strings.HasPrefix(v, "arn:aws:*") || v == "arn:aws:iam::*:*" || arnAnyAccount(v) {
 					limits = false
 					break
 				}
@@ -785,6 +801,27 @@ func restricts(raw json.RawMessage) bool {
 
 // arnAnyAccount reports an ARN pattern whose account field is a wildcard: it
 // matches the resources of every AWS account.
+// broadWildcard reports a value with a wildcard that matches any
+// organization, VPC, endpoint or principal ("o-*", "vpce-*", "AIDA*", "*1"):
+// a pattern whose fixed text is only a short prefix or suffix limits nobody
+// worth naming. An ARN pattern with a wildcard in its account is any account.
+func broadWildcard(v string) bool {
+	if !strings.ContainsAny(v, "*?") {
+		return false
+	}
+	if strings.HasPrefix(v, "arn:") {
+		parts := strings.SplitN(v, ":", 6)
+		return len(parts) == 6 && strings.ContainsAny(parts[4], "*?")
+	}
+	fixed := strings.Map(func(r rune) rune {
+		if r == '*' || r == '?' {
+			return -1
+		}
+		return r
+	}, v)
+	return len(fixed) <= 6
+}
+
 func arnAnyAccount(v string) bool {
 	parts := strings.SplitN(v, ":", 6)
 	return len(parts) == 6 && parts[0] == "arn" && strings.Trim(parts[4], "*?") == "" && parts[4] != ""
@@ -878,6 +915,42 @@ func anyPrincipal(raw json.RawMessage) bool {
 	return false
 }
 
+// cidrsWide reports whether IPv4 blocks together cover as much as a /4
+// (a sixteenth of the address space): a split of the internet into prefixes
+// is as open as 0.0.0.0/0.
+func cidrsWide(list []string) bool {
+	type rng struct{ lo, hi uint64 }
+	var rs []rng
+	for _, c := range list {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil || len(n.IP.To4()) != 4 {
+			continue
+		}
+		ip := n.IP.To4()
+		lo := uint64(ip[0])<<24 | uint64(ip[1])<<16 | uint64(ip[2])<<8 | uint64(ip[3])
+		ones, _ := n.Mask.Size()
+		rs = append(rs, rng{lo, lo + 1<<(32-ones) - 1})
+	}
+	if len(rs) < 2 {
+		return false
+	}
+	sort.Slice(rs, func(i, j int) bool { return rs[i].lo < rs[j].lo })
+	var total uint64
+	cur := rs[0]
+	for _, r := range rs[1:] {
+		if r.lo <= cur.hi+1 {
+			if r.hi > cur.hi {
+				cur.hi = r.hi
+			}
+			continue
+		}
+		total += cur.hi - cur.lo + 1
+		cur = r
+	}
+	total += cur.hi - cur.lo + 1
+	return total >= 1<<28
+}
+
 // wideCIDR reports whether a CIDR covers the whole internet or a large
 // part of it: 0.0.0.0/0, or a split such as 0.0.0.0/1 and 128.0.0.0/1.
 func wideCIDR(c string) bool {
@@ -893,6 +966,13 @@ func wideCIDR(c string) bool {
 }
 
 // lookup reads a dotted path ("a.0.b") from planned values.
+// afterUnknownAt reports whether the attribute is not known until apply.
+func afterUnknownAt(rc *tfjson.ResourceChange, attr string) bool {
+	unk, _ := rc.Change.AfterUnknown.(map[string]any)
+	v, ok := lookup(unk, attr)
+	return ok && v == true
+}
+
 func lookup(m map[string]any, p string) (any, bool) {
 	if m == nil {
 		return nil, false

@@ -64,7 +64,7 @@ const quotedValue = `(?:"[^"\n]*"|'[^'\n]*')`
 
 // secretName matches names of settings, flags and variables that hold a
 // secret: db_pass, aws_secret_access_key, API_TOKEN, client-secret.
-const secretName = `[A-Za-z0-9_.-]*(?:pass|passwd|password|pwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|credentials?)[A-Za-z0-9_-]*`
+const secretName = `(?:[A-Za-z0-9_.-]*(?:passwd|password|passphrase|pwd|secret|token|api[_-]?key|private[_-]?key|access[_-]?key|credentials?)[A-Za-z0-9_-]*|(?:[A-Za-z0-9_.-]*[_.-])?pass(?:[_-][A-Za-z0-9_-]*)?)`
 
 // redaction is one pattern and what replaces a match; group 1, when
 // present, is kept (the name or flag before the value).
@@ -114,6 +114,13 @@ var secretPatterns = []redaction{
 	{regexp.MustCompile(`((?:\becho|\bprintf)\s+(?:-[ne]+\s+)?)(?:` + quotedValue + `|` + secretValue + `)(\s*\|\s*(?:docker\s+secret\s+create|gh\s+secret\s+set|kubectl\s+create\s+secret|vault\s|aws\s+ssm\s|aws\s+secretsmanager\s))`), true},
 	// vault kv put PATH k=v ... and vault write PATH k=v ...: every value.
 	{regexp.MustCompile(`(\bvault\s+(?:kv\s+(?:put|patch)|write)\b[^|;&\n]*?\s[A-Za-z0-9_.-]+=)(?:` + quotedValue + `|` + secretValue + `)`), true},
+	// SQL: ALTER USER bob PASSWORD 'x', CREATE USER ... IDENTIFIED BY 'x'.
+	{regexp.MustCompile(`(?i)(\b(?:password|identified\s+by)\s+)` + quotedValue), true},
+	// Tools whose password option is -P or -w: sqlcmd, ldapsearch, zip, unzip.
+	{regexp.MustCompile(`(\b(?:sqlcmd|ldapsearch|ldapadd|ldapmodify|zip|unzip)\b[^|;&\n]*?\s-[Pw]\s*)(?:` + quotedValue + `|` + secretValue + `)`), true},
+	// A JWT, and a SigV4 signature in a query string or header.
+	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`), false},
+	{regexp.MustCompile(`(?i)((?:X-Amz-)?Signature=)[0-9a-f]{16,}`), true},
 	// Cookie headers and Slack webhook URLs.
 	{regexp.MustCompile(`(?i)(\bcookie["']?\s*:\s*["']?)[^"'\n]+`), true},
 	{regexp.MustCompile(`https://hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]+`), false},
@@ -145,6 +152,46 @@ func Redact(s string) string {
 		}
 	}
 	return s
+}
+
+// RedactJSONCut redacts a JSON document's string values and the values of
+// keys that name a secret, as JSON, then cuts the text to max bytes. Redacting
+// the JSON text itself misses a value whose quotes are escaped inside a
+// string ("export P=\"x\"", a nested JSON body). A document that is not
+// JSON, or is large, is redacted as text.
+func RedactJSONCut(raw string, max int) string {
+	if len(raw) > 256<<10 {
+		return RedactCut(raw, max)
+	}
+	var v any
+	if json.Unmarshal([]byte(raw), &v) != nil {
+		return RedactCut(raw, max)
+	}
+	keyRe := regexp.MustCompile(`(?i)^` + secretName + `$`)
+	var walk func(x any, key string) any
+	walk = func(x any, key string) any {
+		switch t := x.(type) {
+		case string:
+			if key != "" && keyRe.MatchString(key) && t != "" {
+				return "[REDACTED]"
+			}
+			return Redact(t)
+		case []any:
+			for i := range t {
+				t[i] = walk(t[i], key)
+			}
+		case map[string]any:
+			for k, e := range t {
+				t[k] = walk(e, k)
+			}
+		}
+		return x
+	}
+	b, err := json.Marshal(walk(v, ""))
+	if err != nil {
+		return RedactCut(raw, max)
+	}
+	return RedactCut(string(b), max)
 }
 
 // maxField caps a text field of a log entry, and maxRedact the text one
@@ -217,6 +264,14 @@ func redactEntry(e *Entry) {
 	r := &redactor{left: maxRedact, done: map[string]string{}}
 	e.Command = r.field(e.Command)
 	e.Error = r.field(e.Error)
+	// A tool whose input names no path key has its text fields taken as
+	// paths, so a secret can sit in one; the working directory and session
+	// can carry one too.
+	e.Paths = append([]string(nil), e.Paths...)
+	for i := range e.Paths {
+		e.Paths[i] = r.field(e.Paths[i])
+	}
+	e.Cwd = r.field(e.Cwd)
 	for i := range e.Actions {
 		e.Actions[i].Command = r.field(e.Actions[i].Command)
 		e.Actions[i].Why = r.field(e.Actions[i].Why)

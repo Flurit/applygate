@@ -164,6 +164,21 @@ var credentialDir = regexp.MustCompile(`(^|/)(\.aws|\.ssh|\.kube|\.docker|\.azur
 // fileWriters are local-only programs that change files.
 var fileWriters = map[string]bool{"rm": true, "cp": true, "mv": true, "ln": true, "tee": true, "chmod": true, "touch": true, "mkdir": true, "tar": true, "unzip": true, "sed": true, "gzip": true, "gunzip": true, "zip": true}
 
+func init() {
+	// Every local program that is not a plain reader may write a file through
+	// an option or a second operand (uniq IN OUT, sort -o, gofmt -w, go build
+	// -o, cargo --target-dir, black, prettier --write): a path outside the
+	// working tree makes the call one the judge sees.
+	readOnly := set("ls", "cat", "head", "tail", "less", "more", "wc", "grep", "egrep", "fgrep", "rg", "ag", "fd", "tree", "pwd", "echo",
+		"printf", "true", "false", "test", "[", "which", "type", "file", "stat", "du", "df", "date", "jq", "cut", "tr", "diff", "cmp",
+		"basename", "dirname", "realpath", "readlink", "column", "nl", "comm", "paste", "sleep", "cd", "sha256sum", "shasum", "md5sum")
+	for n := range localOnly {
+		if !readOnly[n] {
+			fileWriters[n] = true
+		}
+	}
+}
+
 // textArgs are programs whose arguments are text, not paths.
 var textArgs = map[string]bool{"echo": true, "printf": true, "test": true, "[": true, "sleep": true, "date": true, "true": true, "false": true, "which": true, "type": true}
 
@@ -246,7 +261,11 @@ var execFlags = map[string][]string{
 	"rg":         {"--pre", "--pre-glob", "--hostname-bin"},
 	"actionlint": {"-shellcheck", "-pyflakes"},
 	"go":         {"-exec", "-toolexec", "--toolexec", "-vettool", "--exec"},
-	"git":        {"--upload-pack", "--receive-pack", "--exec", "--ext-diff", "--template", "-c", "--config", "-x", "--extcmd", "--tool"},
+	"git":        {"--upload-pack", "--receive-pack", "--exec", "--ext-diff", "--template", "-c", "--config", "-x", "--extcmd", "--tool", "--open-files-in-pager", "--tree-filter", "--index-filter", "--msg-filter", "--env-filter", "--commit-filter", "--tag-name-filter", "--parent-filter"},
+	"yq":         {"--security-enable-system-operator"},
+	"docker":     {"--output", "-o", "--push"},
+	"ag":         {"--pager"},
+	"pylint":     {"--init-hook", "--load-plugins"},
 	// cargo --config can set a runner or rustc wrapper; -Z unstable flags
 	// and the package managers' script shells run other programs.
 	"cargo": {"--config", "-Z"},
@@ -369,6 +388,9 @@ func runsProgram(name string, rest []string) bool {
 		// tar's short options cluster (-xIf, or the old style xIf first).
 		if name == "tar" && (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") || i == 0) && strings.ContainsAny(strings.TrimPrefix(a, "-"), "IF") {
 			return true
+		}
+		if name == "git" && len(a) > 2 && a[0] == '-' && a[1] != '-' && strings.ContainsAny(a[1:], "xO") && i > 0 && (rest[0] == "rebase" || rest[0] == "difftool" || rest[0] == "mergetool" || rest[0] == "grep") {
+			return true // -qx <cmd>, -yx <cmd>: the short option inside a cluster
 		}
 		if name == "git" && strings.HasPrefix(a, "-u") && !strings.HasPrefix(a, "--") && i > 0 && (rest[0] == "clone" || rest[0] == "fetch" || rest[0] == "pull" || rest[0] == "ls-remote" || rest[0] == "archive") {
 			return true // -u <upload-pack>
@@ -497,7 +519,7 @@ func safeInvocation(inv shell.Invocation, root string) bool {
 	switch name {
 	case "find":
 		for _, a := range rest {
-			if a == "-delete" || a == "-exec" || a == "-execdir" || a == "-ok" || a == "-okdir" {
+			if a == "-delete" || a == "-exec" || a == "-execdir" || a == "-ok" || a == "-okdir" || a == "-fprint" || a == "-fprint0" || a == "-fprintf" || a == "-fls" {
 				return false
 			}
 		}
