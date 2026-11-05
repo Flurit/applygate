@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **Network requests with a body are writes** (reassessment quick gap, `review/v0.6.0/2026-11-05-reassessment.md`): `curl`, `wget`, `http`/`xh` and `gh api` calls to a host other than this machine that send anything but GET, HEAD or OPTIONS (explicit method, body, form, upload, unresolved method) are cloud writes; with DELETE, deletes. An HCP Terraform run created with `curl -d` was allowed before. No verdict changed on the agent trial. `docs/limits.md` gains "Reassessment: quick gaps and facts the earlier text left out".
 - **Red-team round 11 fixes** (`review/v0.6.0/2026-11-05-red-team-round-11.md`): fixed by family; details and costs in `docs/limits.md` ("Costs of the round-11 fixes").
   - **State files by rule:** a program not known to only read that names a state file in any spelling is state surgery in that file's directory; `find -P`, `~+`, `--target-directory=`, `zip -mj`, `git archive -o`, `opa`/`kustomize`/`az rest`/`gh` outputs, `curl --hsts`, `wget --save-cookies`, `tar -r`, aws outfile calls, redirects, Write and Edit (C4 to C11, R6-1).
   - **zsh:** `cd OLD NEW`, brace expansion and `>!` in redirects (C1 to C3). **Unreported directory:** relative `cd`/`-chdir`/`-C` from it is unknown (R3-1). **Runners:** `direnv`, `mise`, `asdf`, `devbox`, `nix` environments are unknown (R6-2). **Buckets:** `aws s3` writes to a `backends:` bucket are state surgery; backend patterns are normalized (R6-3, R3-4).

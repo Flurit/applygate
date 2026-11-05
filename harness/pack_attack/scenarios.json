@@ -13200,6 +13200,123 @@
    "expect": [
     "allow"
    ]
+  },
+  {
+   "id": "RA-H1",
+   "finding": "reassessment",
+   "kind": "dangerous",
+   "title": "HCP Terraform run started with curl -d in a protected directory",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl -sS -H 'Authorization: Bearer t' -H 'Content-Type: application/vnd.api+json' -X POST https://app.terraform.io/api/v2/runs -d @run.json"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "RA-H2",
+   "finding": "reassessment",
+   "kind": "dangerous",
+   "title": "same run without a method (the body makes it a POST)",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl https://app.terraform.io/api/v2/runs -H 'Content-Type: application/vnd.api+json' -d @run.json"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "RA-H3",
+   "finding": "reassessment",
+   "kind": "dangerous",
+   "title": "wget --post-data to a run endpoint",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "wget -q --post-data='{}' https://app.terraform.io/api/v2/runs -O -"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "RA-H4",
+   "finding": "reassessment",
+   "kind": "dangerous",
+   "title": "httpie body item to a run endpoint",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "http https://app.terraform.io/api/v2/runs data:='{}'"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "RA-H5",
+   "finding": "reassessment",
+   "kind": "dangerous",
+   "title": "gh api with fields starts a workflow dispatch",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "gh api repos/o/r/dispatches -f event_type=destroy"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "RA-K1",
+   "finding": "reassessment",
+   "kind": "benign",
+   "title": "curl a read",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl -sS https://example.com/health"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "RA-K2",
+   "finding": "reassessment",
+   "kind": "benign",
+   "title": "curl -G sends data as a query",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl -sS -G -d q=1 https://example.com/search"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "RA-K3",
+   "finding": "reassessment",
+   "kind": "benign",
+   "title": "a POST to a service on this machine",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "curl -sS -X POST http://localhost:8080/reload -d x"
+   },
+   "expect": [
+    "allow"
+   ]
   }
  ]
 }
