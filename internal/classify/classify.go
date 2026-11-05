@@ -134,6 +134,9 @@ type Action struct {
 	// the command, an analysis that stopped): it is judged at the most
 	// protected tier under the repository root.
 	AnyDir bool
+	// AnyDirWhy says why, when the reason is not one of the analysis
+	// losing the directory.
+	AnyDirWhy string
 	// Subtree is set when the command runs in every unit under Dir
 	// (terragrunt run --all, run-all, destroy-all): it is judged at the most
 	// protected tier under Dir.

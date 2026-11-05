@@ -693,6 +693,9 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		if a.Dir != "" {
 			why = "the analysis of this command stopped early, so what it did not see may run in any directory"
 		}
+		if a.AnyDirWhy != "" {
+			why = a.AnyDirWhy
+		}
 		res = cfg.ResolveUnder(rootOf(cfg, ev), sig, why)
 	case dirKnown || a.Dir == "" || a.Class == classify.ComplexShape:
 		// Strict shapes is judged where the command is known to run: on a
@@ -1332,24 +1335,27 @@ func isTerraform(engine string) bool {
 // that directory's tier: ask in protected, allow elsewhere. A part the
 // analysis lost is judged by the command's own actions.
 func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action) []classify.Action {
-	ok, why := shell.PlainShape(ev.Command, res)
+	ok, why, unseen := shell.PlainShapeUnseen(ev.Command, res)
 	if ok {
 		// The provider, lock-file and data-source checks read the disk
 		// before the command runs; a step that rewrites what they read
 		// comes first.
 		for _, a := range acts {
 			if isTerraform(a.Engine) && (a.InstalledEarlier || a.InitEarlier && !preflight.InitSafe(ctxOf(deps), a.Dir)) && startsProviders(a.Sub, nil) {
-				ok, why = false, "an earlier step installs providers or modules in "+a.Dir+" that "+a.Engine+" then runs, from somewhere the committed lock file does not vouch for"
+				why = "an earlier step installs providers or modules in " + a.Dir + " that " + a.Engine + " then runs, from somewhere the committed lock file does not vouch for"
+				ok, unseen = false, why
 				break
 			}
 			if isTerraform(a.Engine) && (a.ConfigWritten || a.DataDirWritten) && startsProviders(a.Sub, nil) {
-				ok, why = false, "an earlier step writes the configuration or .terraform in "+a.Dir+" that "+a.Engine+" then reads"
+				why = "an earlier step writes the configuration or .terraform in " + a.Dir + " that " + a.Engine + " then reads"
+				ok, unseen = false, why
 				break
 			}
 			if isTerraform(a.Engine) && ev.Persistent && startsProviders(a.Sub, nil) {
 				// The provider check needs the directory, which a shell that
 				// keeps running between calls may have left.
-				ok, why = false, a.Engine+" typed into a shell that keeps running between calls, whose directory the hook cannot follow"
+				why = a.Engine + " typed into a shell that keeps running between calls, whose directory the hook cannot follow"
+				ok, unseen = false, why
 				break
 			}
 		}
@@ -1362,6 +1368,7 @@ func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action
 		if why = engineState(ctx, res, deps.Env); why == "" {
 			return nil
 		}
+		unseen = why
 	}
 	dirs := map[string]bool{ev.Cwd: true}
 	for _, inv := range res.Invocations {
@@ -1375,6 +1382,15 @@ func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action
 			Why: "strict shapes: the command is not a plain list or pipeline of known programs (" + why + ")"})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Dir < out[j].Dir })
+	// A command that can run code the analysis does not see (a program with
+	// no shape, python3, perl -e, awk, a name or part it could not resolve)
+	// can reach any directory, a cd or -chdir to a protected sibling
+	// included: it is judged at the most protected tier under the root too.
+	if unseen != "" {
+		out = append(out, classify.Action{Class: classify.ComplexShape, Engine: "shell", Command: ev.Command, AnyDir: true,
+			AnyDirWhy: "the command is not plain and can run code the analysis does not follow (" + unseen + "), which can reach any directory under the root",
+			Why:       "strict shapes: the command is not a plain list or pipeline of known programs (" + why + ")"})
+	}
 	// A command run over every unit under a directory (terragrunt
 	// --all) runs what each unit's configuration names: the shape is
 	// judged at the most protected unit's tier too.

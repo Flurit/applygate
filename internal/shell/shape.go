@@ -19,25 +19,53 @@ import (
 // measured (review/v0.6.0/2026-11-03-strict-shapes.md, variant B) to ask
 // about far fewer real agent calls for no extra catch.
 func PlainShape(cmd string, res *Result) (ok bool, why string) {
+	ok, why, _ = PlainShapeUnseen(cmd, res)
+	return ok, why
+}
+
+// PlainShapeUnseen is PlainShape that also reports whether what is not plain
+// can run code the analysis does not see: a program with no shape, a program
+// named by a path or not resolved, a part the analysis could not resolve, a
+// variable a program reads, git state, a command that does not parse. A
+// command that is not plain only in its syntax (a loop, a function, a
+// substitution, a test) is followed by the analysis, so each program in it is
+// judged where it runs. unseen is the first reason code may run unseen, empty
+// when none does.
+func PlainShapeUnseen(cmd string, res *Result) (ok bool, why string, unseen string) {
 	if nestingDepth(cmd) > maxNesting {
-		return false, "nesting deeper than the analyzer parses"
+		return false, "nesting deeper than the analyzer parses", "nesting deeper than the analyzer parses"
 	}
 	if chainLength(cmd) > maxChain {
-		return false, "a chain of more than " + strconv.Itoa(maxChain) + " commands or operands"
+		r := "a chain of more than " + strconv.Itoa(maxChain) + " commands or operands"
+		return false, r, r
 	}
 	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(cmd), "")
 	if err != nil {
-		return false, "it does not parse"
+		return false, "it does not parse", "it does not parse"
+	}
+	// set records the first reason a command is not plain, and whether any
+	// reason leaves code unseen. The walk goes on past a syntax-only reason,
+	// since the programs inside a loop or a function can run unseen code too.
+	set := func(r string, hidden bool) {
+		if r == "" {
+			return
+		}
+		if why == "" {
+			why = r
+		}
+		if hidden && unseen == "" {
+			unseen = r
+		}
 	}
 	bare := map[*syntax.Assign]bool{} // assignments with no command
 	syntax.Walk(f, func(n syntax.Node) bool {
-		if why != "" || n == nil {
-			return why == ""
+		if n == nil {
+			return true
 		}
 		switch x := n.(type) {
 		case *syntax.File, *syntax.Word, *syntax.Lit, *syntax.SglQuoted, *syntax.DblQuoted, *syntax.Redirect, *syntax.Comment:
 			if q, ok := x.(*syntax.SglQuoted); ok && q.Dollar {
-				why = "a $'...' string"
+				set("a $'...' string", false)
 			}
 		case *syntax.Assign:
 			// A variable set for a command, or in the shell, which an
@@ -50,11 +78,11 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 				break
 			}
 			if x.Name == nil || x.Append || x.Array != nil || x.Index != nil {
-				why = "an array or appended variable"
+				set("an array or appended variable", true)
 			} else if !lit {
-				why = "the variable " + x.Name.Value + " set to a value that cannot be resolved"
+				set("the variable "+x.Name.Value+" set to a value that cannot be resolved", true)
 			} else {
-				why = plainEnvVar(x.Name.Value, v, true)
+				set(plainEnvVar(x.Name.Value, v, true), true)
 			}
 		case *syntax.CallExpr:
 			if len(x.Args) == 0 {
@@ -67,7 +95,7 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 				if n, ok := litWord(x.Args[0]); ok && n == "hash" {
 					for _, w := range x.Args[1:] {
 						if t, ok := litWord(w); !ok || t == "-p" || t == "-d" || strings.Contains(t, "=") {
-							why = "hash binding a name to a program"
+							set("hash binding a name to a program", true)
 						}
 					}
 				}
@@ -76,9 +104,7 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 			// are given text read at run time: an upper-case name (one a
 			// program may read, PATH and HOME included) or a zsh special
 			// array is not plain, as NAME=$(...) is not.
-			if why == "" {
-				why = runtimeAssign(x.Args)
-			}
+			set(runtimeAssign(x.Args), true)
 			// env NAME=value: the same rule as an assignment.
 			if len(x.Args) > 0 {
 				if n, ok := litWord(x.Args[0]); ok && ProgName(n) == "env" {
@@ -89,41 +115,45 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 							continue
 						}
 						if !ok {
-							why = "the variable " + k + " set to a value that cannot be resolved"
-						} else if why = plainEnvVar(k, v, true); why != "" {
-							break
+							set("the variable "+k+" set to a value that cannot be resolved", true)
+						} else {
+							set(plainEnvVar(k, v, true), true)
 						}
 					}
 				}
 			}
 		case *syntax.Stmt:
 			if x.Background || x.Coprocess || x.Negated {
-				why = "a background or negated statement"
+				set("a background or negated statement", false)
 			}
 		case *syntax.BinaryCmd:
 			if x.Op != syntax.AndStmt && x.Op != syntax.OrStmt && x.Op != syntax.Pipe {
-				why = "the operator " + x.Op.String()
+				set("the operator "+x.Op.String(), false)
 			}
 		case *syntax.ParamExp:
 			if x.Param == nil || x.Exp != nil || x.Repl != nil || x.Slice != nil || x.Index != nil || x.Length || x.Excl {
-				why = "a parameter expansion"
+				set("a parameter expansion", false)
 			}
 		default:
-			why = describe(n)
+			r, known := describe(n)
+			set(r, !known)
 		}
-		return why == ""
+		return true
 	})
-	if why != "" {
-		return false, why
-	}
 	if len(res.Problems) > 0 {
-		return false, "a part the analyzer cannot resolve (" + res.Problems[0].Reason + ")"
+		set("a part the analyzer cannot resolve ("+res.Problems[0].Reason+")", true)
 	}
 	// writesGit is set once a step can have written git state without
 	// naming it (a new repository, an extracted archive, a recursive
 	// copy): git's state is read before the command runs, so a later git
 	// command would run what that step put there.
 	writesGit := false
+	followed := map[string]bool{}
+	for _, inv := range res.Invocations {
+		for _, v := range inv.Via {
+			followed[viaProgram(v)] = true
+		}
+	}
 	for _, inv := range res.Invocations {
 		if len(inv.Args) == 0 {
 			continue // a bare redirection
@@ -133,17 +163,24 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 		// ran, a make recipe's included.
 		for _, v := range inv.Via {
 			if n := viaProgram(v); !hasShape(n) {
-				return false, "the program " + n
+				// A wrapper the analysis followed (xargs, make, docker, an
+				// alias, bash -c with literal text) runs what it expands to,
+				// which is judged on its own; what it could not follow is a
+				// problem, not a wrapper.
+				set("the program "+n, false)
 			}
 		}
 		if !inv.Args[0].Resolved {
-			return false, "a program name that cannot be resolved"
+			set("a program name that cannot be resolved", true)
+			continue
 		}
-		if why := shapeOf(inv); why != "" {
-			return false, why
-		}
+		// A program the analysis took apart (make with its recipes, docker run
+		// with the image's command, pnpm exec, xargs) is followed: what it
+		// runs is judged as invocations of their own. One it could not (a
+		// nested agent, python3, a name no shape knows) can run anything.
+		set(shapeOf(inv), !followed[ProgName(inv.Args[0].Text)])
 		if n := ProgName(inv.Args[0].Text); n == "git" && writesGit {
-			return false, "git after an earlier step that can write git state"
+			set("git after an earlier step that can write git state", true)
 		} else if writesGitState(n, inv.Args[1:], inv.Dir) {
 			writesGit = true
 		}
@@ -155,11 +192,11 @@ func PlainShape(cmd string, res *Result) (ok bool, why string) {
 		}
 		for _, w := range words {
 			if gitStatePath(optText(w)) {
-				return false, "a path in a git directory's hooks or config"
+				set("a path in a git directory's hooks or config", true)
 			}
 		}
 	}
-	return true, ""
+	return why == "", why, unseen
 }
 
 // viaProgram is the program in an Invocation.Via label: "bash -c",
@@ -174,28 +211,34 @@ func viaProgram(v string) string {
 	return ""
 }
 
-func describe(n syntax.Node) string {
+// describe names a syntax node plain commands do not have, and says whether
+// it is one the analysis follows (known) rather than a node type it has no
+// name for.
+func describe(n syntax.Node) (string, bool) {
 	switch n.(type) {
 	case *syntax.FuncDecl:
-		return "a function"
+		return "a function", true
 	case *syntax.CmdSubst:
-		return "a command substitution"
+		return "a command substitution", true
 	case *syntax.ProcSubst:
-		return "a process substitution"
+		return "a process substitution", true
 	case *syntax.ArithmExp, *syntax.ArithmCmd, *syntax.LetClause:
-		return "arithmetic"
+		return "arithmetic", true
 	case *syntax.Subshell, *syntax.Block:
-		return "a subshell or block"
+		return "a subshell or block", true
 	case *syntax.IfClause, *syntax.WhileClause, *syntax.ForClause, *syntax.CaseClause:
-		return "a loop or conditional"
+		return "a loop or conditional", true
 	case *syntax.DeclClause:
-		return "a declaration"
+		return "a declaration", true
 	case *syntax.TestClause:
-		return "a [[ ]] test"
+		return "a [[ ]] test", true
 	case *syntax.ExtGlob, *syntax.BraceExp:
-		return "an extended glob or brace expansion"
+		return "an extended glob or brace expansion", true
+	case *syntax.WordIter, *syntax.CStyleLoop, *syntax.CaseItem, *syntax.ArrayExpr, *syntax.ArrayElem, *syntax.TimeClause, *syntax.CoprocClause,
+		*syntax.BinaryArithm, *syntax.UnaryArithm, *syntax.ParenArithm, *syntax.BinaryTest, *syntax.UnaryTest, *syntax.ParenTest:
+		return strings.TrimPrefix(fmt.Sprintf("%T", n), "*syntax."), true
 	}
-	return strings.TrimPrefix(fmt.Sprintf("%T", n), "*syntax.")
+	return strings.TrimPrefix(fmt.Sprintf("%T", n), "*syntax."), false
 }
 
 // writesGitState reports whether a step can create or change a git
