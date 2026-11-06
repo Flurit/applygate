@@ -328,3 +328,18 @@ func TestUnknownWrapperBackstop(t *testing.T) {
 		t.Errorf("AWS_PROFILE not set: %+v", r.Invocations)
 	}
 }
+
+// A here-document body is not a word: a quoted body keeps its backslashes, and
+// a bare one drops them only before $, a backquote, a backslash and a newline.
+// The quote-escape idiom of a nested sh -c in a here-document must reach the
+// analysis as the shell sees it (found by the effects oracle).
+func TestHeredocKeepsBackslashes(t *testing.T) {
+	inner := `sh -c 'sh -c '\''X=1 terraform destroy -auto-approve'\'''`
+	for _, delim := range []string{"'EOF'", `"EOF"`, `\EOF`, "EOF"} {
+		r := Analyze("bash <<"+delim+"\n"+inner+"\nEOF", Options{Dir: "/r", ReadFile: fakeFS(nil)})
+		got := strings.Join(render(r), "\n")
+		if !strings.Contains(got, "terraform destroy -auto-approve") {
+			t.Errorf("delimiter %s: the nested destroy was not found: %q", delim, got)
+		}
+	}
+}

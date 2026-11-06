@@ -38,6 +38,20 @@ jobs:
           "$(go env GOPATH)/bin/govulncheck" ./...
       - name: test
         run: go test -race -count=1 -timeout 25m ./...
+        env:
+          APPLYGATE_ORACLE: separate # the effects oracle has its own step below
+      - name: effects oracle (gate; runs allowed commands under every shell here against fake tools)
+        shell: bash # with pipefail, so a failing test fails the step through tee
+        run: go test -count=1 -timeout 25m -v -run TestEffectsOracle ./harness 2>&1 | tee oracle.log
+        env:
+          APPLYGATE_ORACLE: required # a skip fails: it must run on both runners
+      - name: effects oracle summary
+        if: always()
+        run: |
+          {
+            echo "### Effects oracle"
+            grep -E 'oracle seed|oracle: |no zsh|FAIL|allowed from' oracle.log | sed 's/^ *//; s/^/- /' || true
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: decision latency (normal build, 50 ms p95)
         run: go test -count=1 -v -run TestCommandLatency ./harness
       - name: build
