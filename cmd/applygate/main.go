@@ -63,6 +63,8 @@ Usage:
   applygate hook install|remove --agent AGENT [--scope project|user]
                                       install defaults to project scope; remove cleans both scopes
   applygate doctor                     check config, hooks, launch directory and versions (exit 1 on a problem)
+  applygate doctor --boundary [--require L1|L2|L3]
+                                       the assurance level this machine reaches: managed install, audited credentials, host sandbox (exit 1 below the required level)
   applygate doctor --creds             ask AWS and the clusters whether the credentials here can change production without MFA (exit 1 if so)
   applygate hosts [--markdown]         what each agent host can do with the hook (same table as docs/hosts.md)
   applygate telemetry status|on|off|send
@@ -110,6 +112,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "doctor":
 		if len(args) > 1 && args[1] == "--creds" {
 			return cmdDoctorCreds(stdout, stderr)
+		}
+		if len(args) > 1 && args[1] == "--boundary" {
+			return cmdDoctorBoundary(args[2:], stdout, stderr)
 		}
 		return cmdDoctor(stdout, stderr)
 	case "telemetry":
@@ -959,6 +964,13 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 	}
 	if cfg != nil {
 		doctorJudge(cfg, say, stdout)
+		if cfg.Boundary.Require != "" {
+			if levelNum(cfg.Boundary.Require) < 0 {
+				say(false, "boundary.require %q is not one of L0, L1, L2, L3", cfg.Boundary.Require)
+			} else {
+				fmt.Fprintf(stdout, "     boundary: %s required; run applygate doctor --boundary to check it (docs/boundary.md)\n", strings.ToUpper(cfg.Boundary.Require))
+			}
+		}
 	}
 	if st := telemetry.Effective(hook.EnvMap()); st.On {
 		fmt.Fprintf(stdout, "     telemetry on: anonymous counts to %s at most once a day (applygate telemetry status)\n", st.Endpoint)

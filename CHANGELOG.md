@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (boundary contract)
+
+- **`applygate doctor --boundary [--require L1|L2|L3]`** reports an assurance level L0 to L3: managed exclusive install, audited credentials, host sandbox in managed settings plus attested CI apply and state guards. `boundary.require` and `boundary.attest` are user or system config only. Docs: `docs/boundary.md`.
+- **`doctor --creds` and `--boundary` ask about three state-bucket actions** (`s3:DeleteObjectVersion`, `s3:PutBucketVersioning`, `s3:DeleteBucketPolicy`): 19 actions, up from 16.
+- **README promise restated:** applygate is a pre-execution reviewer that allows only recognized commands in protected tiers, not a guarantee that a command is never allowed; the guarantee comes from the boundary. "Parses the way the shell does" now says bash, with other shells in part; the 17 / 17 comparison is labelled as our own scenario set.
+
 ## Unreleased
 
 - **Allow-list, stages 3 to 5** (`review/v0.6.0/2026-11-05-allow-list-plan.md`): positive grammars for redirects and `cd`; `terraform`, `tofu`, `aws`, `az`, `gcloud`, `kubectl`, `helm` and `vault` plain only for listed subcommands and options; and an effects oracle (`harness/oracle_test.go`) that runs what the guard allows under bash, zsh, dash and sh against fake tools. **The oracle found a bypass on its first run:** from a dev directory, `cd ../pro* && echo '{}' > .claude/settings.json` was allowed and rewrote the prod hook settings; fixed. The attack pack gains 21 scenarios (849). Not done (writer tables, `git` option lists, `docker`/`gh` and others): `docs/limits.md` ("Allow-list, stages 3 to 5").
