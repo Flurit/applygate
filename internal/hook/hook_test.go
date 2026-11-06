@@ -130,7 +130,10 @@ func TestFailureBehavior(t *testing.T) {
 		// under the repository root.
 		{"panic in disposable tier blocks when the root holds prod (auto)", "enforce", "auto", "dev", "", boom, "block(exit2)"},
 		{"panic with on_error block blocks in dev", "enforce", "block", "dev", "", boom, "block(exit2)"},
-		{"panic with on_error allow allows in prod", "enforce", "allow", "prod", "", boom, "allow"},
+		// A recovered panic is a failure of the analysis, not a configured
+		// error: on_error: allow does not open a protected tier to it.
+		{"panic with on_error allow blocks in prod", "enforce", "allow", "prod", "", boom, "block(exit2)"},
+		{"panic with on_error allow allows in dev only where the root holds no protected tier", "enforce", "allow", "dev", "", boom, "block(exit2)"},
 		{"timeout in protected tier blocks", "enforce", "auto", "prod", "", slow, "block(exit2)"},
 		{"observe mode never blocks on error", "observe", "auto", "prod", "", boom, "allow"},
 		{"other hook events are ignored", "enforce", "auto", "prod", `{"hook_event_name":"PostToolUse","tool_name":"Bash"}`, nil, "allow"},

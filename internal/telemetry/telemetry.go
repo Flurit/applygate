@@ -353,12 +353,21 @@ func Flush(ctx context.Context, logPath, version string, env map[string]string, 
 	return Result{Sent: true, Payload: p}, Save(s)
 }
 
+// PanicHook is called at named points; a test sets it to inject a panic. It
+// is nil in the binary.
+var PanicHook func(site string)
+
 // AfterDecision is what the hook calls once its verdict is written. It is
 // cheap when telemetry is off (one small file read) and never panics or
 // returns an error: a decision has been made and nothing here may change
 // it.
 func AfterDecision(logPath, version string, env map[string]string, deadline time.Time) {
+	// A panic here must not change the verdict, which is already out, nor
+	// crash the process into a different exit code: it is dropped.
 	defer func() { _ = recover() }()
+	if h := PanicHook; h != nil {
+		h("after-decision")
+	}
 	st := Effective(env)
 	if !st.On || time.Since(st.LastAttempt) < MinInterval {
 		return
