@@ -1568,35 +1568,9 @@ func writeTargets(name string, args []shell.Word, dir, home string) []string {
 	return out
 }
 
-// outputOpts are the options by which a program writes a file other than
-// the ones it reads: its report, its dump, its output. The value is the
-// next word or follows "=". A program not listed here may have such an
-// option too; ask for those is the judge's and strict shapes' job.
-// tfOut are the options by which terraform and tofu write a file: a plan
-// over a state file replaces it.
-var tfOut = []string{"-out", "--out", "-generate-config-out", "-state-out", "-backup"}
-
-var outputOpts = map[string][]string{
-	"curl":           {"-o", "--output", "-D", "--dump-header", "-c", "--cookie-jar", "--trace", "--trace-ascii", "--stderr", "--libcurl"},
-	"wget":           {"-O", "--output-document", "-o", "--output-file", "-a", "--append-output"},
-	"tree":           {"-o", "--output"},
-	"tfsec":          {"--out", "-O", "--output-file"},
-	"terraform-docs": {"--output-file"},
-	"trivy":          {"-o", "--output"},
-	"checkov":        {"--output-file-path"},
-	"tflint":         {"--out", "--output-file"},
-	"infracost":      {"--out-file"},
-	"go":             {"-o", "-outputdir", "-modfile", "-overlay", "-coverprofile", "-cpuprofile", "-memprofile", "-trace"},
-	"gofmt":          {},
-	"git":            {"--output"},
-	"find":           {"-fprint", "-fprint0", "-fprintf", "-fls"},
-	"terraform":      tfOut, "tofu": tfOut, "terragrunt": tfOut,
-	"fd": {},
-}
-
 // outputTargets returns the files a program's output options name.
 func outputTargets(name string, args []shell.Word, abs func(string) string) []string {
-	opts := outputOpts[name]
+	opts := shell.OutputOpts(name)
 	if len(opts) == 0 && name != "git" {
 		return nil
 	}
@@ -2567,7 +2541,7 @@ func ModelledProgram(name string) bool {
 var versionSuffix = regexp.MustCompile(`[-_]?v?[0-9][0-9.]*$`)
 
 // stateReaders are programs that only read the files they are given (their
-// options that write one are in outputOpts); naming a state file to them is
+// options that write one are in shell.OutputOpts); naming a state file to them is
 // fine. sed and awk are here for a file named as a word of its own, not for
 // one named inside their script.
 var stateReaders = map[string]bool{
