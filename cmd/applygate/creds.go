@@ -60,7 +60,10 @@ var credsTimeout = 20 * time.Second
 var destructiveActions = []string{"ec2:TerminateInstances", "ec2:DeleteVpc", "rds:DeleteDBInstance", "rds:DeleteDBCluster",
 	"s3:DeleteBucket", "s3:PutBucketPolicy", "dynamodb:DeleteTable", "eks:DeleteCluster", "lambda:DeleteFunction",
 	"cloudformation:DeleteStack", "kms:ScheduleKeyDeletion", "iam:CreateUser", "iam:AttachRolePolicy", "iam:PutRolePolicy",
-	"iam:CreateAccessKey", "sts:AssumeRole"}
+	"iam:CreateAccessKey", "sts:AssumeRole",
+	// The remote state: deleting a version, turning versioning off or
+	// rewriting the bucket policy is how state is lost or opened.
+	"s3:DeleteObjectVersion", "s3:PutBucketVersioning", "s3:DeleteBucketPolicy"}
 
 // kubeVerbs are what the audit asks each kube context about.
 var kubeVerbs = [][]string{{"delete", "namespaces"}, {"delete", "deployments"}, {"create", "clusterrolebindings"}, {"delete", "persistentvolumeclaims"}}

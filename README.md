@@ -1,12 +1,12 @@
 # applygate
 
-**Stop coding agents from running `terraform destroy` in production.**
+**A pre-execution reviewer that stops coding agents from running `terraform destroy` in production, and tells you what must hold when it is wrong.**
 
 [![Release](https://img.shields.io/github/v/release/Flurit/applygate)](https://github.com/Flurit/applygate/releases)
 [![CI](https://github.com/Flurit/applygate/actions/workflows/ci.yml/badge.svg)](https://github.com/Flurit/applygate/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/Flurit/applygate)](LICENSE)
 
-applygate checks every command a coding agent is about to run against your Terraform or OpenTofu infrastructure and answers **allow**, **ask** or **block**, with a reason the agent can act on. It runs locally as the agent's pre-tool-call hook. By default no model is involved in the decision and nothing leaves your machine; an opt-in [model judge](docs/judge.md) can add a prompt for calls the rules do not recognize, never remove one.
+applygate checks every command a coding agent is about to run against your Terraform or OpenTofu infrastructure and answers **allow**, **ask** or **block**, with a reason the agent can act on. In a protected environment it allows only commands it recognizes in a narrow, fully understood form and asks or blocks everything else. That catches mistakes and most injected instructions; a determined agent holding your credentials can still do damage. The protection that holds whatever the hook misses comes from boundaries it cannot enforce but can check: a root-owned install, credentials with no write path, a host sandbox and a gated apply. `applygate doctor --boundary` verifies them and reports an [assurance level](docs/boundary.md). It runs locally as the agent's pre-tool-call hook. By default no model is involved in the decision and nothing leaves your machine; an opt-in [model judge](docs/judge.md) can add a prompt for calls the rules do not recognize, never remove one.
 
 <p align="center">
   <img src="docs/assets/demo.svg" alt="applygate blocking terraform destroy in prod, also when it is hidden in base64, while allowing a commit message that mentions it" width="820">
@@ -29,11 +29,11 @@ applygate is pre-1.0. See [what has been verified](docs/project/ACCEPTANCE.md).
 
 Pattern matching reads text. applygate reads commands and plans:
 
-- **It parses commands the way the shell does.** It follows `cd`, variables, functions, `bash -c`, `eval`, `sudo`, `xargs`, git aliases and `ssh -o ProxyCommand`, interpreter options, Makefiles, scripts and base64-decoded payloads. `grep "terraform destroy"` is still just a grep. What it cannot reproduce exactly gets an **ask** in protected environments rather than a guess: a script fetched with `curl | sh`, a glob in a program name, a file written earlier in the same command. A program it does not know that wraps `aws` or `kubectl` (a team's own runner) is not seen through unless you list it under `wrappers:` ([limits](docs/limits.md)).
+- **It parses commands the way bash does, and the other shells only in part.** It follows `cd`, variables, functions, `bash -c`, `eval`, `sudo`, `xargs`, git aliases and `ssh -o ProxyCommand`, interpreter options, Makefiles, scripts and base64-decoded payloads. `grep "terraform destroy"` is still just a grep. What it cannot reproduce exactly gets an **ask** in protected environments rather than a guess: a script fetched with `curl | sh`, a glob in a program name, a file written earlier in the same command. A program it does not know that wraps `aws` or `kubectl` (a team's own runner) is not seen through unless you list it under `wrappers:` ([limits](docs/limits.md)).
 - **It knows which environment a command targets.** Directory, workspace, backend, AWS profile, Kubernetes context, GCP project and Azure subscription map to a tier: protected, standard or disposable. Unknown environments count as protected. It also catches a planfile made in another workspace, a backend changed since `init`, stale state and lock-file drift.
 - **It reads the plan before an apply.** For `apply <planfile>` it checks what will happen: stateful resources destroyed or replaced, deletion protection removed, resources exposed to the internet, IAM wildcards, changes to the state backend.
 
-On the same 17 dangerous Terraform scenarios:
+On the same 17 dangerous Terraform scenarios (our own scenario set and a comparison we chose, so read it as a demonstration, not a measure of coverage):
 
 | Guard | Caught |
 |---|---|
@@ -43,7 +43,7 @@ On the same 17 dangerous Terraform scenarios:
 
 The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 849 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
 
-applygate is a check, not a sandbox. Pair it with plan-only credentials for agents and writes behind MFA, which `applygate doctor --creds` checks ([docs/credentials.md](docs/credentials.md)); see [the threat model](docs/threat-model.md). Its self-protection, which stops an agent from turning it off, is a guarantee only under a managed install (`sudo applygate install --managed`, [docs/managed.md](docs/managed.md)); without one it is best-effort.
+applygate is a check, not a sandbox, and a parser cannot promise that a command is never allowed. What holds without it is plan-only credentials for agents and writes behind MFA, a versioned, locked state bucket, a host sandbox and a reviewed apply path. `applygate doctor --boundary` checks the ones it can and reports an assurance level L0 to L3; `doctor --creds` is the credential part ([docs/boundary.md](docs/boundary.md), [docs/credentials.md](docs/credentials.md), [the threat model](docs/threat-model.md)). Its self-protection, which stops an agent from turning it off, is a guarantee only under a managed install (`sudo applygate install --managed`, [docs/managed.md](docs/managed.md)); without one it is best-effort.
 
 ## What it decides
 
@@ -116,6 +116,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 | `applygate plan-check plan.json` | Judge `terraform show -json` output |
 | `applygate report` / `suggest` | Summarize the decision log / propose a config from it |
 | `applygate doctor` | Check config, hooks and versions |
+| `applygate doctor --boundary [--require L2]` | The assurance level this machine reaches (managed install, audited credentials, host sandbox), exit 1 below the level you require ([docs/boundary.md](docs/boundary.md)) |
 | `applygate doctor --creds` | Ask AWS and the clusters whether the credentials here can change production without MFA ([docs/credentials.md](docs/credentials.md)) |
 | `applygate hook install\|remove --agent NAME` | Manage one agent's hook |
 | `applygate hosts` | What each agent supports |

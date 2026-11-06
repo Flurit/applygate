@@ -57,6 +57,20 @@ const (
 	UnknownDirSessionRoot   = "session_root"
 )
 
+// Boundary is the user's statement about the controls applygate cannot
+// verify, and the assurance level doctor must find (docs/boundary.md).
+type Boundary struct {
+	// Require is the lowest acceptable level, L0 to L3; `applygate doctor
+	// --boundary` exits 1 below it.
+	Require string `yaml:"require"`
+	// Attest lists controls the person vouches for: ci_apply (applies run
+	// in a reviewed pipeline), state_guards (versioned, object-locked state
+	// with a deny policy), oidc_pinned (the apply role's trust is pinned to
+	// an environment) and branch_protection. applygate reports them as
+	// attested, never as verified.
+	Attest []string `yaml:"attest"`
+}
+
 // Config is the merged configuration.
 type Config struct {
 	Version     int    `yaml:"version"`
@@ -87,6 +101,11 @@ type Config struct {
 	// configure it, because the call leaves the machine. A repository config
 	// may turn it off.
 	Judge Judge `yaml:"judge"`
+	// Boundary is what the person says about the controls around applygate
+	// and the assurance level `applygate doctor --boundary` must reach. Only
+	// the user or system config may set it: an agent must not be able to
+	// lower the requirement or attest to a control that is not there.
+	Boundary Boundary `yaml:"boundary"`
 
 	Environments   []Environment `yaml:"environments"`
 	PlanGate       PlanGate      `yaml:"plan_gate"`
@@ -707,6 +726,16 @@ func mergeBytes(cfg *Config, path string, b []byte, l layer) error {
 			cfg.Approvals = c.Approvals
 		} else {
 			ignored("approvals: true")
+		}
+	}
+	if !reflect.DeepEqual(c.Boundary, Boundary{}) {
+		switch {
+		case l == layerUserManaged:
+			ignored("boundary (under a managed install it comes from the system config)")
+		case repo:
+			userOnly("boundary")
+		default:
+			cfg.Boundary = c.Boundary
 		}
 	}
 	switch {
