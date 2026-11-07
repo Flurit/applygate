@@ -40,6 +40,7 @@ type prog struct {
 	family  string                            // programs whose entries share options: the conformance test runs a shared option once per family
 	with    []string                          // words the conformance test adds so that one option can be run alone (a message for commit)
 	outputs []string                          // options whose value is a file the program writes, listed or not: the classifier names the path (OutputOpts)
+	wr      func(c parsed) []written          // what a plain call writes, from the matcher's own reading (writes.go)
 }
 
 // allowProgs are the programs described by a prog, by name (the conformance
@@ -87,7 +88,54 @@ func (p *prog) shape(name string) shape {
 
 // check reports why a call of name with args is not plain ("" when it is).
 func (p *prog) check(name string, args []Word) string {
+	_, why := p.parse(name, args)
+	return why
+}
+
+// parsed is a plain call as the matcher read it: its operands and the
+// values of its options. The write rules (writes.go) read it, so a path the
+// classifier judges as written is the one the matcher took for that
+// operand or option, not one a second parser found.
+type parsed struct {
+	ops  []Word
+	seen map[string]bool
+	vals map[string][]Word // the values given to each option, in order
+	// loose: the call is not plain and was read leniently, so an option
+	// that is not listed may have taken a value that now stands among the
+	// operands; a rule that names one operand (the last) names them all.
+	loose bool
+}
+
+// val returns the last value of the first of names that was given.
+func (c parsed) val(names ...string) (Word, bool) {
+	for _, n := range names {
+		if v := c.vals[n]; len(v) > 0 {
+			return v[len(v)-1], true
+		}
+	}
+	return Word{}, false
+}
+
+// has reports whether any of names was given.
+func (c parsed) has(names ...string) bool {
+	for _, n := range names {
+		if c.seen[n] {
+			return true
+		}
+	}
+	return false
+}
+
+// parse reads a call of name with args, and reports why it is not plain ("" when it is).
+func (p *prog) parse(name string, args []Word) (parsed, string) { return p.read(name, args, false) }
+
+// read is parse; lenient reads a call that is not plain as far as it can: an
+// option that is not listed is taken as a flag without a value, a word that
+// cannot be resolved as an operand, and no rule fails. The write rules then
+// count every operand that may be written (parsed.loose).
+func (p *prog) read(name string, args []Word, lenient bool) (parsed, string) {
 	seen := map[string]bool{}
+	vals := map[string][]Word{}
 	var ops []Word
 	endOpts := false
 	// use records an option and checks the rules over it and its value.
@@ -96,6 +144,9 @@ func (p *prog) check(name string, args []Word) string {
 			return "the option " + opt + " more than once"
 		}
 		seen[opt] = true
+		if v != nil {
+			vals[opt] = append(vals[opt], *v)
+		}
 		if v != nil && p.valOK != nil {
 			return p.valOK(opt, *v)
 		}
@@ -115,7 +166,11 @@ func (p *prog) check(name string, args []Word) string {
 		// An unresolved word is read by its literal prefix: -var=x=$Y names -var.
 		knownName := !w.Resolved && strings.HasPrefix(t, "-") && strings.Contains(t, "=")
 		if !w.Resolved && (t == "" || strings.HasPrefix(t, "-")) && !knownName && !(p.loose && !strings.HasPrefix(t, "-")) {
-			return "a word that cannot be resolved may be an option of " + name
+			if !lenient {
+				return parsed{}, "a word that cannot be resolved may be an option of " + name
+			}
+			ops = append(ops, w)
+			continue
 		}
 		if !strings.HasPrefix(t, "-") || t == "-" || p.opWord != nil && w.Resolved && p.opWord(t) {
 			ops = append(ops, w)
@@ -125,46 +180,61 @@ func (p *prog) check(name string, args []Word) string {
 			k, _, hasEq := strings.Cut(t, "=")
 			switch {
 			case p.flags[k]:
-				if hasEq {
-					return "the option " + k + " with a value"
+				if hasEq && !lenient {
+					return parsed{}, "the option " + k + " with a value"
 				}
-				if why := use(k, nil); why != "" {
-					return why
+				if why := use(k, nil); why != "" && !lenient {
+					return parsed{}, why
 				}
 			case p.optVal[k]:
 				seen[k] = true
+				if hasEq {
+					vals[k] = append(vals[k], Word{Text: strings.TrimPrefix(w.Text, k+"="), Resolved: w.Resolved})
+				}
 			case p.vals[k]:
 				v := Word{Text: strings.TrimPrefix(w.Text, k+"="), Resolved: w.Resolved}
 				if !hasEq {
 					if i+1 >= len(args) {
-						return "the option " + k + " without its value"
+						if lenient {
+							continue
+						}
+						return parsed{}, "the option " + k + " without its value"
 					}
 					i++
 					v = args[i]
 				}
-				if why := use(k, &v); why != "" {
-					return why
+				if why := use(k, &v); why != "" && !lenient {
+					return parsed{}, why
 				}
 			default:
-				return "the option " + k + " of " + name
+				if !lenient {
+					return parsed{}, "the option " + k + " of " + name
+				}
+				seen[k] = true
+				if hasEq {
+					vals[k] = append(vals[k], Word{Text: strings.TrimPrefix(w.Text, k+"="), Resolved: w.Resolved})
+				}
 			}
 			continue
 		}
 		// One dash. A whole name first (find, go and Go-style programs take
 		// -name, -toolexec), then a number, then a cluster of letters.
 		if p.flags[t] {
-			if why := use(t, nil); why != "" {
-				return why
+			if why := use(t, nil); why != "" && !lenient {
+				return parsed{}, why
 			}
 			continue
 		}
 		if p.vals[t] {
 			if i+1 >= len(args) {
-				return "the option " + t + " without its value"
+				if lenient {
+					continue
+				}
+				return parsed{}, "the option " + t + " without its value"
 			}
 			i++
-			if why := use(t, &args[i]); why != "" {
-				return why
+			if why := use(t, &args[i]); why != "" && !lenient {
+				return parsed{}, why
 			}
 			continue
 		}
@@ -174,8 +244,8 @@ func (p *prog) check(name string, args []Word) string {
 		// -name=value, as Go's flag package and Terraform read them.
 		if k, v, eq := strings.Cut(t, "="); eq && len(k) > 2 && (p.flags[k] || p.vals[k]) {
 			val := Word{Text: v, Resolved: w.Resolved}
-			if why := use(k, map[bool]*Word{true: &val, false: nil}[p.vals[k]]); why != "" {
-				return why
+			if why := use(k, map[bool]*Word{true: &val, false: nil}[p.vals[k]]); why != "" && !lenient {
+				return parsed{}, why
 			}
 			continue
 		}
@@ -183,41 +253,51 @@ func (p *prog) check(name string, args []Word) string {
 			c := "-" + string(t[j])
 			switch {
 			case p.flags[c]:
-				if why := use(c, nil); why != "" {
-					return why
+				if why := use(c, nil); why != "" && !lenient {
+					return parsed{}, why
 				}
 				continue
 			case p.vals[c]:
 				v := Word{Text: w.Text[j+1:], Resolved: w.Resolved}
 				if j+1 == len(t) {
 					if i+1 >= len(args) {
-						return "the option " + c + " without its value"
+						if lenient {
+							break
+						}
+						return parsed{}, "the option " + c + " without its value"
 					}
 					i++
 					v = args[i]
 				}
-				if why := use(c, &v); why != "" {
-					return why
+				if why := use(c, &v); why != "" && !lenient {
+					return parsed{}, why
 				}
 			case p.num && digitsRE.MatchString(t[j:]):
 			default:
-				return "the option " + c + " of " + name
+				if !lenient {
+					return parsed{}, "the option " + c + " of " + name
+				}
+				seen[c] = true
 			}
 			break
 		}
 	}
+	if lenient {
+		return parsed{ops: ops, seen: seen, vals: vals, loose: true}, ""
+	}
 	if p.maxOps >= 0 && len(ops) > p.maxOps {
-		return "more than " + itoa(p.maxOps) + " operands of " + name
+		return parsed{}, "more than " + itoa(p.maxOps) + " operands of " + name
 	}
 	if p.ops != nil {
 		if why := p.ops(ops); why != "" {
-			return why
+			return parsed{}, why
 		}
 	}
+	c := parsed{ops: ops, seen: seen, vals: vals}
 	if p.need != nil {
-		return p.need(seen)
+		return c, p.need(seen)
 	}
-	return ""
+	return c, ""
 }
 
 func itoa(n int) string {

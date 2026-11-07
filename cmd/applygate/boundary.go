@@ -22,7 +22,7 @@ import (
 //
 //	L0  the hook only
 //	L1  L0 + a managed, exclusive install (root-owned, no other hooks)
-//	L2  L1 + audited credentials with no destructive path without MFA
+//	L2  L1 + audited credentials (AWS, kube, gcloud, az) with no destructive path without a person
 //	L3  L2 + a host sandbox set by managed settings + attested CI apply and state guards
 
 var assuranceLevels = []string{"L0", "L1", "L2", "L3"}
@@ -76,11 +76,8 @@ func evalBoundary(cfg *config.Config) *boundaryResult {
 	}
 
 	// L2: credentials.
-	var found []credsFinding
-	found = append(found, auditAWS(cfg)...)
-	found = append(found, auditKube(cfg)...)
 	checked := 0
-	for _, f := range found {
+	for _, f := range auditAll(cfg) {
 		switch f.level {
 		case "ok":
 			checked++
@@ -91,11 +88,10 @@ func evalBoundary(cfg *config.Config) *boundaryResult {
 		}
 	}
 	if checked == 0 {
-		r.add(2, "not verified", "no AWS profile or kube context could be audited, so nothing shows the agent's credentials cannot change production")
+		r.add(2, "not verified", "no AWS profile, kube context, gcloud account or Azure subscription could be audited, so nothing shows the agent's credentials cannot change production")
 	} else {
-		r.add(2, "ok", "%d credential(s) audited with no destructive path without MFA", checked)
+		r.add(2, "ok", "%d credential(s) audited with no destructive path without a person", checked)
 	}
-	r.add(2, "not verified", "gcloud and az credentials are not audited (docs/credentials.md has the IAM setup to check by hand)")
 	for _, p := range credentialFiles() {
 		r.add(2, "not verified", "%s is readable by this user, so is any agent that runs as you; the audit above covers what it can do, not who can read it", p)
 	}
@@ -246,7 +242,7 @@ func cmdDoctorBoundary(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "applygate: assurance level %q is not one of L0, L1, L2, L3\n", require)
 		return 2
 	}
-	fmt.Fprintln(stdout, "Boundary this machine has around applygate (it contacts AWS and the clusters, read-only):")
+	fmt.Fprintln(stdout, "Boundary this machine has around applygate (it contacts AWS, Google Cloud, Azure and the clusters, read-only):")
 	r := evalBoundary(cfg)
 	for lvl := 1; lvl <= 3; lvl++ {
 		for _, c := range r.checks {
