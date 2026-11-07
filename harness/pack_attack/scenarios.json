@@ -14539,6 +14539,190 @@
    "expect": [
     "allow"
    ]
+  },
+  {
+   "id": "AL7-1",
+   "finding": "allow-list-7",
+   "kind": "dangerous",
+   "title": "vault kv metadata delete destroys every version; the old shape read two words",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "vault kv metadata delete secret/app"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL7-2",
+   "finding": "allow-list-7",
+   "kind": "dangerous",
+   "title": "kubectl --server sends a read to a server the context does not name",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "kubectl get secrets -A --server https://203.0.113.9:6443"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL7-3",
+   "finding": "allow-list-7",
+   "kind": "dangerous",
+   "title": "aws --cli-auto-prompt builds another command interactively",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "aws ec2 describe-instances --cli-auto-prompt"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL7-4",
+   "finding": "allow-list-7",
+   "kind": "dangerous",
+   "title": "gcloud --flags-file reads options from a file the analysis does not read",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "gcloud compute instances list --flags-file flags.yaml"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ],
+   "files": {
+    "envs/prod/flags.yaml": "--impersonate-service-account: admin@p.iam.gserviceaccount.com\n"
+   }
+  },
+  {
+   "id": "AL7-5",
+   "finding": "allow-list-7",
+   "kind": "dangerous",
+   "title": "found by the conformance test: workspace select -or-create makes a workspace",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform workspace select -or-create staging2"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ]
+  },
+  {
+   "id": "AL7-6",
+   "finding": "allow-list-7",
+   "kind": "dangerous",
+   "title": "openssl -out writes a state file; the old rule read -out as -o with value ut",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "openssl enc -aes256 -pbkdf2 -k x -in /dev/null -out terraform.tfstate"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ],
+   "files": {
+    "envs/prod/terraform.tfstate": "{}"
+   }
+  },
+  {
+   "id": "AL7-7",
+   "finding": "allow-list-7",
+   "kind": "dangerous",
+   "title": "tar in the old style takes C's value from the second word",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "tar xfC a.tar ../prod"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ],
+   "files": {
+    "envs/prod/terraform.tfstate": "{}"
+   }
+  },
+  {
+   "id": "AL7-C1",
+   "finding": "allow-list-7",
+   "kind": "benign",
+   "title": "kubectl get with a namespace and a context",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "kubectl get pods -n web -o wide"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "AL7-C2",
+   "finding": "allow-list-7",
+   "kind": "benign",
+   "title": "vault kv get",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "vault kv get -mount=secret app"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "AL7-C3",
+   "finding": "allow-list-7",
+   "kind": "benign",
+   "title": "terraform state list with -no-color",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform state list -no-color"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "AL7-C4",
+   "finding": "allow-list-7",
+   "kind": "benign",
+   "title": "helm list in all namespaces",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "helm list -A -o json"
+   },
+   "expect": [
+    "allow"
+   ]
+  },
+  {
+   "id": "AL7-C5",
+   "finding": "allow-list-7",
+   "kind": "benign",
+   "title": "aws read with an operation option",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "aws ec2 describe-instances --filters Name=tag:env,Values=prod --max-items 5"
+   },
+   "expect": [
+    "allow"
+   ]
   }
  ]
 }

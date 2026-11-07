@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -1229,7 +1228,7 @@ func stepNames(inv shell.Invocation, opt Options) []string {
 		return nil
 	}
 	name := shell.ProgName(inv.Args[0].Text)
-	if _, engine := engines[name]; engine || pathReaders[name] || remoteCopy(name, inv.Args[1:]) {
+	if _, engine := engines[name]; engine || pathReaders[name] || shell.RemoteCopy(name, inv.Args[1:]) {
 		return nil // stepWrites knows what these write
 	}
 	var out []string
@@ -1251,42 +1250,6 @@ func stepNames(inv shell.Invocation, opt Options) []string {
 		out = append(out, absPath(inv.Dir, t, opt.Home))
 	}
 	return out
-}
-
-// remoteCopy reports whether a command copies between a remote store and
-// local files, with the destination last: scp, rclone copy, aws s3 cp,
-// gsutil cp, gcloud storage cp.
-func remoteCopy(name string, args []shell.Word) bool {
-	var sub []string
-	for _, w := range args {
-		if !strings.HasPrefix(w.Text, "-") {
-			sub = append(sub, w.Text)
-		}
-	}
-	at := func(i int, ws ...string) bool { return len(sub) > i && slices.Contains(ws, sub[i]) }
-	switch name {
-	case "scp":
-		return true
-	case "rclone":
-		return at(0, "copy", "copyto", "sync", "move", "moveto", "copyurl")
-	case "aws":
-		return at(0, "s3") && at(1, "cp", "mv", "sync")
-	case "gsutil":
-		return at(0, "cp", "mv", "rsync")
-	case "gcloud":
-		return at(0, "storage") && at(1, "cp", "mv", "rsync")
-	}
-	return false
-}
-
-// remotePath reports whether p names a remote location: a URL, or
-// host:path with no slash before the colon.
-func remotePath(p string) bool {
-	if strings.Contains(p, "://") {
-		return true
-	}
-	host, _, ok := strings.Cut(p, ":")
-	return ok && host != "" && !strings.Contains(host, "/")
 }
 
 // namedExactly reports whether p itself is among named.
@@ -1325,247 +1288,23 @@ func writtenAt(written []string, p string) bool {
 	return false
 }
 
-// writeTargets returns the absolute paths a program changes in a way that
-// can replace or remove a guard file: what it removes or moves, the
-// directory it copies or extracts into, the file it downloads to, and the
-// paths git restores. Unknown programs return nothing.
+// writeTargets returns the paths a program writes, moves, removes or
+// extracts into, as absolute paths: what its write rule in the shell package
+// reads from the call (the matcher's own parse for a program with an
+// allow-list entry), git's work-tree paths, and its output options.
 func writeTargets(name string, args []shell.Word, dir, home string) []string {
-	var out []string
 	abs := func(p string) string { return absPath(dir, p, home) }
-	paths := func(ws []shell.Word) []string {
-		var ps []string
-		for _, w := range ws {
-			if w.Resolved && w.Text != "" && !strings.HasPrefix(w.Text, "-") {
-				ps = append(ps, w.Text)
-			}
-		}
-		return ps
-	}
-	// flagValue returns the value of a flag given as "-x v", "-xv", "--long v"
-	// or "--long=v", including at the end of a short-flag cluster ("-so v").
-	flagValue := func(short byte, long string) (string, bool) {
-		for i, w := range args {
-			t := w.Text
-			if long != "" {
-				if v, ok := strings.CutPrefix(t, long+"="); ok {
-					return v, true
-				}
-				if t == long && i+1 < len(args) {
-					return args[i+1].Text, true
-				}
-			}
-			if short != 0 && len(t) >= 2 && t[0] == '-' && t[1] != '-' {
-				if j := strings.IndexByte(t[1:], short); j >= 0 {
-					if rest := t[j+2:]; rest != "" {
-						return rest, true // -ofile
-					}
-					if i+1 < len(args) {
-						return args[i+1].Text, true // -o file, -so file
-					}
-				}
-			}
-		}
-		return "", false
-	}
-	has := func(ws ...string) bool {
-		for _, w := range args {
-			for _, x := range ws {
-				if w.Text == x {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	switch {
-	case removers[name]:
-		for _, p := range paths(args) {
-			out = append(out, abs(p))
-		}
-	case remoteCopy(name, args):
-		// The last argument is the destination; a remote one (s3://b,
-		// host:path) is not written here.
-		if ps := paths(args); len(ps) >= 2 && !remotePath(ps[len(ps)-1]) {
-			out = append(out, abs(ps[len(ps)-1]))
-		}
-	case copiers[name]:
-		// Only cp and install take -t DIR; rsync's -t keeps times.
-		if t, ok := flagValue('t', "--target-directory"); ok && (name == "cp" || name == "install") {
-			out = append(out, abs(t))
-		} else if ps := paths(args); len(ps) >= 2 {
-			out = append(out, abs(ps[len(ps)-1]))
-		}
-	case name == "tar" || name == "bsdtar" || name == "gtar":
-		extract, create := tarModes(args)
-		if extract {
-			if d, ok := flagValue('C', "--directory"); ok {
-				out = append(out, abs(d))
-			} else {
-				out = append(out, abs("."))
-			}
-		}
-		// Creating an archive writes the file -f names.
-		if create {
-			if f, ok := flagValue('f', "--file"); ok && f != "-" {
-				out = append(out, abs(f))
-			} else if len(args) > 1 && len(args[0].Text) > 1 && strings.Contains(args[0].Text, "f") && !strings.HasPrefix(args[0].Text, "--") {
-				out = append(out, abs(args[1].Text)) // tar cf FILE: the old syntax
-			}
-		}
-	case name == "7z" || name == "7za" || name == "7zz" || name == "7zr":
-		if len(args) > 0 && (args[0].Text == "x" || args[0].Text == "e") {
-			d := "."
-			for _, w := range args {
-				if v, ok := strings.CutPrefix(w.Text, "-o"); ok && v != "" {
-					d = v
-				}
-			}
-			out = append(out, abs(d))
-		}
-	case name == "unzip":
-		if d, ok := flagValue('d', ""); ok {
-			out = append(out, abs(d))
-		} else {
-			out = append(out, abs("."))
-		}
-	case name == "cpio":
-		if has("-i", "--extract", "-p", "--pass-through") || (len(args) > 0 && strings.ContainsAny(strings.TrimPrefix(args[0].Text, "-"), "ip")) {
-			if ps := paths(args); len(ps) > 0 && has("-p", "--pass-through") {
-				out = append(out, abs(ps[len(ps)-1]))
-			} else {
-				out = append(out, abs("."))
-			}
-		}
-	case name == "patch":
-		if d, ok := flagValue('d', "--directory"); ok {
-			out = append(out, abs(d))
-		} else {
-			out = append(out, abs("."))
-		}
-		for _, p := range paths(args) {
-			out = append(out, abs(p))
-		}
-	case name == "curl":
-		if o, ok := flagValue('o', "--output"); ok {
-			out = append(out, abs(o))
-		}
-		if has("-O", "--remote-name", "--remote-name-all") || clusterHas(args, 'O') {
-			for _, p := range paths(args) {
-				if b := urlBase(p); b != "" {
-					out = append(out, abs(b))
-				}
-			}
-		}
-	case name == "wget":
-		if o, ok := flagValue('O', "--output-document"); ok {
-			out = append(out, abs(o))
-		} else {
-			d := "."
-			if p, ok := flagValue('P', "--directory-prefix"); ok {
-				d = p
-			}
-			for _, p := range paths(args) {
-				if b := urlBase(p); b != "" {
-					out = append(out, abs(filepath.Join(d, b)))
-				}
-			}
-		}
-	case name == "sort":
-		if o, ok := flagValue('o', "--output"); ok {
-			out = append(out, abs(o))
-		}
-	case name == "base64" || name == "openssl" || name == "gpg" || name == "age":
-		if o, ok := flagValue('o', "--output"); ok {
-			out = append(out, abs(o))
-		}
-	case name == "xxd" || name == "uniq":
-		// xxd -r IN OUT and uniq IN OUT write the second operand.
-		if ps := paths(args); len(ps) >= 2 {
-			out = append(out, abs(ps[1]))
-		}
-	case name == "yq" || name == "gsed":
-		if has("-i", "--inplace", "--in-place") {
-			for _, p := range paths(args) {
-				out = append(out, abs(p))
-			}
-		}
-	case name == "gzip" || name == "gunzip" || name == "bzip2" || name == "bunzip2" || name == "xz" || name == "unxz" || name == "zstd" || name == "unzstd" || name == "compress" || name == "uncompress":
-		// In place unless -c writes to stdout: the file is replaced, and
-		// decompressing writes the name without its suffix.
-		if !has("-c", "--stdout", "--to-stdout") {
-			dec := strings.HasPrefix(name, "un") || name == "gunzip" || name == "bunzip2" || has("-d", "--decompress", "--uncompress")
-			for _, p := range paths(args) {
-				out = append(out, abs(p))
-				if dec {
-					for _, suf := range []string{".gz", ".bz2", ".xz", ".zst", ".Z", ".z"} {
-						if strings.HasSuffix(p, suf) {
-							out = append(out, abs(strings.TrimSuffix(p, suf)))
-						}
-					}
-				}
-			}
-		}
-	case name == "zip":
-		if ps := paths(args); len(ps) > 0 {
-			out = append(out, abs(ps[0]))
-			if has("-m", "--move") || clusterHas(args, 'm') {
-				for _, p := range ps[1:] {
-					out = append(out, abs(p))
-				}
-			}
-		}
-	case name == "find":
-		if has("-delete") || execRemoves(args) {
-			// The global options come first (-P -H -L -Ox -D opts -f PATH,
-			// BSD -s -x -E -X), then the starting points.
-			for i := 0; i < len(args); i++ {
-				t := args[i].Text
-				switch {
-				case t == "-P" || t == "-H" || t == "-L" || t == "-s" || t == "-x" || t == "-E" || t == "-X" || t == "-d" || strings.HasPrefix(t, "-O") && len(t) > 2:
-					continue
-				case t == "-D" || t == "-f":
-					if t == "-f" && i+1 < len(args) && args[i+1].Resolved {
-						out = append(out, abs(args[i+1].Text))
-					}
-					i++
-					continue
-				}
-				if strings.HasPrefix(t, "-") || t == "(" || t == "!" {
-					break
-				}
-				if args[i].Resolved {
-					out = append(out, abs(t))
-				}
-			}
-		}
-	case name == "git":
-		out = append(out, gitTargets(args, dir, home)...)
-	}
-	out = append(out, outputTargets(name, args, abs)...)
-	if name == "aws" {
-		// aws s3api get-object BUCKET KEY FILE writes FILE.
-		var sub []string
-		for _, w := range args {
-			if !strings.HasPrefix(w.Text, "-") {
-				sub = append(sub, w.Text)
-			}
-		}
-		// Every get-* call that saves its answer takes the file as the last
-		// word (apigateway get-export, iot-data get-thing-shadow, glacier
-		// get-job-output, s3api get-object-torrent), and eks
-		// update-kubeconfig rewrites the file --kubeconfig names.
-		if len(sub) >= 3 && strings.HasPrefix(sub[1], "get-") {
-			out = append(out, abs(sub[len(sub)-1]))
-		}
-		for i, w := range args {
-			if k, v, eq := strings.Cut(w.Text, "="); k == "--kubeconfig" && eq && v != "" {
-				out = append(out, abs(v))
-			} else if w.Text == "--kubeconfig" && i+1 < len(args) && args[i+1].Resolved {
-				out = append(out, abs(args[i+1].Text))
+	var out []string
+	if name == "git" {
+		out = gitTargets(args, dir, home)
+	} else {
+		for _, w := range shell.Writes(name, args) {
+			if w.Resolved && w.Text != "" && w.Text != "-" {
+				out = append(out, abs(w.Text))
 			}
 		}
 	}
-	return out
+	return append(out, outputTargets(name, args, abs)...)
 }
 
 // outputTargets returns the files a program's output options name.
@@ -1604,40 +1343,6 @@ func outputTargets(name string, args []shell.Word, abs func(string) string) []st
 		}
 	}
 	return out
-}
-
-func clusterHas(args []shell.Word, c byte) bool {
-	for _, w := range args {
-		t := w.Text
-		if len(t) > 1 && t[0] == '-' && t[1] != '-' && strings.IndexByte(t[1:], c) >= 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// execRemoves reports whether find runs a remover through -exec or -execdir.
-func execRemoves(args []shell.Word) bool {
-	for i, w := range args {
-		if (w.Text == "-exec" || w.Text == "-execdir" || w.Text == "-ok") && i+1 < len(args) && removers[shell.ProgName(args[i+1].Text)] {
-			return true
-		}
-	}
-	return false
-}
-
-// urlBase is the file name a download of u is saved under.
-func urlBase(u string) string {
-	if !strings.Contains(u, "://") {
-		return ""
-	}
-	u, _, _ = strings.Cut(u, "?")
-	u, _, _ = strings.Cut(u, "#")
-	b := path.Base(u)
-	if b == "" || b == "." || b == "/" || strings.Contains(b, ":") {
-		return ""
-	}
-	return b
 }
 
 // gitTargets returns the paths a git command replaces or removes in the
@@ -2680,44 +2385,6 @@ func tfDir(d string) bool {
 		}
 	}
 	return false
-}
-
-// tarModes reports whether a tar command extracts or creates, reading its
-// options as tar does: the old style (xf at the front), clusters (-xvf,
-// -zxf), long options, and an option's value (-C DIR, -f FILE) skipped.
-func tarModes(args []shell.Word) (extract, create bool) {
-	for i := 0; i < len(args); i++ {
-		t := args[i].Text
-		switch {
-		case t == "--extract" || t == "--get":
-			extract = true
-		case t == "--create" || t == "--append" || t == "--update" || t == "--concatenate" || t == "--catenate" || t == "--delete":
-			// Each writes the archive named by -f.
-			create = true
-		case strings.HasPrefix(t, "--"):
-			if k, _, eq := strings.Cut(t, "="); !eq && (k == "--directory" || k == "--file" || k == "--files-from" || k == "--exclude-from" || k == "--transform" || k == "--use-compress-program" || k == "--to-command") {
-				i++
-			}
-		case strings.HasPrefix(t, "-") || i == 0 && t != "":
-			cluster := strings.TrimPrefix(t, "-")
-			for j, ch := range cluster {
-				switch ch {
-				case 'x':
-					extract = true
-				case 'c', 'r', 'u', 'A':
-					create = true
-				case 'C', 'f', 'I', 'T', 'X', 'F', 'K', 'L':
-					if j == len(cluster)-1 {
-						i++
-					}
-				}
-				if strings.ContainsRune("CfITXFKL", ch) {
-					break
-				}
-			}
-		}
-	}
-	return extract, create
 }
 
 // stateUnder returns a state file in directory d or any directory below it

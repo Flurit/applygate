@@ -10,7 +10,7 @@ What does hold whatever the parser misses are boundaries the agent cannot reach.
 |---|---|---|
 | **L0** | The hook only | nothing to check |
 | **L1** | A managed, exclusive install: root-owned config, binary and Claude Code settings, no other hooks | `doctor --boundary` checks ownership and settings ([managed.md](managed.md)) |
-| **L2** | Credentials the agent holds cannot change production without a person | `doctor --boundary` audits every AWS profile and kube context ([credentials.md](credentials.md)); gcloud and az are not audited |
+| **L2** | Credentials the agent holds cannot change production without a person | `doctor --boundary` audits every AWS profile, kube context, gcloud account and Azure subscription ([credentials.md](credentials.md)) |
 | **L3** | A host sandbox set by managed settings, and a reviewed apply path with guarded remote state | the sandbox is checked in Claude Code's managed settings; the apply path and state guards are **attested** by you |
 
 A level needs every check of its own and the levels below to hold. `not verified` means doctor could not show the control; it never counts. `attested` counts only toward L3 and only for controls you name in the **user** (or system) config; a repository config cannot set it:
@@ -32,7 +32,7 @@ applygate doctor --boundary --require L2   # exit 1 below L2, for a script or CI
 ## What the check does and does not cover
 
 - **L1** is exactly `doctor`'s managed checks. Without `install --managed --exclusive` you are at L0.
-- **L2** asks the policy simulator about 19 destructive actions with MFA absent, including three on the state bucket (`s3:DeleteObjectVersion`, `s3:PutBucketVersioning`, `s3:DeleteBucketPolicy`), and kubectl `auth can-i` for four verbs. A profile that could not be checked (expired SSO, no simulator permission) is `not verified`, not ok. Credential files the agent's user can read are listed: any agent that runs as you can use them, and the audit says what they can do, not who can read them.
+- **L2** asks the policy simulator about 19 destructive actions with MFA absent, including three on the state bucket (`s3:DeleteObjectVersion`, `s3:PutBucketVersioning`, `s3:DeleteBucketPolicy`), kubectl `auth can-i` for four verbs, Google Cloud's `testIamPermissions` for 17 destructive permissions on each project a gcloud configuration names, and the roles assigned to the signed-in principal on each Azure subscription. gcloud and az have no MFA-absent test: any destructive permission or role counts. Azure PIM roles that are eligible but not active are not seen. The gcloud and az audits are tested with stubs only. A profile that could not be checked (expired SSO, no simulator permission) is `not verified`, not ok. Credential files the agent's user can read are listed: any agent that runs as you can use them, and the audit says what they can do, not who can read them.
 - **L3**'s sandbox check reads Claude Code's managed settings for `sandbox.enabled` and `allowUnsandboxedCommands: false`. Those keys have not been tested live. Codex sandbox modes are not checked. A sandbox set in a file your user can change counts as not verified.
 - **Not covered at any level:** a swap between the hook's verdict and the execution, Codex failing open when the hook does not start, MCP servers with their own credentials, and anything that never passes through the hook.
 

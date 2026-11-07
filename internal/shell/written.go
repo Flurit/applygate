@@ -24,6 +24,7 @@ const (
 	wroteContents                      // files under the path (git checkout, pull, ...)
 	wroteTree                          // anything at or under it, symlinks too (tar -C, cp, mv, ln)
 	madeDir                            // a directory created (mkdir), which may also be read
+	changed                            // removed, or its mode or owner changed (rm, chmod): the classifier counts it, a later read does not become unknown
 )
 
 type writtenError struct{ path string }
@@ -97,88 +98,12 @@ func (a *analyzer) wrote(st *state, w Word, k writeKind) {
 
 // noteWrites records the paths a program writes.
 func (a *analyzer) noteWrites(bn string, rest []Word, st *state) {
-	var pos []Word
-	for _, w := range rest {
-		if !strings.HasPrefix(w.Text, "-") || w.Text == "-" {
-			pos = append(pos, w)
-		}
-	}
-	last := func(k writeKind) {
-		if len(pos) > 0 {
-			a.wrote(st, pos[len(pos)-1], k)
-		}
-	}
-	flagVal := func(names ...string) (Word, bool) {
-		for i, w := range rest {
-			for _, n := range names {
-				if w.Text == n && i+1 < len(rest) {
-					return rest[i+1], true
-				}
-				if v, ok := strings.CutPrefix(w.Text, n+"="); ok && strings.HasPrefix(n, "--") {
-					return Word{Text: v, Resolved: w.Resolved, Prefix: v}, true
-				}
-			}
-		}
-		return Word{}, false
-	}
-	switch bn {
-	case "mkdir":
-		for _, w := range pos {
-			a.wrote(st, w, madeDir)
-		}
-	case "tee":
-		for _, w := range pos {
-			a.wrote(st, w, wroteFile)
-		}
-	case "cp", "mv", "ln", "install", "rsync", "ditto", "gcp", "gmv":
-		if t, ok := flagVal("-t", "--target-directory"); ok {
-			a.wrote(st, t, wroteTree)
-			return
-		}
-		last(wroteTree)
-	case "dd":
-		for _, w := range rest {
-			if v, ok := strings.CutPrefix(w.Text, "of="); ok {
-				a.wrote(st, Word{Text: v, Resolved: w.Resolved, Prefix: v}, wroteFile)
-			}
-		}
-	case "sed", "gsed", "perl", "yq", "ruby":
-		if InPlaceEdit(rest) {
-			for _, w := range pos {
-				a.wrote(st, w, wroteFile)
-			}
-		}
-	case "curl", "wget":
-		if o, ok := flagVal("-o", "--output", "-O", "--output-document"); ok && (bn == "wget" || o.Text != "") {
-			a.wrote(st, o, wroteFile)
-		}
-		if d, ok := flagVal("--output-dir", "-P", "--directory-prefix"); ok {
-			a.wrote(st, d, wroteTree)
-		} else if bn == "wget" || hasFlag(rest, "-O", "--remote-name", "-J", "--remote-name-all") {
-			a.wrote(st, Word{Text: ".", Resolved: true}, wroteTree)
-		}
-	case "tar", "bsdtar", "gtar", "unzip", "7z", "cpio", "patch", "git":
-		extract := bn != "tar" && bn != "bsdtar" && bn != "gtar" && bn != "git"
-		for _, w := range rest {
-			t := w.Text
-			if (bn == "tar" || bn == "bsdtar" || bn == "gtar") && (t == "--extract" || t == "--get" || !strings.HasPrefix(t, "--") && strings.Contains(strings.TrimPrefix(t, "-"), "x") && (strings.HasPrefix(t, "-") || w == rest[0])) {
-				extract = true
-			}
-		}
-		if bn == "git" {
-			// clone, checkout, restore, apply, pull, ... rewrite the tree.
-			if len(pos) > 0 && toSet("clone", "checkout", "switch", "restore", "apply", "am", "pull", "merge", "rebase", "reset", "stash", "worktree", "cherry-pick", "revert")[pos[0].Text] {
-				a.wrote(st, Word{Text: ".", Resolved: true}, wroteContents)
-			}
-			return
-		}
-		if !extract {
-			return
-		}
-		if d, ok := flagVal("-C", "--directory", "-d"); ok {
-			a.wrote(st, d, wroteTree)
-		} else {
-			a.wrote(st, Word{Text: ".", Resolved: true}, wroteTree)
+	// The write rules (writes.go) say which words a call writes; a path that
+	// is only removed or has its mode changed does not make a later read
+	// unknown.
+	for _, w := range writesOf(bn, rest) {
+		if w.k != changed {
+			a.wrote(st, w.w, w.k)
 		}
 	}
 }

@@ -15,7 +15,7 @@ The boundary that holds whatever the hook decides:
 applygate doctor --creds
 ```
 
-The command takes each AWS profile (`aws configure list-profiles`, plus the environment's own `AWS_PROFILE` or access key) and each kube context (`kubectl config get-contexts`) the agent's environment can use, and asks the cloud about it:
+The command takes each AWS profile (`aws configure list-profiles`, plus the environment's own `AWS_PROFILE` or access key), each kube context (`kubectl config get-contexts`), each gcloud account and project (`gcloud auth list`, `gcloud config configurations list`) and each Azure subscription (`az account list --all`) the agent's environment can use, and asks the cloud about it:
 
 - **AWS:**
   - `sts get-caller-identity` gives the identity and account.
@@ -23,22 +23,26 @@ The command takes each AWS profile (`aws configure list-profiles`, plus the envi
   - `iam simulate-principal-policy` asks whether that identity may run 19 destructive actions with MFA absent: terminating instances, deleting databases, buckets, tables, clusters, functions and stacks, scheduling key deletion, changing IAM, assuming roles, and deleting state-bucket versions, turning versioning off or removing the bucket policy.
   - For an assumed role, the role's own ARN comes from `iam get-role`.
 - **Kubernetes:** `kubectl auth can-i` asks, across all namespaces, about deleting namespaces, deployments and persistent volume claims, and creating cluster role bindings.
+- **Google Cloud:** see [below](#google-cloud-and-azure). It asks Resource Manager which of 17 destructive permissions each account holds on each project.
+- **Azure:** see [below](#google-cloud-and-azure). It lists each subscription's role assignments for the signed-in principal and reports the roles that can delete or grant access.
+
+A missing `kubectl`, `gcloud` or `az` means nothing to audit for it, not a warning.
 
 How each credential is reported:
 
 | Report | When |
 |---|---|
-| `FAIL` | A production credential that can do any of those without MFA. `doctor --creds` exits 1. |
-| `WARN` | A credential that can do them where no environment says which one it belongs to, or one that could not be checked (an expired SSO session, no permission to simulate). |
+| `FAIL` | A production credential that can do any of those without MFA (for gcloud and az: at all, see below). `doctor --creds` exits 1. |
+| `WARN` | A credential that can do them where no environment says which one it belongs to, or one that could not be checked (an expired SSO session, no permission to simulate, no gcloud token, an `az` error). |
 | `ok` | A credential that can do none of them, or one in a standard or disposable environment. |
 
-It is read-only and changes nothing, but it contacts AWS and the clusters with the credentials it audits. Run it yourself; the hook never runs it.
+It is read-only and changes nothing, but it contacts AWS, Google Cloud, Azure and the clusters with the credentials it audits. Run it yourself; the hook never runs it.
 
 ### What it does not see
 
 - **Policies the simulator does not evaluate.** The policy simulator does not evaluate service control policies, resource policies on the target (a bucket policy, a KMS key policy) or session policies (from AWS's documentation; not tested live). An SCP that denies the action makes the audit stricter than reality; a resource policy that allows it is missed.
 - **The cases it samples.** It asks about a sample of destructive actions, not every one. A role allowed `s3:DeleteObject` on the state bucket but nothing on the list is reported as `ok`.
-- **gcloud and az.** They are not audited yet. Check them by hand, as below.
+- **Google Cloud and Azure** have their own limits, listed [below](#google-cloud-and-azure).
 - **Profiles it cannot assume.** A profile the agent could use but `doctor` cannot (an expired SSO session) is a `WARN`: once the session is renewed, it is whatever its permission set allows.
 
 ## Setting it up on AWS
@@ -125,10 +129,50 @@ subjects: [{kind: User, name: agent@example.com}]
 
 Put writes behind a context whose credentials need the person: an OIDC login with MFA, or an `exec` plugin that asks (applygate guards `~/.kube/config`, so the agent cannot add one).
 
-## Google Cloud and Azure (check by hand)
+## Google Cloud and Azure
 
-- **Google Cloud:** the agent's account gets `roles/viewer` (and `roles/storage.objectViewer` on the state bucket). Applies go through service-account impersonation that only the person may use. `gcloud auth login` stores the person's credentials in `~/.config/gcloud`, which the agent can read when it runs as the same OS user: keep them apart as for AWS.
-- **Azure:** the agent gets `Reader` on production subscriptions. `Contributor` or `Owner` comes through Privileged Identity Management activation with MFA, which the person does. The Azure CLI's token cache in `~/.azure` is readable by the same OS user.
+Both audits have been tested with stubbed CLI and API answers only, not against a live account.
+
+### What the gcloud audit checks
+
+- **Accounts and projects.** Every credentialed account (`gcloud auth list --format=json`) paired with the project each configuration names (`gcloud config configurations list --format=json`), plus the active pair (`gcloud config list --format=json`, with `CLOUDSDK_CORE_ACCOUNT` and `CLOUDSDK_CORE_PROJECT` taking precedence). An account no configuration pairs with a project is checked against the active project, since `--account` alone uses it. If there is no active project, it is a `WARN`. Configurations that name an account with no credentials are skipped.
+- **The check.** `gcloud auth print-access-token --account=ACCOUNT` gives the account's token. applygate posts it to Resource Manager's [`projects.testIamPermissions`](https://cloud.google.com/resource-manager/reference/rest/v1/projects/testIamPermissions), which returns the permissions the caller holds out of those it is asked about. The token goes only into that request's header. It is never printed or logged. No special permission is needed to call it.
+- **The permissions asked about.**
+  - Deleting: `compute.instances.delete`, `compute.networks.delete`, `cloudsql.instances.delete`, `storage.buckets.delete`, `storage.objects.delete`, `container.clusters.delete`, `cloudfunctions.functions.delete`, `run.services.delete`, `spanner.instances.delete`, `bigquery.datasets.delete`, `cloudkms.cryptoKeyVersions.destroy`, `resourcemanager.projects.delete`.
+  - Changing who may act: `storage.buckets.setIamPolicy`, `resourcemanager.projects.setIamPolicy`, `iam.serviceAccountKeys.create`.
+  - Acting as another identity: `iam.serviceAccounts.actAs` and `iam.serviceAccounts.getAccessToken` are on the list because impersonating a service account reaches that account's rights as well as the caller's.
+- **The report.** `gcloud account A on project P (environment X, tier T)`, then either `none of 17 destructive permissions` or `holds: …`. A token that cannot be had or an API error is `WARN … not checked (…)`. If the API rejects a permission on the list as invalid for a project, that error is shown as a `WARN`.
+
+What it does not see:
+
+- **MFA.** gcloud has nothing like AWS's MFA-absent simulation. Any destructive permission held by a credential the agent can use counts as one the agent can use.
+- **What the account holds outside the project.** It checks the account itself on the project only. Rights on folders and the organization count where they are inherited by the project. Rights on other projects do not count, nor the rights of service accounts it could impersonate, beyond flagging that it can impersonate them.
+- **Conditions.** IAM conditions and deny policies are evaluated by Google as they apply to this request (not tested live).
+- **Application default credentials** (`~/.config/gcloud/application_default_credentials.json`) are used by Terraform and client libraries, not by `gcloud`. They are not audited. `doctor --boundary` lists the file when it is readable.
+
+### What the az audit checks
+
+- **Subscriptions.** Every subscription `az account list --all --output json` returns, the default one first (`AZURE_SUBSCRIPTION_ID` takes precedence over the CLI's default), up to 500.
+- **Role assignments.** For each one: `az role assignment list --assignee USER --all --include-inherited --include-groups --subscription ID`. That covers assignments at the subscription, its resource groups and resources, those inherited from management groups, and those held through groups. For a service principal, `USER` is its appId.
+- **Which roles count.**
+  - These built-in roles count directly: `Owner`, `Contributor`, `User Access Administrator`, `Role Based Access Control Administrator`, `Virtual Machine Contributor`, `Storage Account Contributor`, `SQL Server Contributor`, `Azure Kubernetes Service Contributor Role`, `Key Vault Contributor`, `Network Contributor`.
+  - These never count: `Reader`, `Monitoring Reader`, `Billing Reader`, `Security Reader`, `Log Analytics Reader`, `Cost Management Reader`.
+  - For any other role, its definition is read (`az role definition list --name ROLE --subscription ID`). It counts if an `actions` or `dataActions` entry is one of these, unless a `notActions` (or `notDataActions`) entry covers that same entry: `*`, anything ending in `/delete`, a write under `Microsoft.Authorization/`, or a provider-wide wildcard ending in `/*`, which includes the provider's deletes.
+  - When the check is unsure, the entry is counted. A narrower `notActions` does not cancel `*`, for example.
+- **The report.** `az subscription NAME (ID) as USER (environment …)`, then either `roles allowing destructive changes: Owner at /subscriptions/…` or `no role with a destructive action`. An `az` error, or a role definition that cannot be read when no other role counts, is `WARN … not checked`.
+- **Permissions needed.** The signed-in principal needs `Microsoft.Authorization/roleAssignments/read` and `Microsoft.Authorization/roleDefinitions/read`. `Reader` has both.
+
+What it does not see:
+
+- **Privileged Identity Management.** Roles a person is *eligible* for but has not activated do not appear. Once activated, they do, for as long as the activation lasts.
+- **Conditional access.** Policies that require MFA for some actions are not evaluated. A role reported here may need MFA in practice.
+- **Managed identities.** A subscription signed in as a managed identity (`systemAssignedIdentity`) may not resolve as an assignee. It is then a `WARN`.
+- **Resource locks and Azure Policy deny** assignments that would stop a delete.
+
+### Setting them up
+
+- **Google Cloud:** the agent's account gets `roles/viewer` (and `roles/storage.objectViewer` on the state bucket). Applies go through service-account impersonation that only the person may use. Do not grant the agent `roles/iam.serviceAccountTokenCreator` or `roles/iam.serviceAccountUser` on the apply account: the audit reports those as `iam.serviceAccounts.getAccessToken` and `actAs`. `gcloud auth login` stores the person's credentials in `~/.config/gcloud`, which the agent can read when it runs as the same OS user: keep them apart as for AWS.
+- **Azure:** the agent gets `Reader` on production subscriptions. `Contributor` or `Owner` comes through Privileged Identity Management activation with MFA, which the person does. The Azure CLI's token cache in `~/.azure` is readable by the same OS user. While a person's activation is live, a session in that cache has the role, and the audit reports it.
 
 ## How this fits with the managed install
 
