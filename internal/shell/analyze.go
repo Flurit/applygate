@@ -31,6 +31,9 @@ type Word struct {
 	// rebuilt from another keeps its Resolved flag and may lose this; Reason
 	// then gives a generic one, so an unknown never loses its reason.
 	Why string
+	// why is the unresolved part itself; Reason names it on demand, so the
+	// text is not built (and a nested substitution not printed) at every level.
+	why syntax.WordPart
 	// unquoted is set when an unquoted expansion contributed text, so the
 	// shell would split the result into fields.
 	unquoted bool
@@ -44,6 +47,9 @@ func (w Word) Reason() string {
 	}
 	if w.Why != "" {
 		return w.Why
+	}
+	if w.why != nil {
+		return partWhy(w.why)
 	}
 	if w.Prefix != "" {
 		return "a value known only at run time (after " + strconv.Quote(w.Prefix) + ")"
@@ -1002,7 +1008,7 @@ func (a *analyzer) word(w *syntax.Word, st *state, via []string, depth int) Word
 		if res.Resolved {
 			res.Prefix = b.String()
 			if cur != nil {
-				res.Why = partWhy(cur)
+				res.why = cur
 			}
 		}
 		res.Resolved = false
