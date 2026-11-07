@@ -766,6 +766,11 @@ func InitSafe(ctx context.Context, dir string) bool {
 	if modulesToFetch(dir) {
 		return false
 	}
+	// The whole closure: a local module that calls a remote one is fetched
+	// by init as well.
+	if Understood(ctx, dir, filepath.Join(dir, ".terraform")) != "" {
+		return false
+	}
 	lock, err := readCapped(filepath.Join(dir, ".terraform.lock.hcl"), MaxConfigFile)
 	if err != nil {
 		return false
