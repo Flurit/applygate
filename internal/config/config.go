@@ -132,6 +132,12 @@ type Config struct {
 	Untrusted []string `yaml:"-"`
 	// LoadedFor is the directory whose repository configs Load looked up.
 	LoadedFor string `yaml:"-"`
+	// GuardRoot is the directory of the outermost repository config Load
+	// found, read or not: the repository root whose guard files
+	// (GuardTargets) are guarded whether or not the config is trusted. An
+	// untrusted config decides nothing, but the files beside it are still
+	// the repository's hook settings.
+	GuardRoot string `yaml:"-"`
 }
 
 // Wrapper declares a program that runs another command: the command
@@ -574,7 +580,11 @@ func Load(userPath, dir string) (*Config, error) {
 	if dir != "" {
 		cfg.LoadedFor = dir
 		n := 0
-		for _, p := range RepoConfigs(dir) {
+		repoConfigs := RepoConfigs(dir)
+		if len(repoConfigs) > 0 {
+			cfg.GuardRoot = filepath.Dir(repoConfigs[0])
+		}
+		for _, p := range repoConfigs {
 			// Trust is for the file read, so only a regular file counts: a
 			// symlink would be checked against its target's approval and
 			// read at its own place. A config that cannot be read is
@@ -1068,9 +1078,15 @@ func hostDirFiles() []string {
 // GuardTargets returns the concrete places guard files live, for the
 // ancestor check: removing, moving or extracting into a directory that holds
 // one changes it. home is the user's home directory; the repository root is
-// the config's. A default pattern "**/x/y" stands for home/x/y and root/x/y.
+// the config's, or, when the config was not read (untrusted), the directory
+// it was found in. A default pattern "**/x/y" stands for home/x/y and
+// root/x/y.
 func (c *Config) GuardTargets(home string) []string {
 	var out []string
+	bases := []string{home, c.Root}
+	if c.GuardRoot != "" && c.GuardRoot != c.Root {
+		bases = append(bases, c.GuardRoot)
+	}
 	for _, p := range append(append([]string(nil), DefaultProtectedPaths...), c.ProtectedPaths...) {
 		lit := literalPrefix(p)
 		if lit == "" {
@@ -1080,7 +1096,7 @@ func (c *Config) GuardTargets(home string) []string {
 			out = append(out, lit)
 			continue
 		}
-		for _, base := range []string{home, c.Root} {
+		for _, base := range bases {
 			if base != "" {
 				out = append(out, filepath.Join(base, lit))
 			}
