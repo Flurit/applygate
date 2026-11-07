@@ -17,76 +17,11 @@ type shape func(args []Word, inv Invocation) string
 var shapes = map[string]shape{}
 
 func init() {
-	// yq 4.47 and later has a system operator that runs a command, enabled by
-	// this option.
-	// curl -K reads options (output files, more URLs) from a file.
-	// infracost runs terraform init and plan in the directory, with init and
-	// plan flags it passes through and a config file that names a binary:
-	// only its version and help read nothing.
-	shapes["infracost"] = func(args []Word, _ Invocation) string {
-		for _, w := range args {
-			switch optText(w) {
-			case "--version", "-v", "version", "--help", "-h", "help", "configure", "auth":
-				return ""
-			}
-		}
-		return "infracost runs terraform init and plan in the directory"
-	}
-	// terraform-docs writes the files its options and .terraform-docs.yml
-	// name (output.file), guard files included.
-	tfdocs := denyOpts("-c", "--config", "--output-file", "--output-mode", "--output-template", "--output-check", "--output-format")
-	shapes["terraform-docs"] = func(args []Word, inv Invocation) string {
-		if why := tfdocs(args, inv); why != "" {
-			return why
-		}
-		dirs := []string{inv.Dir}
-		for _, w := range args {
-			if t := optText(w); !strings.HasPrefix(t, "-") && t != "" && inv.Dir != "" {
-				dirs = append(dirs, PhysicalJoin(inv.Dir, t))
-			}
-		}
-		for _, d := range dirs {
-			for _, n := range []string{".terraform-docs.yml", ".terraform-docs.yaml"} {
-				if _, err := os.Stat(filepath.Join(d, n)); d == "" || err == nil {
-					return "terraform-docs with a " + n + " config in " + d
-				}
-			}
-		}
-		return ""
-	}
-	// terragrunt evaluates terragrunt.hcl, whose run_cmd() and hooks run
-	// programs, and runs terraform in a cache the plan check does not see:
-	// only formatting and its version are plain. make runs its recipes in
-	// a shell it chooses (SHELL, implicit rules, $(shell)), so it is never
-	// plain.
-	shapes["terragrunt"] = func(args []Word, _ Invocation) string {
-		for _, w := range args {
-			t := optText(w)
-			// version and fmt are terraform's, which the classic CLI runs after
-			// parsing terragrunt.hcl: only the flag forms, hclfmt and help
-			// read nothing.
-			if t == "--version" || t == "-version" || t == "hclfmt" || t == "help" || t == "--help" {
-				return ""
-			}
-			if !strings.HasPrefix(t, "-") {
-				if t == "hcl" {
-					continue
-				}
-				if t == "fmt" && len(args) > 1 && optText(args[0]) == "hcl" {
-					return ""
-				}
-				break
-			}
-		}
-		return "terragrunt evaluates terragrunt.hcl, whose run_cmd and hooks run programs"
-	}
+	// make runs its recipes in a shell it chooses (SHELL, implicit rules,
+	// $(shell)), so it is never plain.
 	shapes["sed"] = sedShape
 	shapes["tar"] = tarShape
 	shapes["git"] = gitShape
-	shapes["gh"] = valuedSubcommands(toSet("-R", "--repo"), "auth status", "api", "cache", "gist", "issue", "label", "org", "pr", "project", "release",
-		"repo", "run", "ruleset", "search", "secret", "status", "variable", "workflow", "config get", "config list")
-	shapes["glab"] = valuedSubcommands(toSet("-R", "--repo"), "api", "auth status", "ci", "issue", "label", "mr", "release", "repo", "variable",
-		"config get")
 	// gh and glab run git in the repository for some subcommands (pr
 	// checkout, pr merge, repo sync, repo fork --clone, mr checkout), and
 	// pass words after -- to git clone: the same state check as git's.
@@ -115,68 +50,8 @@ func init() {
 			return ""
 		}
 	}
+	regOutputs("go", "-o -outputdir -modfile -overlay -coverprofile -cpuprofile -memprofile -trace")
 	shapes["go"] = valuedSubcommands(toSet("-C"), "version", "env", "doc", "help", "list", "mod graph", "mod why", "mod verify")
-	shapes["docker"] = valuedSubcommands(toSet("-H", "--host", "--context", "-c", "-l", "--log-level"), "ps", "images", "image ls", "image inspect", "version", "info", "logs", "inspect",
-		"context ls", "context show", "compose ps", "compose ls", "compose config", "compose logs", "compose version")
-	// docker --config names a config whose credsStore is a helper program.
-	dockerShape := shapes["docker"]
-	shapes["docker"] = func(args []Word, inv Invocation) string {
-		if hasOpt(args, "--config") {
-			return "the option --config"
-		}
-		return dockerShape(args, inv)
-	}
-	// podman runs the OCI runtime and conmon its options name, and hook
-	// directories and a network helper.
-	podman := shapes["docker"]
-	shapes["podman"] = func(args []Word, inv Invocation) string {
-		if why := denyOpts("--runtime", "--conmon", "--hooks-dir", "--network-cmd-path", "--helper-binaries-dir", "--url", "--identity", "--connection", "-c", "--remote", "--cdi-spec-dir", "--root", "--runroot", "--storage-opt")(args, inv); why != "" {
-			return why
-		}
-		return podman(args, inv)
-	}
-	shapes["kustomize"] = denyOpts("--enable-alpha-plugins", "--enable-exec", "--enable-helm", "--helm-command")
-	// checkov loads Python checks from a directory its options or a
-	// .checkov.yaml in the directory name.
-	checkov := denyOpts("--external-checks-dir", "--external-checks-git", "--config-file")
-	shapes["checkov"] = func(args []Word, inv Invocation) string {
-		if why := checkov(args, inv); why != "" {
-			return why
-		}
-		// Its config is read from the working directory, the home
-		// directory and each directory it scans (-d).
-		dirs := []string{inv.Dir, os.Getenv("HOME")}
-		for i, w := range args {
-			t := optText(w)
-			switch {
-			case (t == "-d" || t == "--directory") && i+1 < len(args):
-				if !args[i+1].Resolved {
-					return "a checkov directory that cannot be resolved"
-				}
-				dirs = append(dirs, PhysicalJoin(inv.Dir, args[i+1].Text))
-			case strings.HasPrefix(t, "--directory="):
-				dirs = append(dirs, PhysicalJoin(inv.Dir, strings.TrimPrefix(t, "--directory=")))
-			}
-		}
-		for _, d := range dirs {
-			for _, n := range []string{".checkov.yaml", ".checkov.yml"} {
-				if _, err := os.Stat(filepath.Join(d, n)); d == "" || err == nil {
-					return "checkov with a " + n + " config in " + d
-				}
-			}
-		}
-		return ""
-	}
-	trivy := subcommands("config", "fs", "filesystem", "repo", "repository", "image", "version", "sbom", "k8s")
-	shapes["trivy"] = func(args []Word, inv Invocation) string {
-		// Another kubeconfig: its users may run an exec credential plugin.
-		if hasOpt(args, "--kubeconfig") {
-			return "the option --kubeconfig"
-		}
-		return trivy(args, inv)
-	}
-	shapes["conftest"] = subcommands("test", "verify", "parse", "fmt", "version")
-	shapes["opa"] = subcommands("eval", "test", "fmt", "check", "version", "inspect", "parse", "build")
 	// `go env -w` and `-u` write the go environment file, which later
 	// builds read.
 	goShape := shapes["go"]
@@ -582,26 +457,9 @@ func sedScript(s string) string {
 	return ""
 }
 
-// gitSubs are the git subcommands a plain command may run. Others run a
-// program by design (filter-branch, bisect run, submodule foreach, difftool,
-// mergetool), or are aliases.
-var gitSubs = toSet("status", "log", "diff", "show", "branch", "checkout", "switch", "add", "commit", "restore", "reset",
-	"stash", "fetch", "pull", "push", "merge", "rebase", "tag", "remote", "rev-parse", "rev-list", "ls-files", "ls-tree",
-	"blame", "describe", "config", "init", "clone", "mv", "rm", "cherry-pick", "revert", "worktree", "grep", "shortlog",
-	"reflog", "ls-remote", "apply", "clean", "cat-file", "name-rev", "merge-base", "for-each-ref", "symbolic-ref",
-	"show-ref", "check-ignore", "version", "help", "notes", "range-diff", "whatchanged", "count-objects", "fsck", "gc",
-	"sparse-checkout", "format-patch", "am", "archive", "bundle")
-
-// gitDeny are options of any git subcommand that run a program or read
-// config the analyzer does not see: the transport commands, archive and
-// rebase --exec, an external diff or textconv, a difftool, a template
-// directory, another git directory or exec path.
-var gitDeny = []string{"--upload-pack", "--receive-pack", "--exec", "--ext-diff", "--textconv", "--filters", "--tool",
-	"--template", "--git-dir", "--work-tree", "--exec-path", "--config-env", "--open-files-in-pager"}
-
 // gitShape: a git command is plain when its global options are harmless,
-// its subcommand is listed, it uses none of gitDeny (nor rebase -x, grep -O,
-// clone or ls-remote -u), its config edits name no key that runs a command,
+// its subcommand is listed in gitProgs with every option it uses (allow_git.go),
+// its config edits name no key that runs a command,
 // no URL uses the ext:: or fd:: transport, and its repository holds no
 // hooks and no such keys (gitState).
 func gitShape(args []Word, inv Invocation) string {
@@ -611,7 +469,8 @@ func gitShape(args []Word, inv Invocation) string {
 		case "-C":
 			i += 2
 			continue
-		case "--no-pager", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects":
+		case "--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects", "--glob-pathspecs", "--noglob-pathspecs",
+			"--icase-pathspecs", "--version":
 		default:
 			// -c, -p, --git-dir, --exec-path and the rest.
 			return "the git option " + t
@@ -625,24 +484,15 @@ func gitShape(args []Word, inv Invocation) string {
 		return "a git subcommand that cannot be resolved"
 	}
 	sub := args[i].Text
-	if !gitSubs[sub] {
+	sp, ok := gitProgs[sub]
+	if !ok {
 		return "the git subcommand " + sub
 	}
 	rest := args[i+1:]
-	for _, o := range gitDeny {
-		if hasOpt(rest, o) {
-			return "the git option " + o
+	if sp != nil {
+		if why := sp.check("git "+sub, rest); why != "" {
+			return why
 		}
-	}
-	switch {
-	case sub == "rebase" && hasOpt(rest, "-x"):
-		return "the git option -x"
-	case sub == "grep" && hasOpt(rest, "-O"):
-		return "the git option -O"
-	case (sub == "clone" || sub == "ls-remote") && hasOpt(rest, "-u"):
-		return "the git option -u"
-	case sub == "clone" && (hasOpt(rest, "-c") || hasOpt(rest, "--config")):
-		return "the git option -c"
 	}
 	dir := inv.Dir
 	for j := 0; j+1 < i; j++ {
@@ -700,15 +550,7 @@ func gitShape(args []Word, inv Invocation) string {
 				return "git remote " + optText(w) + " changes the remotes the upstream check trusts"
 			}
 		}
-	case "branch":
-		for _, w := range rest {
-			t := optText(w)
-			if t == "-u" || t == "--set-upstream-to" || strings.HasPrefix(t, "--set-upstream-to=") || t == "--unset-upstream" || t == "-f" || t == "--force" ||
-				t == "-m" || t == "-M" || t == "-c" || t == "-C" || t == "--move" || t == "--copy" || t == "-d" || t == "-D" || t == "--delete" || t == "--edit-description" {
-				return "git branch " + t + " changes a branch or its upstream"
-			}
-		}
-	case "update-ref", "symbolic-ref":
+	case "update-ref":
 		return "git " + sub + " writes a reference"
 	}
 	return gitState(dir, sub)

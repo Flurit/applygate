@@ -24,18 +24,22 @@ import (
 //   - an option that writes a file is listed only when the analysis judges
 //     that write itself (cp -t, ln -t, mv -t); otherwise it is absent.
 type prog struct {
-	flags  map[string]bool // options without a value
-	vals   map[string]bool // options with one value (a pattern, number, format or file read)
-	optVal map[string]bool // long options with an optional =value
-	num    bool            // -N (digits only) is an option (head -5, gzip -9)
-	loose  bool            // an unresolved word may be left alone: no listed or real option makes a path or program
-	maxOps int             // at most this many operands; -1 is any number
-	ops    func(ops []Word) string
-	need   func(seen map[string]bool) string // a rule over the options seen
-	opWord func(t string) bool               // a word that starts with a dash but is an operand (a chmod mode)
-	once   map[string]bool                   // options that may appear once (the analysis judges one output file per call)
-	valOK  func(opt string, v Word) string   // a rule over the value of an option
-	writes map[string]bool                   // options whose value is a file the analysis judges as written (the conformance test expects it)
+	flags   map[string]bool // options without a value
+	vals    map[string]bool // options with one value (a pattern, number, format or file read)
+	optVal  map[string]bool // long options with an optional =value
+	num     bool            // -N (digits only) is an option (head -5, gzip -9)
+	loose   bool            // an unresolved word may be left alone: no listed or real option makes a path or program
+	maxOps  int             // at most this many operands; -1 is any number
+	ops     func(ops []Word) string
+	need    func(seen map[string]bool) string // a rule over the options seen
+	opWord  func(t string) bool               // a word that starts with a dash but is an operand (a chmod mode)
+	once    map[string]bool                   // options that may appear once (the analysis judges one output file per call)
+	valOK   func(opt string, v Word) string   // a rule over the value of an option
+	writes  map[string]bool                   // options whose value is a file the analysis judges as written (the conformance test expects it)
+	derived map[string]bool                   // options that are the --no- negation of a listed one: the conformance test runs the listed ones
+	family  string                            // programs whose entries share options: the conformance test runs a shared option once per family
+	with    []string                          // words the conformance test adds so that one option can be run alone (a message for commit)
+	outputs []string                          // options whose value is a file the program writes, listed or not: the classifier names the path (OutputOpts)
 }
 
 // allowProgs are the programs described by a prog, by name (the conformance
@@ -45,6 +49,9 @@ var allowProgs = map[string]*prog{}
 func allow(name string, p *prog) {
 	allowProgs[name] = p
 	shapes[name] = p.shape(name)
+	if len(p.outputs) > 0 {
+		outputOptions[name] = append(outputOptions[name], p.outputs...)
+	}
 }
 
 func opts(s string) map[string]bool {
@@ -231,12 +238,16 @@ func itoa(n int) string {
 // that are nil are the same set). A program with a write-capable or
 // exec-capable option never belongs here: it gets a prog.
 var inert = toSet(
+	// Programs left here have no option that writes or runs anything, and
+	// a listed form would only add asks for options that differ between GNU
+	// and BSD builds (grep has some 80); head, tail, cat, wc, cut, ls and the
+	// path helpers have a list in the init below.
 	// builtins and trivial
 	"pwd", "echo", "true", "false", "test", "[", "exit", "unset", "sleep", "which", "type",
 	// readers of files and directories
-	"ls", "cat", "head", "tail", "wc", "grep", "egrep", "cut", "tr", "cmp", "stat", "df", "du",
-	"basename", "dirname", "realpath", "readlink", "column", "od", "jq", "nl", "fold", "comm", "join", "paste",
-	"sha256sum", "shasum", "md5sum", "seq", "id", "whoami", "uname", "printenv",
+	"grep", "egrep", "tr", "cmp", "stat", "df", "du",
+	"column", "od", "jq", "nl", "fold", "comm", "join", "paste",
+	"sha256sum", "shasum", "md5sum", "id", "whoami", "uname", "printenv",
 	// linters that only read
 	"shellcheck",
 )
@@ -266,7 +277,7 @@ func init() {
 	allow("uniq", newProg("-c -d -D -i -u -z --count --repeated --ignore-case --unique --zero-terminated", "-f -s -w --skip-fields --skip-chars --check-chars").
 		withMaxOps(1)) // the second operand is the output file
 	allow("tree", newProg("-a -d -f -i -l -p -s -u -g -h -D -F -q -N -Q -r -t -v -x -C -n -A -S -U --dirsfirst --noreport --prune --du --inodes --device",
-		"-L -P -I --charset --filelimit --sort --timefmt --matchdirs"))
+		"-L -P -I --charset --filelimit --sort --timefmt --matchdirs").withOutputs("-o --output"))
 	allow("diff", newProg("-a -b -B -d -E -i -N -p -q -r -s -t -T -u -w -y -Z --brief --ignore-case --recursive --report-identical-files --normal "+
 		"--side-by-side --ignore-all-space --ignore-space-change --ignore-blank-lines --new-file --text --minimal --expand-tabs --initial-tab "+
 		"--strip-trailing-cr --show-c-function --left-column --suppress-common-lines --ignore-tab-expansion --no-dereference",
@@ -314,7 +325,7 @@ func init() {
 	// tfsec --out writes a report file.
 	allow("tfsec", newProg("--no-colour --no-color --verbose --debug --soft-fail --include-passed --include-ignored --concise-output "+
 		"--exclude-downloaded-modules --ignore-hcl-errors --run-statistics --no-module-downloads --force-all-dirs --version -h --help",
-		"--format -f --minimum-severity --exclude -e --tfvars-file --workspace --exclude-path -x"))
+		"--format -f --minimum-severity --exclude -e --tfvars-file --workspace --exclude-path -x").withOutputs("--out -O --output-file"))
 	shapes["gsutil"] = func(args []Word, _ Invocation) string {
 		// Global options -o and -i name boto settings and a service account
 		// to impersonate; only the read subcommands are plain.
@@ -326,6 +337,7 @@ func init() {
 		return valuedSubcommands(nil, "ls", "cat", "stat", "du", "hash", "version", "help")(args, Invocation{})
 	}
 	shapes["find"] = func(args []Word, inv Invocation) string { return findShape(args, inv) }
+	regOutputs("find", "-fprint -fprint0 -fprintf -fls")
 	// cd takes one directory: zsh's two-operand form, CDPATH-sensitive plain
 	// names are the analysis's, and "-" is the previous directory, which the
 	// analysis does not know.
@@ -339,6 +351,31 @@ func init() {
 		return ""
 	}
 	allow("cd", cd)
+
+	// Readers that print: the options are listed so that a version of the
+	// program with an option that writes or runs something is not plain until
+	// the option is listed. None here takes a file to write, and the conformance
+	// test runs each listed option.
+	allow("cat", newProg("-A -b -e -E -l -n -s -t -T -u -v --show-all --number-nonblank --show-ends --number --squeeze-blank --show-tabs --show-nonprinting --help --version", "").withLoose())
+	allow("head", newProg("-q -v -z --quiet --silent --verbose --zero-terminated --help --version", "-c -n --bytes --lines").withNum().withLoose())
+	allow("tail", newProg("-f -F -q -r -v -z --quiet --silent --verbose --retry --zero-terminated --help --version", "-c -n -b -s --bytes --lines --sleep-interval").
+		withOptVal("--follow --pid --max-unchanged-stats").withNum().withLoose())
+	allow("wc", newProg("-c -l -m -w -L -z --bytes --lines --chars --words --max-line-length --zero-terminated --help --version", "").withOptVal("--total --files0-from").withLoose())
+	allow("cut", newProg("-n -s -z --only-delimited --zero-terminated --complement --help --version", "-b -c -f -d --bytes --characters --fields --delimiter").
+		withOptVal("--output-delimiter").withLoose())
+	allow("ls", newProg("-1 -@ -a -A -b -B -c -C -d -e -f -F -g -G -h -H -i -k -l -L -m -n -N -o -O -p -P -q -Q -r -R -s -S -t -T -u -U -v -x -X -Z -% -w "+
+		"--all --almost-all --author --escape --ignore-backups --classify --file-type --dereference-command-line --directory --dired --human-readable --si "+
+		"--inode --kibibytes --dereference --numeric-uid-gid --literal --hide-control-chars --show-control-chars --quote-name --reverse --recursive --size "+
+		"--group-directories-first --no-group --context --full-time --help --version --zero", "-I -T -w --ignore --hide --width --tabsize").
+		withOptVal("--color --format --sort --time --time-style --indicator-style --block-size --quoting-style --hyperlink --dereference-command-line-symlink-to-dir").withLoose())
+	allow("basename", newProg("-a -z --multiple --zero --help --version", "-s --suffix").withLoose())
+	allow("dirname", newProg("-z --zero --help --version", "").withLoose())
+	allow("realpath", newProg("-e -m -s -q -L -P -z --canonicalize-existing --canonicalize-missing --no-symlinks --quiet --logical --physical --strip --zero --help --version", "").
+		withOptVal("--relative-to --relative-base").withLoose())
+	allow("readlink", newProg("-f -e -m -n -q -s -v -z --canonicalize --canonicalize-existing --canonicalize-missing --no-newline --quiet --silent --verbose --zero --help --version", "").withLoose())
+	seq := newProg("-w -W --equal-width --help --version", "-f -s -t --format --separator --terminator").withLoose()
+	seq.opWord = seqNumRE.MatchString
+	allow("seq", seq)
 
 	for n := range inert {
 		shapes[n] = nil
@@ -356,6 +393,8 @@ func chmodProg() *prog {
 	p.opWord = modeWordRE.MatchString
 	return p
 }
+
+var seqNumRE = regexp.MustCompile(`^-[0-9]+(\.[0-9]+)?$`)
 
 var modeWordRE = regexp.MustCompile(`^-[rwxXstugoa]+$`)
 

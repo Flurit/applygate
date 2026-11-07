@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (allow-list stage 6)
+
+- **`git` and eleven more programs by subcommand and option list** (`internal/shell/allow_git.go`, `allow_scan.go`, `allow_tree.go`): `git` per subcommand with exact options (replaces `gitSubs`/`gitDeny`), then `docker`, `podman`, `gh`, `glab`, `trivy`, `kustomize`, `opa`, `conftest`, `infracost`, `terragrunt`, `terraform-docs`, `checkov`; `cat head tail wc cut ls basename dirname realpath readlink seq` leave the inert set. The classifier's `outputOpts` table moved next to each entry. A conformance test runs every listed option of every leaf. **No verdict changed on the 162 agent-trial calls** in prod, staging or dev. New asks: `git commit` without a message, `git rebase -i`, `git gc`, `opa build`/`fmt -w`, `conftest fmt`, `infracost configure set`, `gh --web`/`--editor`, unlisted options. Details and what is not done: `docs/limits.md` ("Allow-list, stage 6").
+
 ## Unreleased (reassessment root fixes)
 
 - **Unknown values carry a reason** (`shell.Word.Why`): a word the analysis cannot resolve records what made it unknown; unknown terraform options, `-chdir` values and subcommands make a call not plain and say why; `applygate explain` shows it.

@@ -33,6 +33,7 @@ func init() {
 			"--local-port --dns-servers --doh-url --ciphers --tls13-ciphers --curves --tls-max --expect100-timeout --url --url-query "+
 			"--keepalive-time --happy-eyeballs-timeout-ms --request-target --service-name --proxy-service-name").
 		withOnce("-o --output -O --remote-name --remote-name-all").withWrites("-o --output -O --remote-name --remote-name-all").
+		withOutputs("-o --output -D --dump-header -c --cookie-jar --trace --trace-ascii --stderr --libcurl").
 		withValOK(func(opt string, v Word) string {
 			switch opt {
 			case "-w", "--write-out":
@@ -62,7 +63,8 @@ func init() {
 			"--http-user --http-password --referer --post-data --post-file --body-data --body-file --method --load-cookies --certificate "+
 			"--private-key --ca-certificate --ca-directory --connect-timeout --dns-timeout --read-timeout --limit-rate --bind-address "+
 			"--waitretry --max-redirect --compression --progress --secure-protocol --quota").
-		withOnce("-O --output-document").withWrites("-O --output-document -P --directory-prefix"))
+		withOnce("-O --output-document").withWrites("-O --output-document -P --directory-prefix").
+		withOutputs("-O --output-document -o --output-file -a --append-output"))
 
 	allow("zip", newProg(
 		"-r -q -v -j -J -y -X -D -u -f -g -m -d -e -FS -9 -8 -7 -6 -5 -4 -3 -2 -1 -0 --recurse-paths --quiet --verbose --junk-paths --symlinks --no-extra "+
@@ -95,5 +97,6 @@ func init() {
 
 	allow("actionlint", newProg("-oneline -verbose -color -no-color -version -debug -stdin", "-ignore -format -config-file"))
 	allow("tflint", newProg("--recursive --no-color --color --force --version -v --help -h",
-		"--format -f --enable-rule --disable-rule --only --var-file --var --chdir --filter --minimum-failure-severity --call-module-type --max-workers"))
+		"--format -f --enable-rule --disable-rule --only --var-file --var --chdir --filter --minimum-failure-severity --call-module-type --max-workers").
+		withOutputs("--out --output-file"))
 }

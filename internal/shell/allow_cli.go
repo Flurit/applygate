@@ -91,6 +91,9 @@ func init() {
 	allow2 := func(name string) { shapes[name] = cmdTree(name, tfGlobal(), tfSubs()) }
 	allow2("terraform")
 	allow2("tofu")
+	// The options by which a plan or a state is written to a file.
+	regOutputs("terraform", "-out --out -generate-config-out -state-out -backup")
+	regOutputs("tofu", "-out --out -generate-config-out -state-out -backup")
 
 	// aws: the read verbs of every service, and the services' own help and
 	// waiters. A verb that is not a read (start-session and ecs
