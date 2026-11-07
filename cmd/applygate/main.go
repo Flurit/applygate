@@ -190,7 +190,15 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return o.Exit
 }
 
-func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
+func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) (code int) {
+	// A panic in the analysis is not a verdict: exit as a block, so a gate
+	// that runs check (a Terragrunt hook, CI) never proceeds on it.
+	defer func() {
+		if p := recover(); p != nil {
+			fmt.Fprintf(stderr, "applygate: internal error: %v (the command is not allowed; applygate fails closed)\n", p)
+			code = 2
+		}
+	}()
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	cwd := fs.String("cwd", "", "working directory the command runs in (default: current)")
@@ -250,7 +258,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) int {
 				if w.Resolved {
 					ws = append(ws, fmt.Sprintf("%q", w.Text))
 				} else {
-					ws = append(ws, "<unresolved "+fmt.Sprintf("%q", w.Prefix)+"...>")
+					ws = append(ws, "<unresolved "+fmt.Sprintf("%q", w.Prefix)+"...: "+w.Reason()+">")
 				}
 			}
 			fmt.Fprintf(stdout, "   - [%s] in %s", strings.Join(ws, " "), orNone(inv.Dir))

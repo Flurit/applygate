@@ -69,8 +69,8 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 
 | Agent | Status | If applygate cannot run |
 |---|---|---|
-| Claude Code | Tested live | blocks (Claude Code 2.1.295 or later) |
-| Codex | Tested live | the call runs |
+| Claude Code | Tested live on v0.5.0; v0.6.0 not re-run | blocks (Claude Code 2.1.295 or later) |
+| Codex | Tested live on v0.5.0; v0.6.0 not re-run | the call runs |
 | Cursor | Preview | blocks |
 | GitHub Copilot CLI | Preview | blocks; runs on a timeout |
 | Gemini CLI | Preview | the call runs |
@@ -82,6 +82,8 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 `applygate init` installs the hooks for Claude Code and Codex. **Preview** hooks follow each agent's documentation but have not yet been tested inside the agent. Install one with `applygate hook install --agent NAME`, then check it: ask the agent to run `terraform destroy -auto-approve` in an empty directory, and applygate should block it. Only Claude Code and Copilot CLI can show you an "ask" prompt; on the other agents an ask is a block. Claude Code is trusted to prompt only in the permission modes where that was seen live (default and `bypassPermissions`); in `acceptEdits`, `plan`, `auto` and `dontAsk` an ask is a block. One-time approvals (`applygate approve ID`) are off by default, because an agent on the same machine can reach any terminal you can; turning them on in your user config trusts that no agent runs the approval in a way applygate does not recognise ([docs/policy.md](docs/policy.md) step 9). For every agent's details, see [docs/hosts.md](docs/hosts.md) (also `applygate hosts`).
 
 **MCP servers.** In Claude Code and Codex, a call to a known infrastructure MCP tool (AWS, HCP Terraform, Kubernetes, Helm, gcloud, az, or a server that runs shell commands) is judged as the command it is equivalent to, so a Terraform server's `destroy` gets the same verdict as `terraform destroy`. Shell tools of other servers (`run_in_terminal`, `bash`, …) are judged as shell commands, and a call that names a guard file is blocked like a write to it. Other MCP calls are logged and allowed, or sent to the model judge when it is on. The translations were written from each server's source code and have not been tested against the running servers; the list is in [docs/mcp.md](docs/mcp.md).
+
+**What is not verified.** The live tests above predate v0.6.0 and have not been re-run for it. The MCP translations were written from source, not tested against running servers. One-time approvals were exercised with a replayed Codex event, not inside a live agent. The managed-install settings keys are from the agents' documentation, not tested live, and so are the sandbox keys `doctor --boundary` reads. None of this is part of a security claim; [docs/limits.md](docs/limits.md) lists what each guarantee depends on.
 
 **No model needed.** applygate's rules are deterministic, work offline and decide every call they recognize. Calls they do not recognize (Pulumi, database clients, PaaS CLIs, inline SDK code, unknown scripts and MCP tools, file writes) are allowed.
 

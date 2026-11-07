@@ -25,9 +25,57 @@ type Word struct {
 	Text     string // best-effort text; unresolved parts are left out
 	Resolved bool   // false when any part depends on runtime data
 	Prefix   string // literal text before the first unresolved part
+	// Why says what made the word unknown (the first unresolved part: a
+	// variable the analysis has no value for, a command substitution, a
+	// glob, a positional parameter). "" on a known word. A word that is
+	// rebuilt from another keeps its Resolved flag and may lose this; Reason
+	// then gives a generic one, so an unknown never loses its reason.
+	Why string
+	// why is the unresolved part itself; Reason names it on demand, so the
+	// text is not built (and a nested substitution not printed) at every level.
+	why syntax.WordPart
 	// unquoted is set when an unquoted expansion contributed text, so the
 	// shell would split the result into fields.
 	unquoted bool
+}
+
+// Reason is why the word is unknown ("" when it is known): its recorded
+// cause, or a generic one when a rebuilt word lost it.
+func (w Word) Reason() string {
+	if w.Resolved {
+		return ""
+	}
+	if w.Why != "" {
+		return w.Why
+	}
+	if w.why != nil {
+		return partWhy(w.why)
+	}
+	if w.Prefix != "" {
+		return "a value known only at run time (after " + strconv.Quote(w.Prefix) + ")"
+	}
+	return "a value known only at run time"
+}
+
+// partWhy names what an unresolved word part is.
+func partWhy(p syntax.WordPart) string {
+	var b strings.Builder
+	_ = syntax.NewPrinter().Print(&b, &syntax.Word{Parts: []syntax.WordPart{p}})
+	src := b.String()
+	if len(src) > 40 {
+		src = src[:40] + "..."
+	}
+	switch p.(type) {
+	case *syntax.ParamExp:
+		return "the value of " + src + " is not known when the command is checked"
+	case *syntax.CmdSubst, *syntax.ProcSubst:
+		return "the output of " + src + " is only known when it runs"
+	case *syntax.ArithmExp:
+		return "the arithmetic " + src + " is not evaluated"
+	case *syntax.Lit:
+		return "the pattern " + src + " expands against the file system"
+	}
+	return "the expansion " + src + " is not known when the command is checked"
 }
 
 // Invocation is one program the shell would start.
@@ -473,9 +521,7 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 	for _, r := range s.Redirs {
 		switch r.Op {
 		case syntax.Hdoc, syntax.DashHdoc:
-			a.noGlob++
-			w := a.word(r.Hdoc, st, via, depth)
-			a.noGlob--
+			w := a.hdocWord(r, st, via, depth)
 			in = stdin{text: w.Text, known: w.Resolved, present: true, desc: "here-document"}
 		case syntax.WordHdoc:
 			w := a.word(r.Word, st, via, depth)
@@ -914,6 +960,8 @@ func (a *analyzer) allParams(w *syntax.Word, st *state) ([]Word, bool) {
 		out[i] = Word{Text: v.text, Resolved: v.ok}
 		if v.ok {
 			out[i].Prefix = v.text
+		} else {
+			out[i].Why = "positional parameter " + strconv.Itoa(i+1) + " is not known when the command is checked"
 		}
 	}
 	return out, true
@@ -927,6 +975,7 @@ func (a *analyzer) split(w Word, st *state) []Word {
 	}
 	if _, custom := st.vars["IFS"]; custom {
 		w.Resolved = false
+		w.Why = "IFS is set, so how the word splits is not known"
 		return []Word{w}
 	}
 	if !w.Resolved {
@@ -952,9 +1001,13 @@ func (a *analyzer) word(w *syntax.Word, st *state, via []string, depth int) Word
 	}
 	var b strings.Builder
 	res := Word{Resolved: true}
+	var cur syntax.WordPart
 	mark := func() {
 		if res.Resolved {
 			res.Prefix = b.String()
+			if cur != nil {
+				res.why = cur
+			}
 		}
 		res.Resolved = false
 	}
@@ -968,11 +1021,12 @@ func (a *analyzer) word(w *syntax.Word, st *state, via []string, depth int) Word
 				res.unquoted = true
 			}
 		}
+		cur = p
 		a.part(p, st, via, depth, &b, mark, i == 0, false)
 		if b.Len() > maxText && !literal {
 			mark()
 			res.Prefix = res.Prefix[:min(len(res.Prefix), maxText)]
-			return Word{Prefix: res.Prefix, unquoted: res.unquoted}
+			return Word{Prefix: res.Prefix, unquoted: res.unquoted, Why: "an expansion longer than the analysis reads"}
 		}
 	}
 	res.Text = b.String()
@@ -1224,6 +1278,81 @@ func smallNode(n syntax.Node, budget int) bool {
 		return true
 	})
 	return ok
+}
+
+// hdocWord is the text a here-document gives its command. A quoted delimiter
+// ('EOF', "EOF", \EOF) makes the body literal: a backslash stays. With a bare
+// delimiter the shell expands $, backquote and backslash inside it as in
+// double quotes, and a backslash removes itself only before $, backquote,
+// another backslash and a newline. Reading the body as a word, which drops
+// every backslash, turned the quote-escape idiom of a nested sh -c into
+// different text, so a command nested in a here-document was analyzed as
+// something the shell did not run.
+func (a *analyzer) hdocWord(r *syntax.Redirect, st *state, via []string, depth int) Word {
+	if r.Hdoc == nil {
+		return Word{Resolved: true}
+	}
+	quoted := false
+	if r.Word != nil {
+		for _, p := range r.Word.Parts {
+			switch x := p.(type) {
+			case *syntax.SglQuoted, *syntax.DblQuoted:
+				quoted = true
+			case *syntax.Lit:
+				if strings.Contains(x.Value, `\`) {
+					quoted = true
+				}
+			}
+		}
+	}
+	var b strings.Builder
+	res := Word{Resolved: true}
+	mark := func() {
+		if res.Resolved {
+			res.Prefix = b.String()
+		}
+		res.Resolved = false
+	}
+	for _, p := range r.Hdoc.Parts {
+		if lit, ok := p.(*syntax.Lit); ok {
+			if quoted {
+				b.WriteString(lit.Value)
+			} else {
+				b.WriteString(unescapeHdoc(lit.Value))
+			}
+			continue
+		}
+		a.part(p, st, via, depth, &b, mark, false, true)
+		if b.Len() > maxText {
+			mark()
+			res.Prefix = res.Prefix[:min(len(res.Prefix), maxText)]
+			return Word{Prefix: res.Prefix}
+		}
+	}
+	res.Text = b.String()
+	if res.Resolved {
+		res.Prefix = res.Text
+	}
+	return res
+}
+
+// unescapeHdoc removes the backslash of \$, \`+"`"+`, \\ and a backslash-newline, the
+// only escapes an unquoted here-document body has.
+func unescapeHdoc(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) && strings.IndexByte("$`\\\n", s[i+1]) >= 0 {
+			i++
+			if s[i] == '\n' {
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 func unescapeLit(s string) string {

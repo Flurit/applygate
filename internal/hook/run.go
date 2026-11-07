@@ -281,16 +281,61 @@ func failureBlocks(cfg *config.Config, cwd string, timeout bool) bool {
 	case "allow":
 		return false
 	case "auto":
-		root := cfg.Root
-		if root == "" {
-			root = cwd
-		}
-		if root == "" {
-			return true
-		}
-		return cfg.ResolveUnder(root, config.Signals{}, "applygate could not decide").Tier == config.Protected
+		return protectedUnder(cfg, cwd)
 	}
 	return true
+}
+
+// protectedUnder reports whether anything under the repository root (or, with
+// no root, under cwd) resolves to the protected tier: a command that was not
+// analyzed could run anywhere under it.
+func protectedUnder(cfg *config.Config, cwd string) bool {
+	root := cfg.Root
+	if root == "" {
+		root = cwd
+	}
+	if root == "" {
+		return true
+	}
+	return cfg.ResolveUnder(root, config.Signals{}, "applygate could not decide").Tier == config.Protected
+}
+
+// PanicHook is called at named points of a run; a test sets it to inject a
+// panic and prove the recovery fails closed. It is nil in the binary.
+var PanicHook func(site string)
+
+func panicPoint(site string) {
+	if h := PanicHook; h != nil {
+		h(site)
+	}
+}
+
+// panicBlocks is failureBlocks for a recovered panic. A panic is a failure of
+// the analysis, not a configuration error, so on_error: allow does not apply
+// where the call could reach a protected tier. Observe mode still never
+// blocks.
+func panicBlocks(cfg *config.Config, cwd string) (block bool) {
+	defer func() {
+		if p := recover(); p != nil {
+			block = true // even the failure path failed: fail closed
+		}
+	}()
+	if failureBlocks(cfg, cwd, false) {
+		return true
+	}
+	return cfg != nil && !cfg.Observe() && protectedUnder(cfg, cwd)
+}
+
+// safeFail renders a failure; if rendering it panics too (the decision log,
+// the adapter), the answer is a bare block.
+func safeFail(a Adapter, fail func(*config.Config, string, string) Output, cfg *config.Config, cwd, msg string) (o Output) {
+	defer func() {
+		if p := recover(); p != nil {
+			block := cfg == nil || !cfg.Observe()
+			o = a.Fail(block, fmt.Sprintf("applygate: %s (and its failure handling failed: %v; applygate fails closed unless observing)", msg, p))
+		}
+	}()
+	return fail(cfg, cwd, msg)
 }
 
 // RunWithin is Run with a watchdog: when the run is not done shortly after
@@ -304,7 +349,16 @@ func RunWithin(a Adapter, in io.Reader, opt Options) Output {
 		budget = DefaultBudget
 	}
 	done := make(chan Output, 1)
-	go func() { done <- Run(a, in, opt) }()
+	go func() {
+		// Run recovers its own panics; one in its recovery path (rendering the
+		// failure, writing the log) still answers with a block.
+		defer func() {
+			if p := recover(); p != nil {
+				done <- a.Fail(true, fmt.Sprintf("applygate: internal error: %v (applygate fails closed)", p))
+			}
+		}()
+		done <- Run(a, in, opt)
+	}()
 	t := time.NewTimer(budget + watchdogSlack)
 	defer t.Stop()
 	select {
@@ -355,6 +409,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		return config.DefaultLogPath()
 	}
 	finish := func(cfg *config.Config, o Output) Output {
+		panicPoint("finish")
 		o.Deadline = deadline
 		entry.DurationMS = float64(time.Since(start).Microseconds()) / 1000
 		if !opt.NoLog && filepath.IsAbs(logPath(cfg)) {
@@ -367,8 +422,18 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	}
 	// fail applies the error behavior. Without a usable config the guard
 	// fails closed: an unknown environment is treated as protected.
+	// panicked and stopped refine fail: a recovered panic follows panicBlocks,
+	// and one after the policy already refused or asked never lets the call
+	// through, in any tier.
+	panicked, stopped := false, false
 	fail := func(cfg *config.Config, cwd, msg string) Output {
 		block := failureBlocks(cfg, cwd, false)
+		if panicked {
+			block = panicBlocks(cfg, cwd)
+			if stopped && (cfg == nil || !cfg.Observe()) {
+				block = true
+			}
+		}
 		if !block && cfg != nil && !cfg.Observe() && cfg.OnError != "allow" && infraWord.MatchString(entry.Command) {
 			// One internal error must not let a command that runs an
 			// infrastructure program through, whatever tier the root is.
@@ -394,7 +459,8 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	// that panics block rather than fail open.
 	defer func() {
 		if p := recover(); p != nil {
-			out = fail(recoverCfg, cwd, fmt.Sprintf("internal error: %v", p))
+			panicked = true
+			out = safeFail(a, fail, recoverCfg, cwd, fmt.Sprintf("internal error: %v", p))
 		}
 	}()
 	if err != nil {
@@ -406,6 +472,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	if uerr != nil {
 		return fail(nil, "", "user config error: "+uerr.Error())
 	}
+	panicPoint("parse")
 	ev, ok, err := a.Parse(raw)
 	if err != nil {
 		return fail(userCfg, "", err.Error())
@@ -486,6 +553,7 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 	recoverCfg = cfg
 	entry.Mode = cfg.Mode
 	d, err := policy.Run(opt.Timeout, func(ctx context.Context) policy.Decision {
+		panicPoint("policy")
 		d := policy.Decide(ev, cfg, Deps(ctx, cfg, opt))
 		if mcpNote != "" {
 			d = withMCPNote(d, mcpNote)
@@ -509,10 +577,13 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 			}
 			return finish(cfg, a.Fail(block, "applygate: "+msg))
 		}
+		panicked = errors.Is(err, policy.ErrPanic)
 		return fail(cfg, ev.Cwd, err.Error())
 	}
+	stopped = d.Enforced != policy.Allow
 	jctx, cancel := judgeContext(deadline)
 	defer cancel()
+	panicPoint("judge")
 	d, entry.Judge = Judge(jctx, ev, d, cfg, opt)
 	return finish(cfg, decided(a, ev, d, cfg, opt, &entry))
 }

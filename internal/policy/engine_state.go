@@ -37,6 +37,7 @@ var engineCache sync.Map
 // engineState reports why a plain command's terraform or tofu calls are
 // not plain after all ("" when they are).
 func engineState(ctx context.Context, res *shell.Result, env map[string]string) string {
+	panicPoint("engine-state")
 	for _, inv := range res.Invocations {
 		if len(inv.Args) == 0 || !inv.Args[0].Resolved {
 			continue
@@ -48,7 +49,7 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 		for len(args) > 0 && strings.HasPrefix(args[0].Text, "-") {
 			if !args[0].Resolved {
 				// -chdir=$x: the text that is known stops before the directory.
-				return "a terraform option that cannot be resolved (it may be -chdir=DIR)"
+				return "a terraform option that cannot be resolved (it may be -chdir=DIR): " + args[0].Reason()
 			}
 			if v, ok := strings.CutPrefix(args[0].Text, "-chdir="); ok && dir != "" {
 				dir = shell.PhysicalJoin(dir, v)
@@ -59,7 +60,7 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 			continue
 		}
 		if !args[0].Resolved {
-			return "a terraform subcommand that cannot be resolved"
+			return "a terraform subcommand that cannot be resolved: " + args[0].Reason()
 		}
 		sub := args[0].Text
 		if (sub == "state" || sub == "providers" || sub == "workspace" || sub == "metadata") && len(args) > 1 {
@@ -125,6 +126,10 @@ func engineState(ctx context.Context, res *shell.Result, env map[string]string) 
 			why = "terraform " + sub + " starts providers that cannot be verified: " + err.Error()
 		} else if err := preflight.UpstreamLock(ctx, dir); err != nil {
 			why = "terraform " + sub + ": " + err.Error()
+		} else if err := preflight.PinnedByUpstream(ctx, dir, dataDir); err != nil {
+			why = "terraform " + sub + ": " + err.Error()
+		} else if r := preflight.Understood(ctx, dir, dataDir); r != "" {
+			why = "terraform " + sub + ": the configuration is not fully understood and pinned locally: " + r
 		} else if r := preflight.RunsPrograms(dir, dataDir); r != "" {
 			why = "terraform " + sub + ": " + r
 		}

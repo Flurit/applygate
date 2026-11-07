@@ -20,7 +20,7 @@ The command takes each AWS profile (`aws configure list-profiles`, plus the envi
 - **AWS:**
   - `sts get-caller-identity` gives the identity and account.
   - The config's environments (`aws_profiles`, `aws_accounts`) and name hints give the tier.
-  - `iam simulate-principal-policy` asks whether that identity may run 16 destructive actions with MFA absent: terminating instances, deleting databases, buckets, tables, clusters, functions and stacks, scheduling key deletion, changing IAM, and assuming roles.
+  - `iam simulate-principal-policy` asks whether that identity may run 19 destructive actions with MFA absent: terminating instances, deleting databases, buckets, tables, clusters, functions and stacks, scheduling key deletion, changing IAM, assuming roles, and deleting state-bucket versions, turning versioning off or removing the bucket policy.
   - For an assumed role, the role's own ARN comes from `iam get-role`.
 - **Kubernetes:** `kubectl auth can-i` asks, across all namespaces, about deleting namespaces, deployments and persistent volume claims, and creating cluster role bindings.
 
@@ -93,7 +93,7 @@ source_profile = person
 mfa_serial     = arn:aws:iam::111111111111:mfa/person-key
 ```
 
-With IAM Identity Center, give the agent's permission set read-only access and require MFA for the one that applies.
+With IAM Identity Center, give the agent's permission set read-only access. Do not rely on MFA to separate the permission set that applies from the one the agent holds: Identity Center asks for MFA at sign-in (a setting of the identity source), once for every permission set the person can use, and the sessions it issues may not carry `aws:MultiFactorAuthPresent`, so the trust policy above and the simulator's MFA-absent test may not behave as they do for a role assumed from an IAM user. This has not been tested here. Keep applying out of reach another way: a separate Identity Center user or account for the apply role that the agent's OS user never signs in as, or a CI role assumed through OIDC (docs/ci.md). `doctor --creds` and `doctor --boundary` report what the simulator says; check the apply role's own trust policy by hand.
 
 ### 3. Keep the person's sessions out of the agent's reach
 

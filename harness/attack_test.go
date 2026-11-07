@@ -7,8 +7,10 @@ import (
 	"github.com/Flurit/applygate/internal/config"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -93,6 +95,17 @@ func TestAttackPack(t *testing.T) {
 	}
 }
 
+// padRe finds {pad:N} in a planted file: N bytes of HCL comment, so a
+// scenario can plant a configuration file past the size cap without
+// carrying a megabyte in the pack.
+var padRe = regexp.MustCompile(`\{pad:(\d+)\}`)
+
+func padOf(m string) string {
+	n, _ := strconv.Atoi(padRe.FindStringSubmatch(m)[1])
+	line := "# padding padding padding padding padding padding padding\n"
+	return strings.Repeat(line, n/len(line)+1)[:n]
+}
+
 func firstLine(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -139,7 +152,7 @@ func runAttack(t *testing.T, s AttackScenario, format, self string) (string, str
 		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte(sub(content)), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(padRe.ReplaceAllStringFunc(sub(content), padOf)), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
