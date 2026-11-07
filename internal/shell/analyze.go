@@ -521,9 +521,7 @@ func (a *analyzer) stmt(s *syntax.Stmt, st *state, via []string, depth int, in s
 	for _, r := range s.Redirs {
 		switch r.Op {
 		case syntax.Hdoc, syntax.DashHdoc:
-			a.noGlob++
-			w := a.word(r.Hdoc, st, via, depth)
-			a.noGlob--
+			w := a.hdocWord(r, st, via, depth)
 			in = stdin{text: w.Text, known: w.Resolved, present: true, desc: "here-document"}
 		case syntax.WordHdoc:
 			w := a.word(r.Word, st, via, depth)
@@ -1280,6 +1278,81 @@ func smallNode(n syntax.Node, budget int) bool {
 		return true
 	})
 	return ok
+}
+
+// hdocWord is the text a here-document gives its command. A quoted delimiter
+// ('EOF', "EOF", \EOF) makes the body literal: a backslash stays. With a bare
+// delimiter the shell expands $, backquote and backslash inside it as in
+// double quotes, and a backslash removes itself only before $, backquote,
+// another backslash and a newline. Reading the body as a word, which drops
+// every backslash, turned the quote-escape idiom of a nested sh -c into
+// different text, so a command nested in a here-document was analyzed as
+// something the shell did not run.
+func (a *analyzer) hdocWord(r *syntax.Redirect, st *state, via []string, depth int) Word {
+	if r.Hdoc == nil {
+		return Word{Resolved: true}
+	}
+	quoted := false
+	if r.Word != nil {
+		for _, p := range r.Word.Parts {
+			switch x := p.(type) {
+			case *syntax.SglQuoted, *syntax.DblQuoted:
+				quoted = true
+			case *syntax.Lit:
+				if strings.Contains(x.Value, `\`) {
+					quoted = true
+				}
+			}
+		}
+	}
+	var b strings.Builder
+	res := Word{Resolved: true}
+	mark := func() {
+		if res.Resolved {
+			res.Prefix = b.String()
+		}
+		res.Resolved = false
+	}
+	for _, p := range r.Hdoc.Parts {
+		if lit, ok := p.(*syntax.Lit); ok {
+			if quoted {
+				b.WriteString(lit.Value)
+			} else {
+				b.WriteString(unescapeHdoc(lit.Value))
+			}
+			continue
+		}
+		a.part(p, st, via, depth, &b, mark, false, true)
+		if b.Len() > maxText {
+			mark()
+			res.Prefix = res.Prefix[:min(len(res.Prefix), maxText)]
+			return Word{Prefix: res.Prefix}
+		}
+	}
+	res.Text = b.String()
+	if res.Resolved {
+		res.Prefix = res.Text
+	}
+	return res
+}
+
+// unescapeHdoc removes the backslash of \$, \`+"`"+`, \\ and a backslash-newline, the
+// only escapes an unquoted here-document body has.
+func unescapeHdoc(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) && strings.IndexByte("$`\\\n", s[i+1]) >= 0 {
+			i++
+			if s[i] == '\n' {
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 func unescapeLit(s string) string {
