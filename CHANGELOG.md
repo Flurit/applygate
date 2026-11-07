@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (reassessment root fixes)
+
+- **Unknown values carry a reason** (`shell.Word.Why`): a word the analysis cannot resolve records what made it unknown; unknown terraform options, `-chdir` values and subcommands make a call not plain and say why; `applygate explain` shows it.
+- **A positive rule for Terraform configuration** (`preflight.Understood`): providers that may start are plain only when every config file of the directory and its modules parses within the cap, module sources are local or installed, providers are on a closed list and locked, and the lock file is held by an upstream branch. Replaces the deny-list scans as the first line for `tfquery`, `graph -type=plan`, files over 1 MiB, modules `init` fetches and unresolved `-chdir`.
+- **Recovered panics fail closed:** `on_error: allow` does not apply to a panic where a protected tier is in reach; a panic after the policy asked or refused never allows; a panic in the recovery or the watchdog goroutine blocks; `applygate check` exits 2. Tests inject panics at each stage.
+- The attack pack gains 23 scenarios (`reassess-6`, one for each of the ten criticals the reassessment said no allow-list reaches, and their variants). Costs: `docs/limits.md` ("Reassessment: the root fixes").
+
 ## Unreleased (boundary contract)
 
 - **`applygate doctor --boundary [--require L1|L2|L3]`** reports an assurance level L0 to L3: managed exclusive install, audited credentials, host sandbox in managed settings plus attested CI apply and state guards. `boundary.require` and `boundary.attest` are user or system config only. Docs: `docs/boundary.md`.

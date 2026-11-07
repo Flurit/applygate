@@ -390,6 +390,7 @@ func isDir(p string) bool {
 
 // Decide evaluates an event. It does not write the log.
 func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
+	panicPoint("decide")
 	if deps.ReadFile == nil {
 		deps.ReadFile = shell.DefaultReadFile
 	}
@@ -1317,6 +1318,22 @@ func message(d Decision) string {
 // ErrTimeout is returned by Run when the decision took too long.
 var ErrTimeout = errors.New("decision timed out")
 
+// ErrPanic is wrapped by the error Run returns when f panicked. A caller
+// must treat it as a failure of the analysis, not as a configured error: a
+// panic that is recovered never allows in a protected tier, whatever
+// on_error says.
+var ErrPanic = errors.New("internal error")
+
+// PanicHook is called at named points of a decision; a test sets it to inject
+// a panic and prove that the recovery fails closed. It is nil in the binary.
+var PanicHook func(site string)
+
+func panicPoint(site string) {
+	if h := PanicHook; h != nil {
+		h(site)
+	}
+}
+
 // Run calls f with a time limit and converts a panic into an error, so the
 // caller can apply the configured error behavior instead of crashing.
 //
@@ -1335,7 +1352,7 @@ func Run(timeout time.Duration, f func(context.Context) Decision) (d Decision, e
 	go func() {
 		defer func() {
 			if p := recover(); p != nil {
-				ch <- result{err: fmt.Errorf("internal error: %v", p)}
+				ch <- result{err: fmt.Errorf("%w: %v", ErrPanic, p)}
 			}
 		}()
 		ch <- result{d: f(ctx)}
