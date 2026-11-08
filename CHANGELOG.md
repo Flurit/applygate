@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased (untrusted config self-protection)
+
+- **An untrusted repository config no longer hides the repository's guard files.** When `.applygate.yaml` was new or changed (not read), the repository root was unknown to the guard, so `rm -rf .claude`, `tar -xf a.tar -C .claude`, `unzip a.zip -d .claude` and `cp x .claude` were allowed while writing `.claude/settings.json` by name was blocked. The directory of the outermost repository config is now a guard root whether or not the config was read (`Config.GuardRoot`), so untrusted and trusted configs guard the same places. Not covered yet: a repository with no `.applygate.yaml` at all, and a `.claude` directory below the repository root (a session started in a subdirectory). The attack pack gains 7 scenarios (`R7-U1` to `R7-U7`, two benign controls).
+
 ## Unreleased (allow-list stage 6)
 
 - **`git` and eleven more programs by subcommand and option list** (`internal/shell/allow_git.go`, `allow_scan.go`, `allow_tree.go`): `git` per subcommand with exact options (replaces `gitSubs`/`gitDeny`), then `docker`, `podman`, `gh`, `glab`, `trivy`, `kustomize`, `opa`, `conftest`, `infracost`, `terragrunt`, `terraform-docs`, `checkov`; `cat head tail wc cut ls basename dirname realpath readlink seq` leave the inert set. The classifier's `outputOpts` table moved next to each entry. A conformance test runs every listed option of every leaf. **No verdict changed on the 162 agent-trial calls** in prod, staging or dev. New asks: `git commit` without a message, `git rebase -i`, `git gc`, `opa build`/`fmt -w`, `conftest fmt`, `infracost configure set`, `gh --web`/`--editor`, unlisted options. Details and what is not done: `docs/limits.md` ("Allow-list, stage 6").
