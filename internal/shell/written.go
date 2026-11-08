@@ -24,7 +24,8 @@ const (
 	wroteContents                      // files under the path (git checkout, pull, ...)
 	wroteTree                          // anything at or under it, symlinks too (tar -C, cp, mv, ln)
 	madeDir                            // a directory created (mkdir), which may also be read
-	changed                            // removed, or its mode or owner changed (rm, chmod): the classifier counts it, a later read does not become unknown
+	changed                            // its mode or owner changed, or replaced in place (chmod, ln -f): the classifier counts it, a later read does not become unknown
+	removed                            // only removed or moved away (rm, a source of mv): as changed, and the classifier counts only what removing it can weaken
 )
 
 type writtenError struct{ path string }
@@ -102,7 +103,7 @@ func (a *analyzer) noteWrites(bn string, rest []Word, st *state) {
 	// is only removed or has its mode changed does not make a later read
 	// unknown.
 	for _, w := range writesOf(bn, rest) {
-		if w.k != changed {
+		if w.k != changed && w.k != removed {
 			a.wrote(st, w.w, w.k)
 		}
 	}

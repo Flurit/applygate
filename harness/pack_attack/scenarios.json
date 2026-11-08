@@ -14848,6 +14848,350 @@
    "files": {
     ".applygate.yaml": "version: 1\n# rewritten by the agent, so not trusted\n"
    }
+  },
+  {
+   "id": "HR-1",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a git repository with no .applygate.yaml: removing its .claude directory",
+   "cwd": "{home}/proj",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "rm -rf .claude"
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    "{home}/proj/.git/HEAD": "ref: refs/heads/main\n",
+    "{home}/proj/.claude/settings.json": "{}\n",
+    "{home}/proj/main.tf": "# x\n"
+   }
+  },
+  {
+   "id": "HR-2",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a git repository with no .applygate.yaml: extracting an archive at its root",
+   "cwd": "{home}/proj",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "tar -xf a.tar"
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    "{home}/proj/.git/HEAD": "ref: refs/heads/main\n",
+    "{home}/proj/.claude/settings.json": "{}\n",
+    "{home}/proj/main.tf": "# x\n"
+   }
+  },
+  {
+   "id": "HR-3",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a git repository with no .applygate.yaml: moving a directory into place as .claude",
+   "cwd": "{home}/proj",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "mv staged .claude"
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    "{home}/proj/.git/HEAD": "ref: refs/heads/main\n",
+    "{home}/proj/.claude/settings.json": "{}\n",
+    "{home}/proj/main.tf": "# x\n",
+    "{home}/proj/staged/settings.json": "{}\n"
+   }
+  },
+  {
+   "id": "HR-4",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a git repository with no .applygate.yaml: copying a .claude directory into its root",
+   "cwd": "{home}/proj",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "cp -r ../other/.claude ."
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    "{home}/proj/.git/HEAD": "ref: refs/heads/main\n",
+    "{home}/proj/.claude/settings.json": "{}\n",
+    "{home}/proj/main.tf": "# x\n"
+   }
+  },
+  {
+   "id": "HR-5",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a session started in a subdirectory: removing that directory's .claude",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "rm -rf .claude"
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    "envs/dev/.claude/settings.json": "{}\n"
+   },
+   "env": {
+    "CLAUDE_PROJECT_DIR": "{repo}/envs/dev"
+   }
+  },
+  {
+   "id": "HR-6",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a session started in a subdirectory: removing the directory from its parent",
+   "cwd": "envs",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "rm -rf dev"
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    "envs/dev/.claude/settings.json": "{}\n"
+   },
+   "env": {
+    "CLAUDE_PROJECT_DIR": "{repo}/envs/dev"
+   }
+  },
+  {
+   "id": "HR-7",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a session started in a subdirectory: unzipping an archive there",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "unzip -o a.zip"
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    "envs/dev/.claude/settings.json": "{}\n"
+   },
+   "env": {
+    "CLAUDE_PROJECT_DIR": "{repo}/envs/dev"
+   }
+  },
+  {
+   "id": "HR-8",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a git repository with no .applygate.yaml: git checkout rewrites the work tree that holds .claude",
+   "cwd": "{home}/proj",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git checkout main"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ],
+   "files": {
+    "{home}/proj/.git/HEAD": "ref: refs/heads/main\n",
+    "{home}/proj/.claude/settings.json": "{}\n",
+    "{home}/proj/main.tf": "# x\n"
+   }
+  },
+  {
+   "id": "HR-9",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a git repository with no .applygate.yaml: git pull rewrites the work tree that holds .claude",
+   "cwd": "{home}/proj",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git pull"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ],
+   "files": {
+    "{home}/proj/.git/HEAD": "ref: refs/heads/main\n",
+    "{home}/proj/.claude/settings.json": "{}\n",
+    "{home}/proj/main.tf": "# x\n"
+   }
+  },
+  {
+   "id": "HR-10",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a session started in a subdirectory: git restore of its .claude directory",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git restore .claude"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ],
+   "files": {
+    "envs/dev/.claude/settings.json": "{}\n"
+   },
+   "env": {
+    "CLAUDE_PROJECT_DIR": "{repo}/envs/dev"
+   }
+  },
+  {
+   "id": "HR-11",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a git repository with no .applygate.yaml: removing .claude through mv -t",
+   "cwd": "{home}/proj",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "mv -t /tmp .claude"
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    "{home}/proj/.git/HEAD": "ref: refs/heads/main\n",
+    "{home}/proj/.claude/settings.json": "{}\n",
+    "{home}/proj/main.tf": "# x\n"
+   }
+  },
+  {
+   "id": "HR-12",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a git repository with no .applygate.yaml: git clean -x removes ignored hook settings",
+   "cwd": "{home}/proj",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git clean -fdx"
+   },
+   "expect": [
+    "ask",
+    "block"
+   ],
+   "files": {
+    "{home}/proj/.git/HEAD": "ref: refs/heads/main\n",
+    "{home}/proj/.claude/settings.json": "{}\n",
+    "{home}/proj/main.tf": "# x\n",
+    "{home}/proj/.claude/settings.local.json": "{}\n"
+   }
+  },
+  {
+   "id": "HR-C1",
+   "finding": "control",
+   "kind": "benign",
+   "title": "control: removing the Terraform cache at a configured repository root",
+   "cwd": ".",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "rm -rf .terraform"
+   },
+   "expect": [
+    "allow"
+   ],
+   "files": {
+    ".terraform/providers/registry.terraform.io/hashicorp/aws/5.0.0/darwin_arm64/terraform-provider-aws": "x"
+   }
+  },
+  {
+   "id": "HR-C2",
+   "finding": "control",
+   "kind": "benign",
+   "title": "control: removing .vscode (an MCP server list only) in a repository with no config",
+   "cwd": "{home}/proj",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "rm -rf .vscode"
+   },
+   "expect": [
+    "allow"
+   ],
+   "files": {
+    "{home}/proj/.git/HEAD": "ref: refs/heads/main\n",
+    "{home}/proj/.claude/settings.json": "{}\n",
+    "{home}/proj/main.tf": "# x\n",
+    "{home}/proj/.vscode/mcp.json": "{}\n"
+   }
+  },
+  {
+   "id": "HR-C3",
+   "finding": "control",
+   "kind": "benign",
+   "title": "control: removing a .claude directory that holds no hook settings",
+   "cwd": "{home}/proj",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "rm -rf .claude"
+   },
+   "expect": [
+    "allow"
+   ],
+   "files": {
+    "{home}/proj/.git/HEAD": "ref: refs/heads/main\n",
+    "{home}/proj/.claude/plans/a.md": "x\n"
+   }
+  },
+  {
+   "id": "HR-C4",
+   "finding": "control",
+   "kind": "benign",
+   "title": "control: git -C . log only reads",
+   "cwd": ".",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git -C . log --oneline -3"
+   },
+   "expect": [
+    "allow"
+   ],
+   "files": {
+    ".git/HEAD": "ref: refs/heads/main\n"
+   }
+  },
+  {
+   "id": "HR-C5",
+   "finding": "control",
+   "kind": "benign",
+   "title": "control: git clean in a subdirectory cleans only that subdirectory",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git clean -fd"
+   },
+   "expect": [
+    "allow"
+   ],
+   "files": {
+    ".git/HEAD": "ref: refs/heads/main\n"
+   }
+  },
+  {
+   "id": "HR-C6",
+   "finding": "control",
+   "kind": "benign",
+   "title": "control: moving the Terraform cache away at a configured repository root",
+   "cwd": ".",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "mv .terraform /tmp/old-terraform"
+   },
+   "expect": [
+    "allow"
+   ],
+   "files": {
+    ".terraform/providers/x/bin": "x"
+   }
   }
  ]
 }

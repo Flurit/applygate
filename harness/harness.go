@@ -85,6 +85,19 @@ func Materialize(dir string) (repo, plans, home string, err error) {
 	if err == nil {
 		err = os.MkdirAll(filepath.Join(home, ".aws"), 0o755)
 	}
+	// The home of a person with the hook installed: Claude Code's settings
+	// that hold it and applygate's state directory exist. Removing a
+	// directory counts only the guard files that are there
+	// (guard.Set.RemovalTouches).
+	if err == nil {
+		err = os.MkdirAll(filepath.Join(home, ".local", "state", "applygate"), 0o755)
+	}
+	if err == nil {
+		err = os.MkdirAll(filepath.Join(home, ".claude"), 0o755)
+	}
+	if err == nil {
+		err = os.WriteFile(filepath.Join(home, ".claude", "settings.json"), []byte(`{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"applygate hook claude-code"}]}]}}`+"\n"), 0o644)
+	}
 	return filepath.Join(dir, "fixtures", "repo"), filepath.Join(dir, "plans"), home, err
 }
 

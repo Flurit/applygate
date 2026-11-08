@@ -138,6 +138,11 @@ type Config struct {
 	// untrusted config decides nothing, but the files beside it are still
 	// the repository's hook settings.
 	GuardRoot string `yaml:"-"`
+	// GitRoot is the nearest directory at or above the one Load looked up
+	// that holds a .git entry: the repository root whether or not it has a
+	// config, so a repository without .applygate.yaml still has its hook
+	// files guarded (GuardTargets).
+	GitRoot string `yaml:"-"`
 }
 
 // Wrapper declares a program that runs another command: the command
@@ -369,6 +374,43 @@ var DefaultProtectedPaths = []string{
 	"**/site-packages/usercustomize.py", "**/site-packages/sitecustomize/**", "**/site-packages/usercustomize/**",
 }
 
+// plantOnlyPaths are the default guard patterns whose files matter only for
+// what is placed in them: code or settings a later program runs (a provider
+// binary, a git hook, an ssh ProxyCommand, an MCP server list, a skill's
+// hooks). Placing one is tampering; removing one cannot weaken the guard, so
+// removing a directory that holds one is not (guard.Set.RemovalTouches).
+// Hook settings, applygate's own files, the agent CLIs and the files that
+// pick a cloud account or cluster are not here: removing those can turn the
+// hook off or retarget a call.
+var plantOnlyPaths = []string{
+	"**/.mcp.json", "**/.claude/skills/**", "**/.claude/agents/**", "**/.claude/commands/**",
+	"**/.cursor/mcp.json", "**/.vscode/mcp.json", "**/.copilot/mcp-config.json", "**/.codeium/windsurf/mcp_config.json",
+	"**/.gemini/extensions/**",
+	"**/.gitconfig", "**/.config/git/**", "**/.wgetrc", "**/.tflint.hcl", "**/.tflint.d/**",
+	"**/Library/helm/plugins/**", "**/.local/share/helm/plugins/**",
+	"**/.ssh/config", "**/.ssh/config*/**", "**/.docker/cli-plugins/**", "**/.curlrc", "**/.azure/cliextensions/**",
+	"**/.claude/shell-snapshots/**", "**/.claude/session-env/**",
+	"**/Library/LaunchAgents/**", "**/.config/fish/**", "**/.config/environment.d/*", "**/.config/systemd/user/**",
+	"**/.oh-my-zsh/custom/**",
+	"**/.terraform/providers/**", "**/.terraform/modules/**", "**/.terraform.d/plugins/**",
+	"**/.git/config", "**/.git/config.worktree", "**/.git/hooks/**", "**/.git/modules/**/config", "**/.git/modules/**/hooks/**",
+	"**/Library/Application Support/go/env", "**/.config/go/env",
+	"**/site-packages/*.pth", "**/dist-packages/*.pth", "**/site-packages/sitecustomize.py",
+	"**/site-packages/usercustomize.py", "**/site-packages/sitecustomize/**", "**/site-packages/usercustomize/**",
+}
+
+// PlantOnlyPaths returns plantOnlyPaths (guard.Set.PlantOnly), less any the
+// config lists itself.
+func (c *Config) PlantOnlyPaths() []string {
+	var out []string
+	for _, p := range plantOnlyPaths {
+		if !slices.Contains(c.ProtectedPaths, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // pathPrograms are names an agent may not place in a PATH directory: the
 // programs strict shapes trusts by name, the helpers the hook, its plugin
 // launcher and its documented commands run, and the engines the plan gate
@@ -584,6 +626,7 @@ func Load(userPath, dir string) (*Config, error) {
 		if len(repoConfigs) > 0 {
 			cfg.GuardRoot = filepath.Dir(repoConfigs[0])
 		}
+		cfg.GitRoot = gitRoot(dir)
 		for _, p := range repoConfigs {
 			// Trust is for the file read, so only a regular file counts: a
 			// symlink would be checked against its target's approval and
@@ -1075,33 +1118,34 @@ func hostDirFiles() []string {
 	return out
 }
 
+// gitRoot returns the nearest directory at or above dir that holds a .git
+// entry (a directory, or the file a worktree or submodule has), or "". It
+// reads the file system only: no git runs.
+func gitRoot(dir string) string {
+	if !filepath.IsAbs(dir) {
+		return ""
+	}
+	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			return d
+		}
+		if d == filepath.Dir(d) {
+			return ""
+		}
+	}
+}
+
 // GuardTargets returns the concrete places guard files live, for the
 // ancestor check: removing, moving or extracting into a directory that holds
-// one changes it. home is the user's home directory; the repository root is
-// the config's, or, when the config was not read (untrusted), the directory
-// it was found in. A default pattern "**/x/y" stands for home/x/y and
-// root/x/y.
-func (c *Config) GuardTargets(home string) []string {
-	var out []string
-	bases := []string{home, c.Root}
-	if c.GuardRoot != "" && c.GuardRoot != c.Root {
-		bases = append(bases, c.GuardRoot)
-	}
-	for _, p := range append(append([]string(nil), DefaultProtectedPaths...), c.ProtectedPaths...) {
-		lit := literalPrefix(p)
-		if lit == "" {
-			continue
-		}
-		if filepath.IsAbs(lit) {
-			out = append(out, lit)
-			continue
-		}
-		for _, base := range bases {
-			if base != "" {
-				out = append(out, filepath.Join(base, lit))
-			}
-		}
-	}
+// one changes it. A default pattern "**/x/y" stands for x/y under each base
+// directory: home (the user's home directory); the repository root, which is
+// the config's, the directory of the outermost repository config when it
+// was not read (untrusted), and the nearest git root, with or without a
+// config; and sessionRoots, the directories the agent's session was started
+// in (CLAUDE_PROJECT_DIR and the like), whose hook settings the host loads
+// whether or not they are a repository root.
+func (c *Config) GuardTargets(home string, sessionRoots ...string) []string {
+	out := c.patternTargets(append(append([]string(nil), DefaultProtectedPaths...), c.ProtectedPaths...), home, sessionRoots)
 	out = append(out, appDirs()...)
 	out = append(out, ApprovalsPath(), JudgeCachePath())
 	if c.LogPath != "" {
@@ -1122,6 +1166,103 @@ func (c *Config) GuardTargets(home string) []string {
 		out = append(out, p)
 	}
 	return append(out, guard.Executable()...)
+}
+
+// guardBases are the directories a default pattern "**/x/y" stands for x/y
+// under (GuardTargets).
+func (c *Config) guardBases(home string, sessionRoots []string) []string {
+	return cleanBases(append([]string{home, c.Root, c.GuardRoot, c.GitRoot}, sessionRoots...))
+}
+
+func cleanBases(in []string) []string {
+	var bases []string
+	for _, b := range in {
+		if b != "" && filepath.IsAbs(b) && !slices.Contains(bases, filepath.Clean(b)) {
+			bases = append(bases, filepath.Clean(b))
+		}
+	}
+	return bases
+}
+
+// SoftTargets are the targets GuardTargets has only from the nearest git
+// root and the session roots, where no config is: a command that rewrites
+// the work tree there without naming a guard file is asked about, not
+// blocked (guard.Set.Soft). Home's, the config root's and applygate's own
+// are not soft.
+func (c *Config) SoftTargets(home string, sessionRoots ...string) []string {
+	all := DefaultProtectedPaths
+	all = append(append([]string(nil), all...), c.ProtectedPaths...)
+	hard := map[string]bool{}
+	for _, t := range c.targetsUnder(all, cleanBases([]string{home, c.Root, c.GuardRoot})) {
+		hard[t] = true
+	}
+	var out []string
+	for _, t := range c.targetsUnder(all, cleanBases(append([]string{c.GitRoot}, sessionRoots...))) {
+		if !hard[t] {
+			hard[t] = true // once
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// targetsUnder are relative patterns' literal prefixes under bases.
+func (c *Config) targetsUnder(patterns, bases []string) []string {
+	var out []string
+	for _, p := range patterns {
+		lit := literalPrefix(p)
+		if lit == "" || filepath.IsAbs(lit) {
+			continue
+		}
+		for _, b := range bases {
+			out = append(out, filepath.Join(b, lit))
+		}
+	}
+	return out
+}
+
+// patternTargets are the concrete places patterns stand for: an absolute
+// pattern's literal prefix, and a relative one's under each guard base.
+func (c *Config) patternTargets(patterns []string, home string, sessionRoots []string) []string {
+	var out []string
+	bases := c.guardBases(home, sessionRoots)
+	for _, p := range patterns {
+		lit := literalPrefix(p)
+		if lit == "" {
+			continue
+		}
+		if filepath.IsAbs(lit) {
+			out = append(out, lit)
+			continue
+		}
+		for _, base := range bases {
+			out = append(out, filepath.Join(base, lit))
+		}
+	}
+	return out
+}
+
+// PlantOnlyTargets are the targets GuardTargets has only from plant-only
+// patterns (PlantOnlyPaths): a target another pattern also stands for is
+// not one.
+func (c *Config) PlantOnlyTargets(home string, sessionRoots ...string) []string {
+	var others []string
+	for _, p := range append(append([]string(nil), DefaultProtectedPaths...), c.ProtectedPaths...) {
+		if !slices.Contains(plantOnlyPaths, p) || slices.Contains(c.ProtectedPaths, p) {
+			others = append(others, p)
+		}
+	}
+	strict := map[string]bool{}
+	for _, t := range c.patternTargets(others, home, sessionRoots) {
+		strict[t] = true
+	}
+	var out []string
+	for _, t := range c.patternTargets(plantOnlyPaths, home, sessionRoots) {
+		if !strict[t] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // PathDirs are the PATH directories, and the usual user bin directories,

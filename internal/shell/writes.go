@@ -2,6 +2,7 @@ package shell
 
 import (
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -94,6 +95,23 @@ func Writes(name string, args []Word) []Word {
 	return out
 }
 
+// Removes returns the words of Writes that the call only removes or moves
+// away (rm's operands, mv's sources), and does not also write.
+func Removes(name string, args []Word) []Word {
+	ws := writesOf(name, args)
+	var out []Word
+	for _, w := range ws {
+		if w.k != removed || !w.w.Resolved {
+			continue
+		}
+		if slices.ContainsFunc(ws, func(o written) bool { return o.k != removed && o.k != madeDir && o.w.Text == w.w.Text }) {
+			continue
+		}
+		out = append(out, w.w)
+	}
+	return out
+}
+
 // HasWriteRule reports whether name has a write rule.
 func HasWriteRule(name string) bool { return writeRules[name] != nil || wordRules[name] != nil }
 
@@ -147,9 +165,8 @@ func inPlace(ops []Word, dec bool) []written {
 }
 
 func init() {
-	for _, n := range []string{"rm", "touch"} {
-		writeRules[n] = func(c parsed) []written { return each(c.ops, changed) }
-	}
+	writeRules["rm"] = func(c parsed) []written { return each(c.ops, removed) }
+	writeRules["touch"] = func(c parsed) []written { return each(c.ops, changed) }
 	writeRules["mkdir"] = func(c parsed) []written { return each(c.ops, madeDir) }
 	writeRules["tee"] = func(c parsed) []written { return each(c.ops, wroteFile) }
 	// The first operand of chmod is the mode, unless --reference gave it.
@@ -161,11 +178,18 @@ func init() {
 	}
 	// cp writes into -t's directory or its last operand; mv and ln also
 	// remove or replace what they are given (ln -f).
-	copyRule := func(moves bool) func(c parsed) []written {
+	copyRule := func(moves, mv bool) func(c parsed) []written {
 		return func(c parsed) []written {
 			var out []written
 			if moves {
-				out = each(c.ops, changed)
+				// mv moves its sources away; ln -f replaces its link. Read
+				// leniently, an operand may be an option's value or the
+				// destination, so it is only changed.
+				k := changed
+				if mv && !c.loose {
+					k = removed
+				}
+				out = each(c.ops, k)
 			}
 			if t, ok := c.val("-t", "--target-directory"); ok {
 				return append(out, written{t, wroteTree})
@@ -180,9 +204,9 @@ func init() {
 			return append(out, each(c.dest(), wroteTree)...)
 		}
 	}
-	writeRules["cp"] = copyRule(false)
-	writeRules["mv"] = copyRule(true)
-	writeRules["ln"] = copyRule(true)
+	writeRules["cp"] = copyRule(false, false)
+	writeRules["mv"] = copyRule(true, true)
+	writeRules["ln"] = copyRule(true, false)
 	// unzip extracts under -d, or here, unless it only lists, tests or prints.
 	writeRules["unzip"] = func(c parsed) []written {
 		if c.has("-l", "-v", "-t", "-p", "-c", "-z", "-Z") {
@@ -208,7 +232,7 @@ func init() {
 			out = append(out, written{lit(a.Text + ".zip"), wroteFile})
 		}
 		if c.has("-m", "--move") {
-			out = append(out, each(c.ops[1:], changed)...)
+			out = append(out, each(c.ops[1:], removed)...)
 		}
 		return out
 	}
@@ -286,7 +310,10 @@ func init() {
 	}
 
 	// Programs without an entry.
-	for _, n := range []string{"rmdir", "unlink", "shred", "srm", "truncate", "chown", "chattr"} {
+	for _, n := range []string{"rmdir", "unlink", "srm"} {
+		wordRules[n] = func(args []Word) []written { return each(operands(args), removed) }
+	}
+	for _, n := range []string{"shred", "truncate", "chown", "chattr"} {
 		wordRules[n] = func(args []Word) []written { return each(operands(args), changed) }
 	}
 	for _, n := range []string{"install", "rsync", "ditto", "gcp", "gmv"} {
@@ -605,7 +632,7 @@ func findWrites(args []Word) []written {
 		starts = append(starts, args[i])
 	}
 	var out []written
-	removes := false
+	removes, onlyRemoves := false, true
 	for ; i < len(args); i++ {
 		t := args[i].Text
 		switch t {
@@ -614,6 +641,11 @@ func findWrites(args []Word) []written {
 		case "-exec", "-execdir", "-ok", "-okdir":
 			if i+1 < len(args) && execWriters[ProgName(args[i+1].Text)] {
 				removes = true
+				// rm and the like only remove what find gives them;
+				// mv, chmod and ln also move or change it.
+				if !execRemovers[ProgName(args[i+1].Text)] {
+					onlyRemoves = false
+				}
 			}
 		case "-fprint", "-fprint0", "-fls":
 			if i+1 < len(args) {
@@ -629,7 +661,11 @@ func findWrites(args []Word) []written {
 		if len(starts) == 0 {
 			starts = []Word{lit(".")}
 		}
-		out = append(out, each(starts, changed)...)
+		k := changed
+		if onlyRemoves {
+			k = removed
+		}
+		out = append(out, each(starts, k)...)
 	}
 	return out
 }
@@ -637,6 +673,8 @@ func findWrites(args []Word) []written {
 // execWriters are the removers: run under find -exec, they change what find
 // found. Another program find runs is an invocation of its own when the
 // analysis follows it.
+var execRemovers = toSet("rm", "rmdir", "srm", "unlink")
+
 var execWriters = toSet("rm", "rmdir", "srm", "unlink", "shred", "mv", "chmod", "chown", "chattr", "truncate", "ln")
 
 // RemoteCopy reports whether a command copies between a remote store and

@@ -124,3 +124,38 @@ func TestPlainWritersHaveARule(t *testing.T) {
 		}
 	}
 }
+
+// Removes is what a call only removes or moves away: rm's operands, mv's
+// sources (not its destination, and nothing when read leniently, where an
+// operand may be the destination), find -delete's starting points.
+func TestRemovesIsOnlyWhatIsRemoved(t *testing.T) {
+	cases := []struct {
+		name, args string
+		want       []string
+	}{
+		{"rm", "-rf .terraform build", []string{".terraform", "build"}},
+		{"rmdir", "empty", []string{"empty"}},
+		{"mv", ".terraform /tmp/old", []string{".terraform"}},
+		{"mv", "-t /tmp .claude a", []string{".claude", "a"}},
+		{"mv", "staged .claude", []string{"staged"}},
+		{"mv", "-S .claude x y", nil}, // -S is not listed: read leniently
+		{"ln", "-sf a b", nil},
+		{"chmod", "-R 000 .claude", nil},
+		{"find", ". -name x -delete", []string{"."}},
+		{"find", "a -exec rm {} +", []string{"a"}},
+		{"find", "a -exec mv {} /tmp +", nil},
+		{"zip", "-m a.zip x", []string{"x"}},
+		{"cp", "a b", nil},
+		{"tar", "-xf a.tar", nil},
+	}
+	for _, c := range cases {
+		var got []string
+		for _, w := range Removes(c.name, words(c.args)) {
+			got = append(got, w.Text)
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, c.want) {
+			t.Errorf("%s %s: removes %q, want %q", c.name, c.args, got, c.want)
+		}
+	}
+}

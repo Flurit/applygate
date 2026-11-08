@@ -6,6 +6,8 @@
 package guard
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -30,6 +32,17 @@ type Set struct {
 	// progPrefixes guard every name that starts with one of them
 	// (git-remote-*, docker-credential-*).
 	progPrefixes []string
+	// plantPats and plantTargets are the guard files that matter only for
+	// what is placed in them (a provider binary, a git hook, an MCP server
+	// list): removing one cannot weaken the guard (RemovalTouches).
+	plantPats    map[string]bool
+	plantTargets map[string]bool
+	// softTargets are guard files guarded only because the session or the
+	// git repository is rooted where they are, not by a config (Soft).
+	softTargets map[string]bool
+	// canon maps the targets given to New to their canonical form, so
+	// PlantOnly and Soft need not resolve them again.
+	canon map[string]string
 }
 
 // New returns the guard set for patterns (globs, as in the config) and
@@ -47,11 +60,16 @@ func New(patterns, targets []string) *Set {
 		s.patterns = append(s.patterns, fold(filepath.ToSlash(p)))
 	}
 	seen := map[string]bool{}
+	s.canon = make(map[string]string, len(targets))
 	for _, t := range targets {
 		if t == "" || !filepath.IsAbs(t) {
 			continue
 		}
-		c := Canonical(t)
+		c, ok := s.canon[t]
+		if !ok {
+			c = Canonical(t)
+			s.canon[t] = c
+		}
 		if !seen[c] {
 			seen[c] = true
 			s.targets = append(s.targets, c)
@@ -80,6 +98,58 @@ func (s *Set) Programs(dirs, names []string) *Set {
 		s.progNames[fold(n)] = true
 	}
 	return s
+}
+
+// PlantOnly marks patterns and targets, given as to New, as guard files
+// whose removal cannot weaken the guard: they hold code or settings that a
+// later program runs, so placing one is tampering and removing one is not.
+// A target also given to New by a pattern that is not plant-only must not
+// be passed here.
+func (s *Set) PlantOnly(patterns, targets []string) *Set {
+	if s.plantPats == nil {
+		s.plantPats, s.plantTargets = map[string]bool{}, map[string]bool{}
+	}
+	for _, p := range patterns {
+		if p = strings.TrimSpace(p); p == "" {
+			continue
+		}
+		if filepath.IsAbs(p) {
+			p = canonicalGlob(p)
+		}
+		s.plantPats[fold(filepath.ToSlash(p))] = true
+	}
+	for _, t := range targets {
+		if t != "" && filepath.IsAbs(t) {
+			s.plantTargets[s.canonical(t)] = true
+		}
+	}
+	return s
+}
+
+// Soft marks targets, given as to New, as guarded only because the session
+// directory or the nearest git root is where they are: a command that
+// rewrites a work tree without naming them (git checkout, pull) is asked
+// about there rather than blocked (TouchesHard). A target a config root or
+// home also stands for must not be passed here.
+func (s *Set) Soft(targets []string) *Set {
+	if s.softTargets == nil {
+		s.softTargets = map[string]bool{}
+	}
+	for _, t := range targets {
+		if t != "" && filepath.IsAbs(t) {
+			s.softTargets[s.canonical(t)] = true
+		}
+	}
+	return s
+}
+
+// canonical is Canonical(t) for a target given to New, without resolving it
+// again.
+func (s *Set) canonical(t string) string {
+	if c, ok := s.canon[t]; ok {
+		return c
+	}
+	return Canonical(t)
 }
 
 // program reports whether canonical path c is a guarded program path.
@@ -286,24 +356,120 @@ func (s *Set) Protected(p string) bool {
 	return false
 }
 
+// removalProtected is Protected for a removal: a plant-only guard file
+// (PlantOnly) does not count.
+func (s *Set) removalProtected(p string, hard bool) bool {
+	c := Canonical(p)
+	w := Canonical(filepath.Dir(filepath.Clean(p))) + "/" + fold(filepath.Base(filepath.Clean(p)))
+	w = strings.Replace(w, "//", "/", 1)
+	for _, x := range []string{c, w} {
+		for _, pat := range s.patterns {
+			if !s.plantPats[pat] && MatchGlob(pat, x) {
+				return true
+			}
+		}
+		for _, t := range s.targets {
+			if x == t && !s.plantTargets[t] && !(hard && s.softTargets[t]) {
+				return true
+			}
+		}
+		if s.program(x) {
+			return true
+		}
+	}
+	return false
+}
+
+// RemovalTouches reports whether removing p (absolute) can weaken the
+// guard: p is a guard file whose loss weakens it (hook settings, applygate's
+// config, state and binary), or a directory that holds one that exists now.
+// A guard file that matters only for what is placed in it (PlantOnly) does
+// not count, nor does one that does not exist: removing a directory cannot
+// remove it. Writing, moving or extracting into a directory is Touches.
+func (s *Set) RemovalTouches(p string) bool { return s.removalTouches(p, false) }
+
+// RemovalTouchesHard is RemovalTouches without the soft targets (Soft).
+func (s *Set) RemovalTouchesHard(p string) bool { return s.removalTouches(p, true) }
+
+func (s *Set) removalTouches(p string, hard bool) bool {
+	if s == nil || !filepath.IsAbs(p) {
+		return false
+	}
+	if s.removalProtected(p, hard) {
+		return true
+	}
+	c := Canonical(p)
+	for _, t := range s.targets {
+		if s.plantTargets[t] || hard && s.softTargets[t] {
+			continue
+		}
+		if c == "/" || strings.HasPrefix(t, strings.TrimSuffix(c, "/")+"/") {
+			// Only a file that is not there cannot be removed: an error
+			// other than not-exist (a directory that cannot be searched)
+			// counts as there.
+			if _, err := os.Lstat(t); !errors.Is(err, fs.ErrNotExist) {
+				return true
+			}
+		}
+	}
+	return s.holdsProgram(c)
+}
+
 // Touches reports whether writing, moving, removing or extracting into p
 // (absolute) can change a guard file: p is one, or is a directory that holds
 // one, such as ~/.claude for ~/.claude/settings.json or the repository root
 // for its .applygate.yaml.
-func (s *Set) Touches(p string) bool {
-	if s.Protected(p) {
-		return true
-	}
+func (s *Set) Touches(p string) bool { return s.touches(p, false) }
+
+// TouchesHard is Touches without the soft targets (Soft): only what a config
+// root, home or applygate's own files hold.
+func (s *Set) TouchesHard(p string) bool { return s.touches(p, true) }
+
+func (s *Set) touches(p string, hard bool) bool {
 	if s == nil || !filepath.IsAbs(p) {
 		return false
 	}
+	if hard && len(s.softTargets) > 0 {
+		if s.protectedHard(p) {
+			return true
+		}
+	} else if s.Protected(p) {
+		return true
+	}
 	c := Canonical(p)
 	for _, t := range s.targets {
+		if hard && s.softTargets[t] {
+			continue
+		}
 		if c == "/" || strings.HasPrefix(t, strings.TrimSuffix(c, "/")+"/") {
 			return true
 		}
 	}
 	return s.holdsProgram(c)
+}
+
+// protectedHard is Protected with a soft target matching only as a pattern
+// does: patterns name guard files wherever they are.
+func (s *Set) protectedHard(p string) bool {
+	c := Canonical(p)
+	w := Canonical(filepath.Dir(filepath.Clean(p))) + "/" + fold(filepath.Base(filepath.Clean(p)))
+	w = strings.Replace(w, "//", "/", 1)
+	for _, x := range []string{c, w} {
+		for _, pat := range s.patterns {
+			if MatchGlob(pat, x) {
+				return true
+			}
+		}
+		for _, t := range s.targets {
+			if x == t && !s.softTargets[t] {
+				return true
+			}
+		}
+		if s.program(x) {
+			return true
+		}
+	}
+	return false
 }
 
 // Needles are strings whose presence in opaque text (interpreter code, a
