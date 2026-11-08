@@ -35,6 +35,10 @@ const (
 	ComplexShape Class = "complex-shape"
 	Dynamic      Class = "dynamic"
 	Tampering    Class = "guard-tampering"
+	// HookRewrite is a git command that rewrites the work tree of a git
+	// root or session directory without a config, where hook settings may
+	// be: it asks in every tier (guard.Set.Soft).
+	HookRewrite Class = "hook-rewrite"
 )
 
 // Action is one classified, policy-relevant operation.
@@ -194,6 +198,46 @@ func (o Options) touches(p string) bool {
 		return o.Guard.Touches(p)
 	}
 	return o.protected(p)
+}
+
+// removalOnly returns the absolute paths a call only removes or moves away:
+// rm's operands, mv's sources (shell.Removes), and what git clean empties.
+// Removing a directory that holds a guard file counts only when that file
+// exists and its loss weakens the guard (guard.Set.RemovalTouches); writing,
+// moving or extracting into it always counts.
+func removalOnly(name string, args []shell.Word, dir, home string) map[string]bool {
+	m := map[string]bool{}
+	if name == "git" {
+		if sub, _, _ := gitSubcommand(args, dir, home); sub == "clean" {
+			for _, t := range gitTargets(args, dir, home) {
+				m[t] = true
+			}
+		}
+		return m
+	}
+	for _, w := range shell.Removes(name, args) {
+		if w.Text != "" && w.Text != "-" {
+			m[absPath(dir, w.Text, home)] = true
+		}
+	}
+	return m
+}
+
+// gitTouchesHard is touchesFor without the soft targets (guard.Set.Soft).
+func (o Options) gitTouchesHard(removes map[string]bool, p string) bool {
+	if removes[p] {
+		return o.Guard.RemovalTouchesHard(p)
+	}
+	return o.Guard.TouchesHard(p)
+}
+
+// touchesFor is touches, or for a path the call only removes (removalOnly)
+// whether removing it can weaken the guard.
+func (o Options) touchesFor(removes map[string]bool, p string) bool {
+	if removes[p] && o.Guard != nil {
+		return o.Guard.RemovalTouches(p)
+	}
+	return o.touches(p)
 }
 
 var engines = map[string]string{"terraform": "terraform", "tofu": "tofu", "opentofu": "tofu", "terragrunt": "terragrunt"}
@@ -977,8 +1021,23 @@ func fileOps(base Action, name string, args []shell.Word, dir string, opt Option
 	}
 	// Places the program writes, moves, removes or extracts into; a
 	// directory that holds a guard file counts.
+	removes := removalOnly(name, args, dir, opt.Home)
+	rewrite := false
 	for _, t := range writeTargets(name, args, dir, opt.Home) {
-		if opt.touches(t) {
+		if name == "git" && opt.Guard != nil && !opt.gitTouchesHard(removes, t) {
+			// Only a git root or session directory without a config holds
+			// a guard file here: git rewriting that work tree is asked
+			// about (HookRewrite), not blocked.
+			if !rewrite && opt.touchesFor(removes, t) {
+				rewrite = true
+				a := base
+				a.Class, a.Engine = HookRewrite, "file"
+				a.Why = "git rewrites " + t + ", which holds hook settings the agent's host loads (a git root or session directory without an .applygate.yaml)"
+				out = append(out, a)
+			}
+			continue
+		}
+		if opt.touchesFor(removes, t) {
 			tamper(name + " changes " + t + ", which holds a guard file")
 			return out
 		}
@@ -1345,10 +1404,9 @@ func outputTargets(name string, args []shell.Word, abs func(string) string) []st
 	return out
 }
 
-// gitTargets returns the paths a git command replaces or removes in the
-// working tree: mv and rm arguments, paths checked out or restored from
-// another ref, and the whole tree for apply, am and stash pop or apply.
-func gitTargets(args []shell.Word, dir, home string) []string {
+// gitSubcommand returns a git call's subcommand, the words after it, and
+// the directory it runs in (after -C).
+func gitSubcommand(args []shell.Word, dir, home string) (string, []shell.Word, string) {
 	base := dir
 	i := 0
 	for i < len(args) {
@@ -1368,9 +1426,19 @@ func gitTargets(args []shell.Word, dir, home string) []string {
 		break
 	}
 	if i >= len(args) {
+		return "", nil, base
+	}
+	return args[i].Text, args[i+1:], base
+}
+
+// gitTargets returns the paths a git command replaces or removes in the
+// working tree: mv and rm arguments, paths checked out or restored from
+// another ref, and the whole tree for apply, am and stash pop or apply.
+func gitTargets(args []shell.Word, dir, home string) []string {
+	sub, rest, base := gitSubcommand(args, dir, home)
+	if sub == "" {
 		return nil
 	}
-	sub, rest := args[i].Text, args[i+1:]
 	abs := func(p string) string { return absPath(base, p, home) }
 	// The commands that rewrite the work tree rewrite all of it, not the
 	// directory they run in: a state file anywhere in the repository.
@@ -1439,7 +1507,27 @@ func gitTargets(args []shell.Word, dir, home string) []string {
 				out = append(out, abs(w.Text))
 			}
 		}
-	case "clean", "checkout-index", "read-tree", "merge", "pull", "rebase", "cherry-pick", "revert", "switch":
+	case "clean":
+		// git clean removes untracked files from the directory it runs in
+		// down, or under the pathspecs it is given. A pathspec with magic
+		// (:/) or a pattern may reach the whole repository.
+		paths := false
+		for j := 0; j < len(rest); j++ {
+			t := rest[j].Text
+			switch {
+			case t == "-e" || t == "--exclude":
+				j++
+			case t == "--" || strings.HasPrefix(t, "-"):
+			case !rest[j].Resolved || strings.HasPrefix(t, ":") || strings.ContainsAny(t, "*?["):
+				out, paths = append(out, root()), true
+			default:
+				out, paths = append(out, abs(t)), true
+			}
+		}
+		if !paths {
+			out = append(out, abs("."))
+		}
+	case "checkout-index", "read-tree", "merge", "pull", "rebase", "cherry-pick", "revert", "switch":
 		out = append(out, root())
 	case "apply", "am":
 		out = append(out, root())
@@ -1730,9 +1818,17 @@ func readOnlyUse(name string, args []shell.Word) bool {
 		return false
 	}
 	first := ""
-	for _, w := range args {
-		if !strings.HasPrefix(w.Text, "-") {
-			first = w.Text
+	for i := 0; i < len(args); i++ {
+		t := args[i].Text
+		if name == "git" && t == "-C" {
+			i++ // git -C DIR runs in DIR; the subcommand follows
+			continue
+		}
+		if name == "git" && (t == "-c" || strings.HasPrefix(t, "-c") && len(t) > 2 || strings.HasPrefix(t, "--config-env")) {
+			return false // a config value such as core.fsmonitor runs a program
+		}
+		if !strings.HasPrefix(t, "-") {
+			first = t
 			break
 		}
 	}
@@ -1784,6 +1880,7 @@ func namesGuard(name string, args []shell.Word, dir string, opt Options) string 
 		name == "unzip" || name == "7z" || name == "cpio" || name == "pax" || name == "find" || name == "fd" || name == "git" ||
 		name == "busybox" || name == "toybox"
 	var needles []string
+	removes := removalOnly(name, args, dir, opt.Home)
 	for _, w := range args {
 		if name == "git" && strings.HasPrefix(w.Text, ":") && len(w.Text) > 1 && w.Text[1] != ':' {
 			// A pathspec with magic: :(top).claude and :/.claude are from the
@@ -1800,7 +1897,7 @@ func namesGuard(name string, args []shell.Word, dir string, opt Options) string 
 					if opt.Guard.GlobTouches(p) || opt.Guard.GlobTouches(absPath(repoRoot(dir), rest, opt.Home)) {
 						return w.Text
 					}
-				} else if opt.Guard.Protected(p) || changes && opt.Guard.Touches(p) {
+				} else if opt.gitTouchesHard(removes, p) {
 					return p
 				}
 			}
@@ -1814,7 +1911,23 @@ func namesGuard(name string, args []shell.Word, dir string, opt Options) string 
 					continue
 				}
 				p := absPath(dir, part, opt.Home)
-				if opt.Guard.Protected(p) || changes && opt.Guard.Touches(p) {
+				switch {
+				case name == "git":
+					// A git root or session directory without a config is
+					// judged with git's targets (HookRewrite); a guard file
+					// git names, or a config root, is tampering here.
+					if part != w.Text {
+						if opt.Guard.Protected(p) {
+							return p
+						}
+					} else if opt.gitTouchesHard(removes, p) {
+						return p
+					}
+				case part == w.Text && removes[p]:
+					if opt.Guard.RemovalTouches(p) {
+						return p
+					}
+				case opt.Guard.Protected(p) || changes && opt.Guard.Touches(p):
 					return p
 				}
 			}

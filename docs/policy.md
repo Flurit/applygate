@@ -37,6 +37,7 @@
 | state-surgery | block | ask | ask | roadmap |
 | cloud-destructive | block | ask | ask | roadmap |
 | guard-tampering | block | block | block | roadmap |
+| hook-rewrite (git rewrites a work tree that holds hook files, no config there) | ask | ask | ask | added (hook files outside a configured root) |
 | dynamic | ask | ask | allow* | roadmap |
 | unknown-wrapper | ask | allow | allow | roadmap open decision ("ask in protected tiers") |
 | mutating (import, refresh, test) | ask | allow | allow | added |

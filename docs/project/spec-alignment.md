@@ -65,7 +65,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 |---|---|---|
 | The eight spec classes and their protected/standard/disposable verdicts | done | `policy.Table`; `docs/policy.md` verdict table, column "spec" |
 | Unknown wrapper commands: "ask in protected tiers" (open decision) | done | class `unknown-wrapper` |
-| Classes the spec does not list | deviates | `mutating`, `cloud-write`, `credential-access` added and documented in `docs/policy.md` |
+| Classes the spec does not list | deviates | `mutating`, `cloud-write`, `credential-access`, `hook-rewrite` added and documented in `docs/policy.md` |
 | `init -reconfigure` as state surgery | deviates | read-only when it only re-points (`-backend-config` resolved, no `-migrate-state`/`-force-copy`); later commands in the same command line use the new backend ([policy.md](../policy.md), [oss-corpus-trial.md](../oss-corpus-trial.md)) |
 | Pure-delete saved plan treated as destroy | deviates | documented in `docs/project/ACCEPTANCE.md` "Deviations" |
 

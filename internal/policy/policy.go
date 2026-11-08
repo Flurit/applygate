@@ -69,6 +69,7 @@ var Table = map[classify.Class]map[config.Tier]Verdict{
 	classify.StateSurgery:     {config.Protected: Block, config.Standard: Ask, config.Disposable: Ask},
 	classify.CloudDestructive: {config.Protected: Block, config.Standard: Ask, config.Disposable: Ask},
 	classify.Tampering:        {config.Protected: Block, config.Standard: Block, config.Disposable: Block},
+	classify.HookRewrite:      {config.Protected: Ask, config.Standard: Ask, config.Disposable: Ask},
 	classify.Dynamic:          {config.Protected: Ask, config.Standard: Ask, config.Disposable: Allow},
 	// Not in the spec table; chosen here and documented in docs/policy.md.
 	classify.UnknownWrapper:   {config.Protected: Ask, config.Standard: Allow, config.Disposable: Allow},
@@ -367,14 +368,39 @@ func guardInText(copt classify.Options, cwd, text string) string {
 	return ""
 }
 
+// GuardOptions returns the guard for a decision. The session directories the
+// hook's environment names (SessionRoots) are guard roots as the repository
+// root is. A host's event cwd is not one: Codex 0.166.0 sends the command's
+// directory there, not the session's.
 func GuardOptions(cfg *config.Config, env map[string]string) classify.Options {
 	home := env["HOME"]
 	if home == "" {
 		home, _ = os.UserHomeDir()
 	}
 	paths := cfg.GuardPaths()
-	g := guard.New(paths, cfg.GuardTargets(home)).Programs(config.PathDirs(home), config.PathPrograms())
+	roots := SessionRoots(env)
+	g := guard.New(paths, cfg.GuardTargets(home, roots...)).Programs(config.PathDirs(home), config.PathPrograms()).
+		PlantOnly(cfg.PlantOnlyPaths(), cfg.PlantOnlyTargets(home, roots...)).Soft(cfg.SoftTargets(home, roots...))
 	return classify.Options{ProtectedPaths: paths, Guard: g, Home: home}
+}
+
+// sessionRootVars are the variables hosts set in a hook's environment to
+// the directory the session was started in, whose hook settings they load:
+// Claude Code's, Gemini CLI's and Devin's (docs/hosts.md).
+var sessionRootVars = []string{"CLAUDE_PROJECT_DIR", "GEMINI_PROJECT_DIR", "DEVIN_PROJECT_DIR"}
+
+// SessionRoots returns the session directories the hook's environment
+// names. A session started in a subdirectory of a repository loads that
+// subdirectory's .claude/settings.json, so its hook files are guarded there
+// as at the repository root.
+func SessionRoots(env map[string]string) []string {
+	var out []string
+	for _, k := range sessionRootVars {
+		if v := env[k]; v != "" && filepath.IsAbs(v) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // ShellOptions returns the analyzer options for a command run in dir.
@@ -1242,6 +1268,8 @@ func nextStep(c classify.Class, engine string) string {
 		return "Deleting cloud resources directly needs a human. Tell the user which resource and why; prefer changing the Terraform configuration and planning."
 	case classify.Tampering:
 		return "The agent may not change its own guardrails, hook configuration or applygate's config and log. Ask the user to make this change themselves."
+	case classify.HookRewrite:
+		return "This rewrites the work tree of the repository or session directory where the agent's hook settings are loaded from, and could bring in changed hook files. Confirm with the user first."
 	case classify.Dynamic:
 		return "Write the command out literally, without eval, variables for subcommands, encoded text, or piping generated or fetched text into a shell, so it can be checked."
 	case classify.UnknownWrapper:
