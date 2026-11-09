@@ -1184,20 +1184,23 @@ func cleanBases(in []string) []string {
 	return bases
 }
 
-// SoftTargets are the targets GuardTargets has only from the nearest git
-// root and the session roots, where no config is: a command that rewrites
-// the work tree there without naming a guard file is asked about, not
-// blocked (guard.Set.Soft). Home's, the config root's and applygate's own
-// are not soft.
+// SoftTargets are the targets GuardTargets has only from a repository-level
+// root (the config's directory, the outermost config's directory, the
+// nearest git root, the session roots): a git command that rewrites the work
+// tree there without naming a guard file is asked about, not blocked
+// (guard.Set.Soft), since checkout, pull and the like are routine and bring
+// in hook files only when a commit holds them. A changed .applygate.yaml is
+// not read until a person trusts it again. Home's and applygate's own
+// targets are not soft.
 func (c *Config) SoftTargets(home string, sessionRoots ...string) []string {
 	all := DefaultProtectedPaths
 	all = append(append([]string(nil), all...), c.ProtectedPaths...)
 	hard := map[string]bool{}
-	for _, t := range c.targetsUnder(all, cleanBases([]string{home, c.Root, c.GuardRoot})) {
+	for _, t := range c.targetsUnder(all, cleanBases([]string{home})) {
 		hard[t] = true
 	}
 	var out []string
-	for _, t := range c.targetsUnder(all, cleanBases(append([]string{c.GitRoot}, sessionRoots...))) {
+	for _, t := range c.targetsUnder(all, cleanBases(append([]string{c.Root, c.GuardRoot, c.GitRoot}, sessionRoots...))) {
 		if !hard[t] {
 			hard[t] = true // once
 			out = append(out, t)

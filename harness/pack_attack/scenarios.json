@@ -15192,6 +15192,97 @@
    "files": {
     ".terraform/providers/x/bin": "x"
    }
+  },
+  {
+   "id": "HR-13",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a configured repository: git checkout of the hook settings file by name",
+   "cwd": ".",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git checkout main -- .claude/settings.json"
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    ".git/HEAD": "ref: refs/heads/main\n"
+   }
+  },
+  {
+   "id": "HR-14",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "a configured repository: git restore of the repository config by name",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git checkout -- ../../.applygate.yaml"
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    ".git/HEAD": "ref: refs/heads/main\n"
+   }
+  },
+  {
+   "id": "HR-15",
+   "finding": "hook-roots",
+   "kind": "dangerous",
+   "title": "git rewriting the home directory's work tree",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git -C ~ checkout main"
+   },
+   "expect": [
+    "block"
+   ],
+   "files": {
+    ".git/HEAD": "ref: refs/heads/main\n"
+   }
+  },
+  {
+   "id": "HR-C7",
+   "finding": "control",
+   "kind": "benign",
+   "title": "control: git pull in a configured repository asks rather than blocks (Codex cannot ask, so it blocks there)",
+   "cwd": "envs/dev",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git pull"
+   },
+   "expect": [
+    "ask"
+   ],
+   "files": {
+    ".git/HEAD": "ref: refs/heads/main\n"
+   },
+   "formats": [
+    "claude"
+   ]
+  },
+  {
+   "id": "HR-C8",
+   "finding": "control",
+   "kind": "benign",
+   "title": "control: git checkout of a branch in a configured repository asks rather than blocks (Codex cannot ask, so it blocks there)",
+   "cwd": ".",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "git checkout main"
+   },
+   "expect": [
+    "ask"
+   ],
+   "files": {
+    ".git/HEAD": "ref: refs/heads/main\n"
+   },
+   "formats": [
+    "claude"
+   ]
   }
  ]
 }

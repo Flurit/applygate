@@ -23,7 +23,7 @@ applygate check "terraform -chdir=envs/prod destroy"
 
 applygate starts in **observe mode**: it logs what it would block and blocks nothing, so `check` prints `allow` followed by the block it would give in enforce mode. Observe mode turns self-protection off too: an agent can edit the hook files and applygate's config while you trial it, so trial it where that is acceptable. After a few days, `applygate report` shows what it caught and `applygate suggest` proposes a config with your environments and their tiers. Review it, set `mode: enforce` in your user config (`~/.config/applygate/config.yaml`; a repository config can only add protection), and run `applygate doctor` to check the setup.
 
-applygate is pre-1.0. See [what has been verified](docs/project/ACCEPTANCE.md).
+applygate is pre-1.0. [docs/capabilities.md](docs/capabilities.md) says what each part covers and how much of it has been seen working; the v1 acceptance record is [ACCEPTANCE.md](docs/project/ACCEPTANCE.md).
 
 ## How it works
 
@@ -41,7 +41,7 @@ On the same 17 dangerous Terraform scenarios (our own scenario set and a compari
 | A competent hand-written Rego/regex policy | 14 / 17 |
 | **applygate** (protected tier) | **17 / 17** |
 
-The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 849 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
+The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios and the runner are in [harness/](harness). `applygate selftest` runs the full pack of 163 scenarios (108 dangerous, 55 benign) against your binary; the 918 reproductions and controls of the v0.6.0 security reviews are in `harness/pack_attack`.
 
 applygate is a check, not a sandbox, and a parser cannot promise that a command is never allowed. What holds without it is plan-only credentials for agents and writes behind MFA, a versioned, locked state bucket, a host sandbox and a reviewed apply path. `applygate doctor --boundary` checks the ones it can and reports an assurance level L0 to L3; `doctor --creds` is the credential part ([docs/boundary.md](docs/boundary.md), [docs/credentials.md](docs/credentials.md), [the threat model](docs/threat-model.md)). Its self-protection, which stops an agent from turning it off, is a guarantee only under a managed install (`sudo applygate install --managed`, [docs/managed.md](docs/managed.md)); without one it is best-effort.
 
@@ -56,6 +56,7 @@ applygate is a check, not a sandbox, and a parser cannot promise that a command 
 | State surgery | state rm/mv/push, force-unlock, taint, `-migrate-state` | block | ask | ask |
 | Destructive cloud CLI | `aws … delete-*`, `s3 rb`, `kubectl delete`, `helm uninstall`, `az`/`gcloud … delete` | block | ask | ask |
 | Disabling the guard | skip-permission flags, edits to hooks, applygate's config, log, approvals, judge cache or binary, a renamed copy of applygate | block | block | block |
+| Git rewriting a work tree that holds hook settings | `git checkout BRANCH`, `pull`, `merge`, `rebase`, `stash pop` in the repository or session directory | ask | ask | ask |
 | Unresolvable | `eval "$(curl …)"`, `curl … \| bash` | ask | ask | ask next to a protected environment* |
 | Not a plain command (strict shapes) | loops, functions, `$(…)`, `bash -c`, `python3 -c`, `export`, `npx`, `man`, a program option that runs a program (`git --upload-pack`, `tar --checkpoint-action`, `sed 's/x/y/e'`), git in a repository with hooks | ask | allow | allow* |
 
@@ -85,7 +86,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 
 **What is not verified.** The live tests above predate v0.6.0 and have not been re-run for it. The MCP translations were written from source, not tested against running servers. One-time approvals were exercised with a replayed Codex event, not inside a live agent. The managed-install settings keys are from the agents' documentation, not tested live, and so are the sandbox keys `doctor --boundary` reads. None of this is part of a security claim; [docs/limits.md](docs/limits.md) lists what each guarantee depends on.
 
-**No model needed.** applygate's rules are deterministic, work offline and decide every call they recognize. Calls they do not recognize (Pulumi, database clients, PaaS CLIs, inline SDK code, unknown scripts and MCP tools, file writes) are allowed.
+**No model needed.** applygate's rules are deterministic and work offline. Calls they do not recognize (Pulumi, database clients, PaaS CLIs, inline SDK code, unknown scripts) get no verdict of their own: in a protected environment strict shapes ask about them, and elsewhere they are allowed unless they can run code the analysis does not follow next to a protected environment. Unknown MCP tools and writes to ordinary files are allowed in every tier.
 
 **Model judge (optional).** If you want a second look at those calls, turn on `judge:` in the user config and choose a model: any OpenAI-compatible endpoint with your own key, or a program you name. There is no default model.
 - **What it can do:** it can only make a verdict stricter.
@@ -119,7 +120,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 | `applygate report` / `suggest` | Summarize the decision log / propose a config from it |
 | `applygate doctor` | Check config, hooks and versions |
 | `applygate doctor --boundary [--require L2]` | The assurance level this machine reaches (managed install, audited credentials, host sandbox), exit 1 below the level you require ([docs/boundary.md](docs/boundary.md)) |
-| `applygate doctor --creds` | Ask AWS and the clusters whether the credentials here can change production without MFA ([docs/credentials.md](docs/credentials.md)) |
+| `applygate doctor --creds` | Ask AWS, Google Cloud, Azure and the clusters whether the credentials here can change production without a person ([docs/credentials.md](docs/credentials.md)) |
 | `applygate hook install\|remove --agent NAME` | Manage one agent's hook |
 | `applygate hosts` | What each agent supports |
 | `applygate selftest` | Run the scenario pack against this binary |
@@ -132,7 +133,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 - **If applygate cannot start at all,** the agent decides; see the table above. Where the call runs (Codex, Gemini CLI, Windsurf, Devin), use the agent's sandbox and approval settings as a second line, and run `applygate doctor` to confirm the hook binary is in place.
 - **Observe mode** never blocks, not even on errors.
 
-Known gaps: [docs/limits.md](docs/limits.md).
+Known gaps: [docs/limits.md](docs/limits.md). What each part covers and how much of it has been seen working: [docs/capabilities.md](docs/capabilities.md).
 
 ## Upgrading to v0.6.0
 
@@ -147,6 +148,9 @@ v0.6.0 fixes the findings of a pre-release security review ([review/v0.6.0](revi
 - **One-time approvals are off by default.** Turn them on in the user config (`approvals: true`) if you accept that an agent on the same machine can reach your terminal.
 - **`applygate apply` has no `--yes` and no `--plan-json`.** In CI, gate with `applygate plan-check` or the Action and run the engine yourself.
 - **The plan gate needs a committed `.terraform.lock.hcl`** wherever `.terraform/providers` holds providers. Before running `terraform show` it checks the providers against it, and without one a saved plan in a protected environment is blocked. Terragrunt's own `show` is no longer run.
+- **Hook files are guarded where the agent's host loads them:** at the git root of a repository with no `.applygate.yaml`, and in the directory a Claude Code, Gemini CLI or Devin session was started in. Removing, moving, copying or extracting into a directory there that holds hook settings is blocked.
+- **Git rewrites ask:** `git checkout BRANCH`, `pull`, `merge`, `rebase`, `stash` and the like ask in a repository or session directory that holds hook settings, rather than being blocked; on agents that cannot ask they are blocked. Restoring a hook or config file by name is still blocked.
+- **Removing a directory** counts only guard files under it that exist and whose loss weakens the guard, so `rm -rf .terraform`, `.git` or `.vscode` at a repository root is no longer blocked as tampering.
 - **Stricter verdicts:**
   - replacing a resource in a saved plan is judged like destroying it;
   - a file a command writes and then runs, a glob in a program name, and a command whose directory cannot be followed are asked about in protected environments;

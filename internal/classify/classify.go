@@ -35,9 +35,9 @@ const (
 	ComplexShape Class = "complex-shape"
 	Dynamic      Class = "dynamic"
 	Tampering    Class = "guard-tampering"
-	// HookRewrite is a git command that rewrites the work tree of a git
-	// root or session directory without a config, where hook settings may
-	// be: it asks in every tier (guard.Set.Soft).
+	// HookRewrite is a git command that rewrites the work tree of a
+	// repository or session directory where hook settings or the repository
+	// config may be: it asks in every tier (guard.Set.Soft).
 	HookRewrite Class = "hook-rewrite"
 )
 
@@ -1025,14 +1025,14 @@ func fileOps(base Action, name string, args []shell.Word, dir string, opt Option
 	rewrite := false
 	for _, t := range writeTargets(name, args, dir, opt.Home) {
 		if name == "git" && opt.Guard != nil && !opt.gitTouchesHard(removes, t) {
-			// Only a git root or session directory without a config holds
-			// a guard file here: git rewriting that work tree is asked
-			// about (HookRewrite), not blocked.
+			// Only a repository-level root (config, git or session) holds a
+			// guard file here: git rewriting that work tree is asked about
+			// (HookRewrite), not blocked.
 			if !rewrite && opt.touchesFor(removes, t) {
 				rewrite = true
 				a := base
 				a.Class, a.Engine = HookRewrite, "file"
-				a.Why = "git rewrites " + t + ", which holds hook settings the agent's host loads (a git root or session directory without an .applygate.yaml)"
+				a.Why = "git rewrites " + t + ", which holds hook settings or the repository config; a commit could change them"
 				out = append(out, a)
 			}
 			continue

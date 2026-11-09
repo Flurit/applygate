@@ -48,14 +48,18 @@ func TestGuardRootsWithoutAConfig(t *testing.T) {
 			t.Errorf("hook settings %s are plant-only", p)
 		}
 	}
-	// A git root that is also the config's is not soft.
+	// A config root is soft too (a git rewrite there asks); home stays hard.
 	os.WriteFile(filepath.Join(repo, ".applygate.yaml"), []byte("version: 1\n"), 0o644)
 	TrustAll = true
 	cfg, err = Load("", sub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if slices.Contains(cfg.SoftTargets(home), filepath.Join(repo, ".claude", "settings.json")) {
-		t.Errorf("the config root's hook settings are soft")
+	soft = cfg.SoftTargets(home)
+	if !slices.Contains(soft, filepath.Join(repo, ".claude", "settings.json")) || !slices.Contains(soft, filepath.Join(repo, ".applygate.yaml")) {
+		t.Errorf("the config root's hook settings or config are not soft")
+	}
+	if slices.Contains(soft, filepath.Join(home, ".claude", "settings.json")) {
+		t.Errorf("home's hook settings are soft under a config")
 	}
 }
