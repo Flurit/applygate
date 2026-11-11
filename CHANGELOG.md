@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **README rewritten for a quick scan:** what it does, who it is for and what it is not come first, and terms are defined before they are used. The upgrade notes moved to [docs/upgrading.md](docs/upgrading.md) and the full command list to [docs/commands.md](docs/commands.md).
+
 ## v0.6.0 (2026-11-11)
 
 ### Live re-test: Codex hook trust, Claude Code auto mode
