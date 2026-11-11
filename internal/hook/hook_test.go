@@ -262,7 +262,8 @@ func TestAllowProducesNoOutput(t *testing.T) {
 
 func TestClaudeCanAsk(t *testing.T) {
 	// An ask is left to Claude Code only in the modes where the prompt was
-	// seen live: default (T3.1) and bypassPermissions (2.1.312, T3.2). Every
+	// seen live: default (T3.1), bypassPermissions (2.1.312, T3.2) and auto
+	// (2.1.322, v0.6.0 re-test). Every
 	// other mode, untested ones included, enforces ask as block (I1).
 	cases := []struct {
 		mode string
@@ -273,7 +274,7 @@ func TestClaudeCanAsk(t *testing.T) {
 		{"bypassPermissions", true},
 		{"acceptEdits", false},
 		{"plan", false},
-		{"auto", false},
+		{"auto", true},
 		{"dontAsk", false},
 	}
 	for _, c := range cases {

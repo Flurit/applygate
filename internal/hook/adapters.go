@@ -85,7 +85,7 @@ func (Cline) Pass() Output  { return Output{Stdout: clineOut(false, "")} }
 
 // claudeAskModes are the Claude Code permission modes known to show the
 // prompt for a hook's ask ("" is an older version without the field).
-var claudeAskModes = map[string]bool{"": true, "default": true, "bypassPermissions": true}
+var claudeAskModes = map[string]bool{"": true, "default": true, "bypassPermissions": true, "auto": true}
 
 // caseClash rejects an event, or its tool_input, with two keys that differ
 // only in case (command and COMMAND). Go's decoder matches struct fields
@@ -158,10 +158,13 @@ func (Claude) Parse(raw []byte) (policy.Event, bool, error) {
 		return policy.Event{}, false, errors.New("malformed hook event: no tool_name")
 	}
 	// An ask is left to Claude Code only in the permission modes where a
-	// prompt was seen live: default (T3.1) and bypassPermissions on 2.1.312
-	// (T3.2, observed, not documented). In every other mode (dontAsk, and
-	// the untested acceptEdits, plan and auto) an ask is enforced as a
-	// block, so an untested mode cannot turn an ask into a silent allow.
+	// prompt was seen live: default (T3.1), bypassPermissions on 2.1.312
+	// (T3.2, observed, not documented) and auto on 2.1.322, the starting
+	// mode of interactive sessions since 2.1.283 (documented: a hook's ask
+	// goes to the prompt and auto mode's classifier does not decide it; seen
+	// in the v0.6.0 re-test). In every other mode (dontAsk, and the untested
+	// acceptEdits and plan) an ask is enforced as a block, so an untested
+	// mode cannot turn an ask into a silent allow.
 	ev := policy.Event{Agent: "claude", Tool: in.ToolName, Cwd: in.Cwd, Session: in.SessionID, PermissionMode: in.PermissionMode,
 		CanAsk: claudeAskModes[in.PermissionMode], DirKnown: true}
 	var ti struct {

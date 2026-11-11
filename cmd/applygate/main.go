@@ -1027,6 +1027,21 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 					}
 				}
 			}
+			if agent == "codex" && len(bins) > 0 {
+				cfgToml, _ := os.ReadFile(codexConfigPath())
+				for _, st := range codexHookTrust(p, b, cfgToml) {
+					switch st.State {
+					case "trusted":
+						say(true, "codex will run the applygate hook in %s (trusted with /hooks)", p)
+					case "modified":
+						say(false, "codex skips the applygate hook in %s: it changed since it was trusted (a reinstall does that); open Codex and run /hooks to review and trust it", p)
+					case "disabled":
+						say(false, "codex skips the applygate hook in %s: it is turned off in %s; turn it on with /hooks in Codex", p, codexConfigPath())
+					default:
+						say(false, "codex skips the applygate hook in %s: it has not been trusted; open Codex and run /hooks to review and trust it", p)
+					}
+				}
+			}
 			if agent == "codex" {
 				for _, u := range scan.unrecognised {
 					say(false, "codex: unrecognised PreToolUse hook entry in %s (Codex runs trusted hooks; review it): %s", p, u)
