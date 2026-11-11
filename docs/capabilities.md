@@ -30,7 +30,7 @@ Each item carries one of these marks:
 
 | Host | Install | Judged | Can ask | Command's directory | If the hook fails | Status |
 |---|---|---|---|---|---|---|
-| Claude Code | `hook install`, plugin, `install --managed` | Bash and any tool with a command (Monitor, PowerShell); Write, Edit, MultiEdit, NotebookEdit; Read, Grep, Glob; MCP | yes, in `default` and `bypassPermissions` modes; elsewhere ask is block | yes | blocks (2.1.295+) | live: 2.1.312 Linux 2026-10-28, 2.1.314 macOS 2026-10-30 |
+| Claude Code | `hook install`, plugin, `install --managed` | Bash and any tool with a command (Monitor, PowerShell); Write, Edit, MultiEdit, NotebookEdit; Read, Grep, Glob; MCP | yes, in `default`, `auto` and `bypassPermissions` modes; elsewhere ask is block | yes | blocks (2.1.295+) | live: 2.1.312 Linux 2026-10-28, 2.1.314 macOS 2026-10-30, 2.1.322 macOS 2026-11-11 |
 | Codex | `hook install`; managed prints a `requirements.toml` snippet | shell tools, `exec_command`, `unified_exec`, `write_stdin`, `js_repl` (as `node -e`); apply_patch; MCP | no: ask is block | no: judged at the most protected tier under the session root, unless the call carries a `workdir` | allows | live: 0.159.2 and 0.165.0 Linux, 0.166.0 macOS, 2026-10-28 to 30 |
 | Cursor | `hook install` | Shell; Write, Delete; Read, Grep | no | yes (`working_directory`) | blocks (`failClosed`) | docs |
 | Copilot CLI | `hook install` | bash, powershell; create, edit, apply_patch; view, glob, grep | yes | no | blocks, except on timeout | docs |
@@ -40,7 +40,7 @@ Each item carries one of these marks:
 | OpenCode | a plugin that runs `applygate hook opencode` | bash; edit, write, patch; read | no | when the call has a `workdir` | blocks while the plugin is loaded | docs |
 | Cline | a `PreToolUse` script | commands; editor and write tools; reads and searches | no (a cancel ends the task) | `workspaceRoots[0]` | allows | docs |
 
-`applygate init` installs only Claude Code and Codex, at user scope. Claude Code's pending live tests: the `*` matcher with Monitor and PowerShell, the directory after a `cd`, the prompt in acceptEdits, plan and auto modes, and v0.6.0 as a whole. Codex's: a session started in a subdirectory, the planfile search, the hook timeout.
+`applygate init` installs only Claude Code and Codex, at user scope. Claude Code's pending live tests: the `*` matcher with Monitor and PowerShell, the directory after a `cd`, the prompt in acceptEdits and plan modes. Codex's: a session started in a subdirectory, the planfile search.
 
 ### Tool calls
 

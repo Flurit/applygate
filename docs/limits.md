@@ -161,7 +161,7 @@ The v0.6.0 pre-release review ([review/v0.6.0](../review/v0.6.0)) left these ope
 - **Cursor's allow.** Under `failClosed`, applygate must print a permission for every call, so a call it does not judge gets `{"permission":"allow"}`. Whether that skips Cursor's own approval prompt is not documented and has not been tested live.
 - **Untested Claude Code paths:**
   - the `*` matcher with `Monitor` and `PowerShell` calls, which is tested only with replayed events;
-  - the prompt in `acceptEdits`, `plan` and `auto` modes, where an ask is enforced as a block until tested.
+  - the prompt in `acceptEdits` and `plan` modes, where an ask is enforced as a block until tested. (`auto`, the starting mode of interactive sessions since Claude Code 2.1.283, shows the prompt for a hook's ask: documented, and seen on 2.1.322 in the v0.6.0 re-test.)
 - **Hosts other than Claude Code and Codex** have not been run inside the host ([hosts.md](hosts.md)).
 - **The model judge's accuracy** was measured before this release's filter changes and has not been measured again.
 - **One-time approvals** have no operating-system presence check, which is why they are off by default.
