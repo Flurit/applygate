@@ -13,7 +13,7 @@ Each item carries one of these marks:
 
 | Area | What it covers | Status |
 |---|---|---|
-| Agent hosts | Claude Code and Codex fully; Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode and Cline through their hook APIs | Claude Code and Codex: live on v0.5.0, not re-run on v0.6.0. The other seven: docs |
+| Agent hosts | Claude Code and Codex fully; Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode and Cline through their hook APIs | Claude Code and Codex: live on v0.6.0 (Claude Code 2.1.314 and 2.1.322, Codex 0.166.0; review/T3_RESULTS.md). The other seven: docs |
 | Shell commands | Terraform, OpenTofu and Terragrunt by subcommand; aws, gcloud, az, gsutil, kubectl, helm, gh and HTTP clients by verb; tiers from paths, workspaces, backends, profiles, accounts, contexts, projects and subscriptions | tests (163-scenario replay, 918-scenario attack pack, 162-call agent trial) |
 | File edits and reads | Write/Edit/apply_patch to guard and state files; reads of credential files | tests; live in Claude Code and Codex on v0.5.0 |
 | Plan gate | Reads `terraform show -json` of a saved plan before apply: 14 rules, AWS resource data | tests; the GitHub Action on real AWS-provider plans in CI |
@@ -196,7 +196,7 @@ Capability:
 - pulumi, cdk, flux and argocd have no rules; `npx cdk deploy` asks only through strict shapes.
 - The plan gate's resource data is AWS only: a Google or Azure plan gets the generic rules (destroy count, replaces) but no stateful-type or exposure rules.
 - Seven of nine hosts, the managed install, every MCP translation, `doctor --creds` and `--boundary` have not been run against the real program.
-- Claude Code and Codex were last tested live on v0.5.0.
+- Claude Code and Codex were tested live on v0.6.0 (review/T3_RESULTS.md); not tested live: the prompt in plan and acceptEdits modes, a Codex user-scope hook launched from a subdirectory, and the Codex planfile search.
 - [hosts.md](hosts.md) says MCP is "not inspected" for Copilot CLI, OpenCode and Cline. The code would treat an `mcp__` tool name from them as MCP; whether they send one is not known.
 
 Docs that disagreed with the code, corrected with this page: terraform's shape in [policy.md](policy.md) (a subcommand and option tree, not "any arguments"), the `plan-too-large` finding and the name-hint separators in [policy.md](policy.md), the lock-file check in [config.md](config.md) (`git cat-file`, not `git diff`), readable credential files at L2 in [boundary.md](boundary.md) (each is `not verified`, so L2 is not reached while one exists), and the attack-pack counts in `harness/README.md`.
