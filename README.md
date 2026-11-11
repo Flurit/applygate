@@ -100,7 +100,7 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 **In CI**, the same plan gate runs between `plan -out` and `apply`, as a GitHub Action or as a Terragrunt `before_hook` ([docs/ci.md](docs/ci.md)):
 
 ```yaml
-- uses: Flurit/applygate@v0.5.0
+- uses: Flurit/applygate@v0.6.0
   with:
     plan: tfplan
     working-directory: envs/prod

@@ -149,7 +149,7 @@ A named production target (`--profile prod-admin`, `--context eks-blue`) makes a
 | Unmanaged (`hook install`, `init`, plugin) | Best-effort self-protection: the hook blocks the routes it knows, and an agent with your shell can in the end change anything you can. Observe mode turns it off | tests |
 | `sudo applygate install --managed` | A root-owned binary, system config and trust store, and Claude Code managed settings (matcher `*`, block on failure, bypass mode disabled; `--exclusive` allows managed hooks only). The user config can then only tighten. The only setup documented as a guarantee. Not covered: the log and approvals directory, passwordless sudo, hosts other than Claude Code and Codex, credentials | docs (managed keys from the Claude Code docs; Codex snippet printed, not written) |
 
-The plugin launcher pins the first binary it finds (by path and SHA-256), refuses one that changed, and downloads a signed release (v0.5.0) only over HTTPS with a checked hash.
+The plugin launcher pins the first binary it finds (by path and SHA-256), refuses one that changed, and downloads a signed release (v0.6.0) only over HTTPS with a checked hash.
 
 ## MCP
 
@@ -170,7 +170,7 @@ A call to a known infrastructure tool is judged as its equivalent command, with 
 
 ## CI
 
-`applygate plan-check` judges a `terraform show -json` plan in CI (without `--trust-config` every directory is protected). The GitHub Action installs a cosign-verified release (default v0.5.0) and fails on block by default; `trust-config` is off by default, since on a fork's pull request the config is the contributor's. Status: live, on two real AWS-provider plans in `action-check.yml`. The Terragrunt `before_hook` recipe is docs only.
+`applygate plan-check` judges a `terraform show -json` plan in CI (without `--trust-config` every directory is protected). The GitHub Action installs a cosign-verified release (default v0.6.0) and fails on block by default; `trust-config` is off by default, since on a fork's pull request the config is the contributor's. Status: live, on two real AWS-provider plans in `action-check.yml`. The Terragrunt `before_hook` recipe is docs only.
 
 ## Logs and other commands
 
