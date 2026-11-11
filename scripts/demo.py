@@ -10,7 +10,9 @@ the final frame.
     go build -o bin/applygate ./cmd/applygate
     python3 -I scripts/demo.py bin/applygate > docs/assets/demo.svg
 """
+import hashlib
 import html
+import json
 import os
 import shutil
 import subprocess
@@ -43,8 +45,22 @@ def run_scenes(binary):
     with tempfile.TemporaryDirectory() as tmp:
         repo = os.path.join(tmp, "acme-infra")
         shutil.copytree(FIXTURE, repo, symlinks=True)
+        # A fresh home, so the output does not depend on the person's own
+        # config, and the fixture's config trusted, as `applygate trust`
+        # would record it: canonical (lowercased) path to its SHA-256.
+        home = os.path.join(tmp, "home")
+        conf = os.path.join(home, ".config")
+        os.makedirs(os.path.join(conf, "applygate"))
+        cfg = os.path.realpath(os.path.join(repo, ".applygate.yaml"))
+        with open(cfg, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest()
+        with open(os.path.join(conf, "applygate", "trusted.json"), "w") as f:
+            json.dump({cfg.lower(): digest}, f)
+        env = {"PATH": "/usr/bin:/bin", "HOME": home, "XDG_CONFIG_HOME": conf,
+               "XDG_STATE_HOME": os.path.join(home, ".local", "state")}
         for caption, cmd in SCENES:
-            out = subprocess.run([binary, "check", cmd], cwd=repo, capture_output=True, text=True).stdout
+            out = subprocess.run([binary, "check", cmd], cwd=repo, env=env,
+                                 capture_output=True, text=True).stdout
             out = out.replace(os.path.realpath(repo), SHOWN_DIR).replace(repo, SHOWN_DIR)
             verdict, *body = out.rstrip("\n").split("\n")
             yield caption, cmd, verdict, body

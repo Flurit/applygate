@@ -193,7 +193,7 @@
   <div class="wrap hero">
     <p class="eyebrow"><b>Open source</b> · Apache-2.0 · Claude Code, Codex, CI · Terraform and OpenTofu</p>
     <h1>Stop coding agents from running <code>terraform destroy</code> in production.</h1>
-    <p class="lede">applygate is a <strong>deterministic, local check</strong> that runs before an agent's tool call. It answers <strong>allow</strong>, <strong>ask</strong> or <strong>block</strong>, with a reason and a next step the agent can act on. It reads commands the way the shell does and reads plans the way Terraform does.</p>
+    <p class="lede">applygate is a <strong>deterministic, local check</strong> that runs before an agent's tool call. It answers <strong>allow</strong>, <strong>ask</strong> or <strong>block</strong>, with a reason and a next step the agent can act on. It reads commands the way the shell does and reads plans the way Terraform does. In a protected environment it allows only commands it fully understands and asks about everything else, and <code>applygate doctor --boundary</code> checks what has to hold when it is wrong.</p>
     <div class="cta">
       <div class="install" role="group" aria-label="Install command">
         <span class="prompt">$</span><code id="install-cmd">brew install Flurit/tap/applygate</code>
@@ -203,7 +203,7 @@
       <a class="btn" href="https://github.com/Flurit/applygate" data-umami-event="star-github">Star on GitHub</a>
     </div>
     <figure class="demo">
-      <img src="demo.svg" width="816" height="688" alt="Terminal: applygate check blocks terraform destroy in prod, blocks the same command hidden in base64, and allows a git commit message and a plan.">
+      <img src="demo.svg" width="816" height="859" alt="Terminal: applygate check blocks terraform destroy in prod, blocks the same command hidden in base64, and allows a git commit message and a plan.">
       <figcaption>Real output from <code>applygate check</code>: a destroy in prod is blocked, also when it is hidden in base64; a commit message that only mentions it is not.</figcaption>
     </figure>
   </div>
@@ -238,11 +238,11 @@
         <div class="card">
           <h3>Reads commands the way bash does</h3>
           <p>Parses with a real shell parser, follows <code>cd</code>, variables, loops and functions, and unwraps <code>bash -c</code>, <code>eval</code>, here-documents, <code>sudo</code>, <code>xargs</code>, <code>find -exec</code>, secrets runners, Makefile recipes and scripts. It decodes <code>echo … | base64 -d | sh</code>.</p>
-          <p>It tells commands from text: <code>grep "terraform destroy"</code> is a grep. What it cannot reproduce exactly, it refuses (ask in protected environments) instead of guessing. A program it does not know that wraps another cloud CLI is not seen through unless the config lists it.</p>
+          <p>It tells commands from text: <code>grep "terraform destroy"</code> is a grep. In a protected environment only an allow-list of known programs, in shapes that run no other program, goes through without a prompt; a loop, <code>bash -c</code>, an unknown program or anything it cannot reproduce exactly gets an ask instead of a guess. A program it does not know that wraps another cloud CLI is not seen through unless the config lists it.</p>
         </div>
         <div class="card">
           <h3>Judges the plan, not just the command</h3>
-          <p>Maps the directory, workspace, backend and AWS profile to an environment tier, and flags a planfile made in another workspace, a backend changed since <code>init</code>, stale state and lock-file drift.</p>
+          <p>Maps the directory, workspace, backend, AWS profile, Kubernetes context, GCP project and Azure subscription to an environment tier (unknown counts as protected), and flags a planfile made in another workspace, a backend changed since <code>init</code>, stale state and lock-file drift.</p>
           <p>For <code>apply &lt;planfile&gt;</code> it reads the plan and flags destroyed or replaced stateful resources, removed deletion protection, internet exposure, IAM wildcards and changes to the state backend.</p>
         </div>
       </div>
@@ -252,19 +252,19 @@
   <section id="stops">
     <div class="wrap">
       <h2>What it stops before it runs.</h2>
-      <p class="sub">Verdicts depend on the environment's tier: protected environments block, standard ones ask, disposable ones mostly allow.</p>
+      <p class="sub">Verdicts depend on the environment's tier: protected environments block, standard ones ask, disposable ones mostly allow. In a protected environment anything off the allow-list asks as well, so these are the known dangers, not the whole list.</p>
       <div class="grid">
         <div class="stop"><h3>Destroys</h3><p><code>destroy</code>, <code>apply -destroy</code>, <code>-replace</code>, and plans that delete.</p></div>
         <div class="stop"><h3>Unreviewed applies</h3><p><code>apply -auto-approve</code> with no saved plan.</p></div>
         <div class="stop"><h3>State surgery</h3><p><code>state rm/mv/push</code>, <code>force-unlock</code>, <code>-migrate-state</code>.</p></div>
         <div class="stop"><h3>Cloud CLI deletes</h3><p><code>aws … delete-*</code>, <code>s3 rb</code>, terminate, <code>kubectl delete</code>.</p></div>
         <div class="stop"><h3>Hidden commands</h3><p><code>eval "$(curl …)"</code>, <code>curl … | bash</code>, encoded payloads.</p></div>
-        <div class="stop"><h3>Guard tampering</h3><p>Skip-permissions flags, edits to hook config, applygate's config, log, approvals or binary, and renamed copies of applygate.</p></div>
+        <div class="stop"><h3>Guard tampering</h3><p>Skip-permissions flags, edits to hook config, applygate's config, log, approvals or binary, and renamed copies of applygate. A guarantee under a <a href="https://github.com/Flurit/applygate/blob/main/docs/managed.md">managed install</a>, best-effort without one.</p></div>
       </div>
       <ul class="principles" style="margin-top: 56px">
         <li><b>Deterministic</b><span>Rules decide; an opt-in model can only add a prompt.</span></li>
         <li><b>Local</b><span>No network calls by default. The model judge and telemetry are off unless you turn them on; the judge then sends the calls it judges, redacted, to the model you chose.</span></li>
-        <li><b>Fails closed</b><span>A check that cannot finish blocks when the repository has a protected environment; a timeout blocks everywhere.</span></li>
+        <li><b>Fails closed</b><span>A check that cannot finish blocks when the repository has a protected environment; a timeout blocks everywhere. If applygate cannot start at all, the agent decides, and some let the call run.</span></li>
         <li><b>Observe first</b><span>Log what would be blocked for a few days, then enforce.</span></li>
       </ul>
       <div class="hosts" aria-label="Works with">
@@ -280,6 +280,7 @@
 <pre class="steps"><span class="p">$ </span>brew install Flurit/tap/applygate
 <span class="p">$ </span>cd your-infra-repo
 <span class="p">$ </span>applygate init                <span class="c"># .applygate.yaml, an observe-mode user config, hooks for Claude Code and Codex</span>
+<span class="c">  # using Codex? open it and run /hooks once to trust the new hook</span>
 <span class="p">$ </span>applygate check "terraform -chdir=envs/prod destroy"
 <span class="c">  # a few days later</span>
 <span class="p">$ </span>applygate report              <span class="c"># what it would have blocked</span>
@@ -287,7 +288,7 @@
       <p>Using Cursor, GitHub Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode or Cline? Each has an adapter, written from the host's own documentation and <strong>not yet tested live</strong>, so <code>init</code> leaves it to you: <code>applygate hook install --agent cursor</code> (or <code>copilot</code>, <code>gemini</code>, <code>windsurf</code>, <code>devin</code>, <code>opencode</code>, <code>cline</code>). <a href="https://github.com/Flurit/applygate/blob/main/docs/hosts.md">What each host can and cannot do →</a></p>
       <p>Also as a signed installer, <code>go install</code>, a GitHub Action and a Terragrunt hook. Releases are reproducible, signed with cosign and carry build provenance. <a href="https://github.com/Flurit/applygate/blob/main/docs/install.md">Install options and signature checks →</a></p>
       <div class="limits">
-        <p><strong>It is not a sandbox.</strong> applygate reduces the chance that a mistaken or manipulated agent damages infrastructure; it cannot guarantee it won't. Pair it with plan-only credentials and an isolated runner. <a href="https://github.com/Flurit/applygate/blob/main/docs/limits.md">What it cannot see</a> · <a href="https://github.com/Flurit/applygate/blob/main/docs/threat-model.md">Threat model</a></p>
+        <p><strong>It is not a sandbox.</strong> applygate reduces the chance that a mistaken or manipulated agent damages infrastructure; it cannot guarantee it won't. What holds when it is wrong is a boundary around the agent: plan-only credentials, a host sandbox, a reviewed apply path and a managed install. <code>applygate doctor --boundary</code> checks them and reports an assurance level from L0 to L3. <a href="https://github.com/Flurit/applygate/blob/main/docs/boundary.md">Boundary checks</a> · <a href="https://github.com/Flurit/applygate/blob/main/docs/limits.md">What it cannot see</a> · <a href="https://github.com/Flurit/applygate/blob/main/docs/threat-model.md">Threat model</a></p>
       </div>
     </div>
   </section>
