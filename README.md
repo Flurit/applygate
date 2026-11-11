@@ -70,8 +70,8 @@ The **plan gate** blocks critical findings and asks on high ones in protected en
 
 | Agent | Status | If applygate cannot run |
 |---|---|---|
-| Claude Code | Tested live on v0.5.0; v0.6.0 not re-run | blocks (Claude Code 2.1.295 or later) |
-| Codex | Tested live on v0.5.0; v0.6.0 not re-run | the call runs |
+| Claude Code | Tested live on v0.6.0 (2.1.314 and 2.1.322) | blocks (Claude Code 2.1.295 or later) |
+| Codex | Tested live on v0.6.0 (0.166.0) | the call runs |
 | Cursor | Preview | blocks |
 | GitHub Copilot CLI | Preview | blocks; runs on a timeout |
 | Gemini CLI | Preview | the call runs |
