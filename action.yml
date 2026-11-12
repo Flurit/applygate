@@ -1,9 +1,5 @@
 name: applygate plan-check
-description: >-
-  Judge a saved Terraform or OpenTofu plan before it is applied: block or ask on destroyed or
-  replaced stateful resources, removed protection, internet exposure, IAM wildcards and changes
-  to the state backend, by environment tier. Deterministic, local to the runner, no network
-  calls beyond downloading the signed release.
+description: "Judge a saved Terraform or OpenTofu plan before apply: block or ask on destroyed databases, lost protection, IAM wildcards."
 author: Flurit
 branding:
   icon: shield
