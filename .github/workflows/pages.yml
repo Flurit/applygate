@@ -27,6 +27,8 @@ jobs:
           mkdir _site
           cp site/index.html _site/
           cp docs/assets/demo.svg docs/assets/social-preview.png _site/
+          # Google Search Console ownership check for the URL-prefix property.
+          cp site/google521d4fd5d21b7c58.html _site/
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
