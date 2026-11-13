@@ -10,6 +10,7 @@ import (
 
 	"github.com/Flurit/applygate/internal/approval"
 	"github.com/Flurit/applygate/internal/config"
+	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/judge"
 	"github.com/Flurit/applygate/internal/policy"
 )
@@ -266,5 +267,35 @@ func TestJudgeRound2(t *testing.T) {
 	runJudged(t, Claude{}, opt, f, "mcp__cmds__run_command", filepath.Join(root, "dev"), map[string]any{"command": "./tool.sh", "note": "x"})
 	if len(f.asked) != 1 || !strings.Contains(string(f.asked[0].Args), `"note"`) {
 		t.Fatalf("MCP arguments not sent with the command: %+v", f.asked)
+	}
+}
+
+// An offline run (applygate scan) judges a recorded call: the model judge is
+// not asked whatever the config says, nothing is logged with NoLog, and the
+// entry goes to Record.
+func TestOfflineRunDoesNotAskTheJudgeAndRecordsTheEntry(t *testing.T) {
+	root, opt := judgeSetup(t, "enforce", "")
+	f := &fakeJudge{verdict: policy.Block}
+	log := filepath.Join(t.TempDir(), "log.jsonl")
+	var got []decisionlog.Entry
+	opt.LogPath, opt.Judge, opt.NoLog, opt.Offline = log, f, true, true
+	opt.Record = func(e decisionlog.Entry) { got = append(got, e) }
+	in := event("Bash", filepath.Join(root, "prod"), map[string]any{"command": "pulumi destroy --yes --stack acme/prod"})
+	if o := Run(Claude{}, strings.NewReader(in), opt); decision(t, o) != "allow" {
+		t.Fatalf("the rules do not recognize the call, so offline it is allowed: %s", o.Stdout)
+	}
+	if len(f.asked) != 0 {
+		t.Fatalf("the judge was asked offline: %+v", f.asked)
+	}
+	if len(got) != 1 || got[0].Verdict != policy.Allow || got[0].Judge != nil || got[0].Command != "pulumi destroy --yes --stack acme/prod" {
+		t.Fatalf("recorded %+v", got)
+	}
+	if _, err := os.Stat(log); err == nil {
+		t.Fatal("NoLog wrote the decision log")
+	}
+	// Online, the same call reaches the judge.
+	opt.Offline = false
+	if o := Run(Claude{}, strings.NewReader(in), opt); decision(t, o) != "deny" || len(f.asked) != 1 {
+		t.Fatalf("online: %s, asked %d", o.Stdout, len(f.asked))
 	}
 }

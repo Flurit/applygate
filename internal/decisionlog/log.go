@@ -251,6 +251,12 @@ func (r *redactor) field(s string) string {
 	return out
 }
 
+// Redacted returns a copy of e with secrets removed, as Append writes it.
+func Redacted(e Entry) Entry {
+	redactEntry(&e)
+	return e
+}
+
 func redactEntry(e *Entry) {
 	// The actions are shared with the caller's decision: redact copies.
 	e.Actions = append([]policy.ActionResult(nil), e.Actions...)

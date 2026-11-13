@@ -11,6 +11,7 @@
 | `/usr/bin/sudo /path/to/applygate install --managed --exclusive` | Root-owned install the agent's user cannot change ([managed.md](managed.md)) |
 | `applygate approve [ID]` | Allow once a call an agent was stopped on because it could not ask you; without ID, list pending requests |
 | `applygate plan-check plan.json` | Judge `terraform show -json` output |
+| `applygate scan [--days N] [--dir DIR]` | What applygate would decide on the calls Claude Code and Codex already made, read from their session files; no hook needed, nothing is run ([scan.md](scan.md)) |
 | `applygate report` / `suggest` | Summarize the decision log / propose a config from it |
 | `applygate doctor` | Check config, hooks and versions |
 | `applygate doctor --boundary [--require L2]` | The assurance level this machine reaches (managed install, audited credentials, host sandbox), exit 1 below the level you require ([boundary.md](boundary.md)) |

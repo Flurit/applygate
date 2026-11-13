@@ -73,6 +73,14 @@ type Options struct {
 	// verdict cache path: "" for the default, "-" for none.
 	Judge      judge.Judge
 	JudgeCache string
+	// Record, when set, receives the entry a run logs (applygate scan reads
+	// its verdicts from it). The entry is not redacted yet.
+	Record func(decisionlog.Entry)
+	// Offline keeps a run on this machine: the model judge, the live
+	// identity check and the live state pull are not asked. applygate scan
+	// sets it, because a call recorded weeks ago must not reach a model or
+	// a cloud account today.
+	Offline bool
 }
 
 // EnvMap returns the process environment as a map.
@@ -220,7 +228,7 @@ func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
 			return f
 		}
 	}
-	if cfg.Preflight.LiveIdentity {
+	if cfg.Preflight.LiveIdentity && !opt.Offline {
 		d.Account = func(p string) (string, error) {
 			bin, err := cfg.EngineBinary("aws")
 			if err != nil {
@@ -229,7 +237,7 @@ func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
 			return preflight.CallerAccount(bin, p, 5*time.Second)
 		}
 	}
-	if cfg.Preflight.LiveState {
+	if cfg.Preflight.LiveState && !opt.Offline {
 		d.StatePull = func(engine, dir string) ([]byte, error) {
 			name := engine
 			if name == "" || name == "terragrunt" {
@@ -412,6 +420,9 @@ func Run(a Adapter, in io.Reader, opt Options) (out Output) {
 		panicPoint("finish")
 		o.Deadline = deadline
 		entry.DurationMS = float64(time.Since(start).Microseconds()) / 1000
+		if opt.Record != nil {
+			opt.Record(entry)
+		}
 		if !opt.NoLog && filepath.IsAbs(logPath(cfg)) {
 			o.LogPath = logPath(cfg)
 			if err := decisionlog.Append(o.LogPath, entry); err != nil {
