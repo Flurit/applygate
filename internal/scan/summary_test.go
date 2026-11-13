@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Flurit/applygate/internal/classify"
+	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/policy"
 )
@@ -173,5 +174,183 @@ func TestRender(t *testing.T) {
 	Summary{Stats: Stats{Sessions: map[string]int{}, Compressed: 1}}.Render(&b, RenderOptions{Version: "0.6.0", Days: 7})
 	if out := b.String(); !strings.Contains(out, "No Claude Code or Codex session with a tool call was found in the last 7 days.") || !strings.Contains(out, "1 archived session file is compressed") || strings.Contains(out, "Infrastructure") {
 		t.Errorf("empty report:\n%s", out)
+	}
+}
+
+func TestNewRowMarksChangesWithTheTierTheyAimAt(t *testing.T) {
+	call := Call{Agent: "claude", Cwd: "/repo"}
+	tiered := func(c classify.Class, v policy.Verdict, tier string) policy.ActionResult {
+		a := act(c, v, "why")
+		a.Tier = config.Tier(tier)
+		return a
+	}
+	for _, tc := range []struct {
+		name string
+		e    decisionlog.Entry
+		want string
+	}{
+		{"a destroy in production", entry("terraform destroy", policy.Block, tiered(classify.Destroy, policy.Block, "protected")), "protected"},
+		{"an apply allowed in a disposable environment is still a change", entry("terraform apply", policy.Allow, tiered(classify.Mutating, policy.Allow, "disposable")), "disposable"},
+		{"the most protected of several", entry("a; b", policy.Ask, tiered(classify.CloudWrite, policy.Allow, "disposable"), tiered(classify.CloudWrite, policy.Ask, "standard")), "standard"},
+		{"no tier recorded", entry("aws s3 rm s3://b/k", policy.Ask, tiered(classify.CloudDestructive, policy.Ask, "")), "unknown"},
+		{"a plan changes nothing", entry("terraform plan", policy.Allow, tiered(classify.ReadOnly, policy.Allow, "protected")), ""},
+		{"a loop changes nothing", entry("for x in a; do echo; done", policy.Ask, tiered(classify.ComplexShape, policy.Ask, "protected")), ""},
+	} {
+		if r := NewRow(call, tc.e, "/repo", false, false); r.Change != tc.want {
+			t.Errorf("%s: change %q, want %q", tc.name, r.Change, tc.want)
+		}
+	}
+}
+
+func TestRenderOpensWithExposure(t *testing.T) {
+	call := Call{Agent: "claude", Cwd: "/home/u/infra", Time: time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)}
+	rows := []Row{
+		NewRow(call, entry("terraform destroy", policy.Block, act(classify.Destroy, policy.Block, "terraform destroy")), "/home/u/infra", false, false),
+		NewRow(call, entry("terraform plan", policy.Allow, act(classify.ReadOnly, policy.Allow, "plan")), "/home/u/infra", false, false),
+	}
+	stats := Stats{Sessions: map[string]int{"claude": 1}, Calls: 2}
+	checks := []Check{
+		{1, "not verified", "no managed install"},
+		{2, "FAIL", "aws profile prod-admin: allowed without MFA: ec2:TerminateInstances"},
+		{2, "not verified", "/home/u/.aws/credentials is readable by this user"},
+		{0, "not verified", "oidc_pinned is not attested (optional)"},
+	}
+	render := func(x *Exposure, st Stats) string {
+		var b bytes.Buffer
+		Summary{Stats: st, Rows: rows, Exposure: x}.Render(&b, RenderOptions{Version: "0.6.0", Days: 30, Home: "/home/u"})
+		return b.String()
+	}
+	for _, tc := range []struct {
+		name      string
+		x         *Exposure
+		want, not []string
+	}{
+		{"not audited", &Exposure{Checks: checks},
+			[]string{"credentials  not audited: this report contacts nothing", "boundary     L0 of L3, as far as this machine shows without the audit: the hook is the only check",
+				"    L2 not verified ~/.aws/credentials is readable by this user\n", "your agents issued 1 command that changes infrastructure", "1 of them aimed at",
+				"Nothing was run, written, or sent to a model or a cloud account."},
+			[]string{"oidc_pinned", "you do not need the hook", "A wrong verdict"}},
+		{"a credential that can change production", &Exposure{Audited: true, CredsOK: 2, CredsFail: 1, Checks: checks},
+			[]string{"credentials  1 can change production without a person\n  boundary     L0 of L3: the hook", "    L2 FAIL         aws profile prod-admin",
+				"A wrong verdict, or a call the hook never sees, reaches whatever these credentials allow.", "The credential audit asked AWS,"},
+			[]string{"you do not need the hook", "contacts nothing", "or a cloud account"}},
+		{"every credential audited and harmless", &Exposure{Audited: true, Level: 2, CredsOK: 3, Checks: checks[:1]},
+			[]string{"credentials  none of the 3 audited can change production without a person", "boundary     L2 of L3: a managed install, and credentials",
+				"you do not need the hook to protect production", "plan check in your pipeline (docs/ci.md)"},
+			[]string{"A wrong verdict", "Until every credential"}},
+		{"some credentials could not be placed", &Exposure{Audited: true, CredsOK: 3, CredsUnclear: 2, Checks: checks[:1]},
+			[]string{"3 audited with no destructive path to production; 2 findings could not be checked or placed", "Until every credential is checked and placed"},
+			[]string{"you do not need the hook"}},
+		{"nothing could be audited", &Exposure{Audited: true, CredsUnclear: 4, Checks: checks[:1]},
+			[]string{"credentials  none could be audited", "Until every credential is checked and placed"},
+			[]string{"you do not need the hook"}},
+		{"the checks could not be made", &Exposure{Error: "config: bad yaml"},
+			[]string{"What your agents can reach\n  not checked: config: bad yaml\n", "Infrastructure commands: 2"},
+			[]string{"boundary     L"}},
+	} {
+		out := render(tc.x, stats)
+		for _, w := range tc.want {
+			if !strings.Contains(out, w) {
+				t.Errorf("%s: missing %q in:\n%s", tc.name, w, out)
+			}
+		}
+		for _, n := range tc.not {
+			if strings.Contains(out, n) {
+				t.Errorf("%s: unexpected %q in:\n%s", tc.name, n, out)
+			}
+		}
+		if strings.Index(out, "What your agents can reach") > strings.Index(out, "sessions read") {
+			t.Errorf("%s: the boundary does not come first:\n%s", tc.name, out)
+		}
+	}
+	// With no session the boundary is still reported, without a line about sessions.
+	out := render(&Exposure{Checks: checks}, Stats{Sessions: map[string]int{}})
+	if !strings.Contains(out, "boundary     L0 of L3") || !strings.Contains(out, "No Claude Code or Codex session") || strings.Contains(out, "In the sessions read") {
+		t.Errorf("no sessions:\n%s", out)
+	}
+}
+
+func TestShareReasonNamesNothing(t *testing.T) {
+	for why, want := range map[string]string{
+		shapePrefix + "the variable DEPLOY_ENV)":                                           "a variable set in the command (X=... cmd)",
+		shapePrefix + "the program acme-deploy)":                                           "a program with no option list",
+		shapePrefix + "the subcommand build ./...)":                                        "a subcommand or option that is not listed",
+		shapePrefix + "the gh run subcommand rerun)":                                       "a subcommand or option that is not listed",
+		shapePrefix + "the option -w of gofmt)":                                            "a subcommand or option that is not listed",
+		shapePrefix + "a loop or conditional)":                                             "shell syntax beyond a plain command",
+		"source of a file that cannot be read: stat /srv/secret/env.sh":                    "a sourced file or script that cannot be read",
+		"script cannot be read: open /srv/deploy.sh":                                       "a sourced file or script that cannot be read",
+		"python3 runs /srv/internal/tool.py, which cannot be read":                         "code that an interpreter runs",
+		"python3 code mentions infrastructure tools, an AWS SDK or guard files":            "code that an interpreter runs",
+		"a program named by a path outside the system directories (/srv/bin/acme)":         "a program or file named by something that cannot be resolved",
+		"rm removes or overwrites a file it names with a word the analysis cannot resolve": "a program or file named by something that cannot be resolved",
+		"git push moves the upstream branch the provider lock check trusts":                "git state or configuration",
+		"make reads a makefile that is written by an earlier step (/srv/Makefile)":         "another reason",
+		"something new about /srv/secret":                                                  "another reason",
+	} {
+		got := ShareReason(why)
+		if got != want {
+			t.Errorf("ShareReason(%q) = %q, want %q", why, got, want)
+		}
+		for _, leak := range []string{"/srv", "acme", "DEPLOY_ENV", "gofmt", "rerun"} {
+			if strings.Contains(got, leak) {
+				t.Errorf("ShareReason(%q) = %q holds %q", why, got, leak)
+			}
+		}
+	}
+}
+
+func TestRenderShareHoldsCountsOnly(t *testing.T) {
+	day := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	var s Summary
+	add := func(agent, dir, repo string, noConfig bool, e decisionlog.Entry) {
+		s.Rows = append(s.Rows, NewRow(Call{Agent: agent, Cwd: dir, Time: day}, e, repo, noConfig, false))
+	}
+	add("claude", "/home/u/acme-infra/envs/prod", "/home/u/acme-infra", false, entry("terraform destroy -target=aws_db_instance.billing", policy.Block, act(classify.Destroy, policy.Block, "terraform destroy")))
+	add("codex", "/home/u/acme-infra", "/home/u/acme-infra", false, entry("aws s3 cp f s3://acme-billing", policy.Ask, act(classify.CloudWrite, policy.Ask, "aws s3 cp changes resources")))
+	add("claude", "/home/u/acme-infra", "/home/u/acme-infra", false, entry("terraform apply tfplan", policy.Ask, act(classify.ApplySavedPlan, policy.Ask, "the plan could not be read")))
+	add("claude", "/home/u/acme-web", "/home/u/acme-web", true, entry("echo x > .claude/settings.json", policy.Block, act(classify.Tampering, policy.Block, "redirect writes to guard file")))
+	add("claude", "/home/u/acme-web", "/home/u/acme-web", true, entry("acme-deploy --all", policy.Ask, act(classify.ComplexShape, policy.Ask, shapePrefix+"the program acme-deploy)")))
+	add("codex", "/home/u/acme-web", "/home/u/acme-web", true, entry("BILLING=1 make", policy.Ask, act(classify.ComplexShape, policy.Ask, shapePrefix+"the variable BILLING)")))
+	add("claude", "/home/u/acme-web", "/home/u/acme-web", true, entry("git status", policy.Allow))
+	add("claude", "/home/u/acme-web", "/home/u/acme-web", true, decisionlog.Entry{Tool: "Read", Paths: []string{"/home/u/acme-web/a.js"}, Verdict: policy.Allow})
+	s.Gone = 2
+	s.Stats = Stats{Sessions: map[string]int{"claude": 3, "codex": 1}, Calls: 40}
+	s.Exposure = &Exposure{Audited: true, Level: 1, CredsOK: 2, CredsFail: 1, CredsUnclear: 1, Checks: []Check{
+		{1, "ok", "managed install checked"},
+		{2, "FAIL", "aws profile acme-prod-admin: arn:aws:iam::111111111111:user/admin: allowed without MFA"},
+		{2, "ok", "2 credential(s) audited"},
+		{3, "attested", "ci_apply"},
+		{3, "not verified", "no host sandbox"},
+	}}
+	var b bytes.Buffer
+	s.RenderShare(&b, RenderOptions{Version: "0.6.0", Days: 30, Home: "/home/u"})
+	out := b.String()
+	for _, want := range []string{
+		"applygate 0.6.0 scan summary, the last 30 days\nCounts only:",
+		"sessions           4 (claude 3, codex 1)",
+		"tool calls         40; judged 8; directory gone 2; decision failed 0",
+		"repositories       2, 1 with a trusted config",
+		"infrastructure     3: block 1, ask 1, allow 0, saved plans 1",
+		"changes issued   3, 3 in a protected or unnamed environment",
+		"guard files        1: block 1, ask 0",
+		"other shell        3: ask 2 (66%), allow 1",
+		"asks, no config  2",
+		"asks by agent    claude 1, codex 1 (an ask is a block on Codex)",
+		"       1  a program with no option list\n",
+		"       1  a variable set in the command (X=... cmd)\n",
+		"boundary           L1 of L3; credentials audited: 2 with no destructive path to production, 1 with one, 1 unclear",
+		"L1 checks        ok 1, attested 0, failed 0, not verified 0",
+		"L2 checks        ok 1, attested 0, failed 1, not verified 0",
+		"L3 checks        ok 0, attested 1, failed 0, not verified 1",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	for _, leak := range []string{"acme", "billing", "BILLING", "/home", "~", "terraform", "aws ", "arn:", "111111111111", "settings.json", "git status", "make"} {
+		if strings.Contains(out, leak) {
+			t.Errorf("the summary to share holds %q:\n%s", leak, out)
+		}
 	}
 }

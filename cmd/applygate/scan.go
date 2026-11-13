@@ -23,11 +23,13 @@ import (
 	"github.com/Flurit/applygate/internal/scan"
 )
 
-// cmdScan judges the tool calls Claude Code and Codex already recorded in
-// their session files, with the rules and config of today, and reports what
-// applygate would have decided. It needs no hook and changes nothing: the
-// calls are not run, the decision log is not written, and the model judge,
-// the cloud and saved plans are not asked.
+// cmdScan reports how exposed the machine's infrastructure is to its coding
+// agents: what the boundary checks find, then what applygate would have
+// decided on the tool calls Claude Code and Codex already recorded in their
+// session files, with the rules and config of today. It needs no hook and
+// changes nothing: the calls are not run, the decision log is not written,
+// and the model judge and saved plans are not asked. The cloud is asked
+// only with --boundary, and then only what the credentials here can do.
 func cmdScan(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -35,11 +37,13 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	dir := fs.String("dir", "", "only calls made in this directory or under it")
 	all := fs.Bool("all", false, "list every call it would block or ask about, not the latest 10 of each")
 	asJSON := fs.Bool("json", false, "print one JSON object per judged call instead of the report")
+	boundary := fs.Bool("boundary", false, "also ask AWS, Google Cloud, Azure and the clusters what the credentials here can do (read-only), as applygate doctor --boundary does")
+	share := fs.Bool("share", false, "print counts only, with no command, path or name, to send to someone else")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if fs.NArg() != 0 || *days < 0 {
-		fmt.Fprintln(stderr, "usage: applygate scan [--days N] [--dir DIR] [--all] [--json]")
+	if fs.NArg() != 0 || *days < 0 || *asJSON && (*share || *boundary) {
+		fmt.Fprintln(stderr, "usage: applygate scan [--days N] [--dir DIR] [--boundary] [--all | --share]\n       applygate scan [--days N] [--dir DIR] --json")
 		return 2
 	}
 	home, err := os.UserHomeDir()
@@ -107,6 +111,14 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}()
+	// The boundary checks do not depend on the sessions: they run beside the
+	// reading. The JSON output is the judged calls and nothing else.
+	exposed := make(chan *scan.Exposure, 1)
+	if *asJSON {
+		exposed <- nil
+	} else {
+		go func() { exposed <- exposure(*boundary) }()
+	}
 	stop := progress(stderr, &done)
 	n := 0
 	sum.Stats = scan.Walk(scan.Sources(home, env), since, func(c scan.Call) {
@@ -120,6 +132,7 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 	wg.Wait()
 	close(results)
 	<-collected
+	sum.Exposure = <-exposed
 	stop()
 	sum.Stats.Calls = n
 	sort.Sort(bySeq{sum.Rows, seqs})
@@ -131,8 +144,31 @@ func cmdScan(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	}
-	sum.Render(stdout, scan.RenderOptions{Version: hook.Version, Days: *days, Home: home, All: *all})
+	opt := scan.RenderOptions{Version: hook.Version, Days: *days, Home: home, All: *all}
+	if *share {
+		sum.RenderShare(stdout, opt)
+		return 0
+	}
+	sum.Render(stdout, opt)
 	return 0
+}
+
+// exposure makes the boundary checks of applygate doctor --boundary for the
+// report. With audit false it asks nothing of the cloud or the clusters.
+func exposure(audit bool) *scan.Exposure {
+	wd, _ := os.Getwd()
+	cfg, err := config.Load(config.UserPath(), wd)
+	if err != nil {
+		return &scan.Exposure{Error: "config: " + err.Error()}
+	}
+	r := evalBoundaryWith(cfg, audit)
+	x := &scan.Exposure{Audited: r.audited, Level: r.reached, CredsOK: r.credsOK, CredsFail: r.credsFail, CredsUnclear: r.credsUnclear}
+	for _, c := range r.checks {
+		if c.level > 0 {
+			x.Checks = append(x.Checks, scan.Check{Level: c.level, Status: c.status, Text: c.text})
+		}
+	}
+	return x
 }
 
 type bySeq struct {

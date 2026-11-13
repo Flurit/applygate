@@ -49,9 +49,11 @@ Usage:
                                       trusted, or one changed since, is not read and every directory is protected
   applygate approve [ID]               allow one call an agent was stopped on because it could not ask you;
                                       without ID, list the pending requests (a person at a terminal only)
-  applygate scan [--days N] [--dir DIR] [--all] [--json]
-                                      what applygate would decide on the calls Claude Code and Codex already
-                                      made, read from their session files: no hook needed, nothing is run
+  applygate scan [--days N] [--dir DIR] [--boundary] [--all | --share | --json]
+                                      what your agents can reach, and what applygate would decide on the calls
+                                      Claude Code and Codex already made, read from their session files: no hook
+                                      needed, nothing is run. --boundary also asks the cloud what the credentials
+                                      here can do; --share prints counts only, to send to someone else
   applygate report [--log FILE]        summarize the decision log
   applygate suggest [--log FILE] [--root DIR] [--out FILE]
                                       propose a .applygate.yaml from the observe-mode log: environments
