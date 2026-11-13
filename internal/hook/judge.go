@@ -22,7 +22,7 @@ import (
 // leaves the rule decision as it is. It returns the decision and the record
 // for the log (nil when the judge was not asked).
 func Judge(ctx context.Context, ev policy.Event, d policy.Decision, cfg *config.Config, opt Options) (policy.Decision, *decisionlog.Judge) {
-	if !cfg.JudgeOn() {
+	if !cfg.JudgeOn() || opt.Offline {
 		return d, nil
 	}
 	if ev.Kind == policy.KindMCP && cfg.JudgeSkips(ev.Tool) {

@@ -98,6 +98,7 @@ The spec's own gate thresholds (catch rate, false-positive budget, install time)
 | `doctor`: hooks wired, config parses, versions | done | `applygate doctor` also runs the selftest and **fails** (exit 1, with the fix command) from a subdirectory whose project-scope hook is not loaded and no user-scope hook covers the agent; warns when both scopes are installed |
 | `check`, `explain`, `plan-check`, `report`, `selftest`, `hook install/remove` | done | `cmd/applygate/main.go` |
 | `suggest` (not in the spec; the step after `report`) | done | `cmd/applygate/suggest.go`, `internal/suggest`: environments from the observe log's directories and signals, unhinted directories left commented, asks and blocks listed with their reason |
+| `scan` (not in the spec; a look at applygate before a hook is installed) | done | `cmd/applygate/scan.go`, `internal/scan`: the calls in Claude Code and Codex session files judged through the hook's own path, offline, with nothing run or written ([scan.md](../scan.md)) |
 
 ### Quality bar, security, distribution
 

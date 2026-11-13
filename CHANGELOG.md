@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **`applygate scan`: what applygate would have decided on your agents' past calls.** It reads the sessions Claude Code and Codex already recorded on the machine, passes every tool call through the hook's own code with today's rules and config, and reports the infrastructure commands it would block or ask about, the changes to guard files, the share of other shell commands it would ask about and why, and a line per repository. No hook or config is needed. Nothing is run, written or sent: saved plans, the model judge and the live cloud checks are not asked, and printed commands are redacted as in the decision log. Verdicts use today's files, so a script or directory that changed since is judged as it is now; calls in a directory that no longer exists are counted and left out ([docs/scan.md](docs/scan.md)).
 - **README rewritten for a quick scan:** what it does, who it is for and what it is not come first, and terms are defined before they are used. The upgrade notes moved to [docs/upgrading.md](docs/upgrading.md) and the full command list to [docs/commands.md](docs/commands.md).
 
 ## v0.6.0 (2026-11-11)

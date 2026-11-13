@@ -49,6 +49,9 @@ Usage:
                                       trusted, or one changed since, is not read and every directory is protected
   applygate approve [ID]               allow one call an agent was stopped on because it could not ask you;
                                       without ID, list the pending requests (a person at a terminal only)
+  applygate scan [--days N] [--dir DIR] [--all] [--json]
+                                      what applygate would decide on the calls Claude Code and Codex already
+                                      made, read from their session files: no hook needed, nothing is run
   applygate report [--log FILE]        summarize the decision log
   applygate suggest [--log FILE] [--root DIR] [--out FILE]
                                       propose a .applygate.yaml from the observe-mode log: environments
@@ -105,6 +108,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdReport(args[1:], stdout, stderr)
 	case "suggest":
 		return cmdSuggest(args[1:], stdout, stderr)
+	case "scan":
+		return cmdScan(args[1:], stdout, stderr)
 	case "selftest":
 		return cmdSelftest(args[1:], stdout, stderr)
 	case "init":
