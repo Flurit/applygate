@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.6.1 (2026-11-14)
+
+A new command, `applygate scan`, and documentation. No rule, verdict, tier or default changed: the hook decides every call as v0.6.0 does, and the scenario pack gives the same results. Nothing needs doing when upgrading from v0.6.0, except for the Claude Code plugin's pinned binary ([docs/upgrading.md](docs/upgrading.md)).
 
 - **`applygate scan`: what applygate would have decided on your agents' past calls.** It reads the sessions Claude Code and Codex already recorded on the machine, passes every tool call through the hook's own code with today's rules and config, and reports the infrastructure commands it would block or ask about, the changes to guard files, the share of other shell commands it would ask about and why, and a line per repository. No hook or config is needed. Nothing is run, written or sent: saved plans, the model judge and the live cloud checks are not asked, and printed commands are redacted as in the decision log. Verdicts use today's files, so a script or directory that changed since is judged as it is now; calls in a directory that no longer exists are counted and left out ([docs/scan.md](docs/scan.md)).
 - **`applygate scan` opens with what your agents can reach.** The report starts with the boundary checks of `doctor --boundary` and the assurance level, then says how many commands that change infrastructure the agents issued, and only then what applygate would have decided. By default it makes the checks that read this machine and contacts nothing; `applygate scan --boundary` adds the credential audit, which asks AWS, Google Cloud, Azure and the clusters, read-only, whether the credentials here can change production without a person. When none of the audited credentials can, the report says you do not need the hook to protect production and points to the plan check in the pipeline.

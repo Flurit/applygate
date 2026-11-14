@@ -2,6 +2,14 @@
 
 What to do when you upgrade from an earlier release. Every change is in [CHANGELOG.md](../CHANGELOG.md).
 
+## To v0.6.1
+
+Nothing to do when you come from v0.6.0. v0.6.1 adds `applygate scan` ([scan.md](scan.md)) and changes no rule, verdict or default; hooks, configs and trust carry over as they are.
+
+One exception, which holds for every upgrade: the Claude Code plugin pins the binary it first found by path and sha256, so after upgrading remove `pinned-binary` from the plugin's data directory, or every call is blocked with a message that says so.
+
+From a release before v0.6.0, follow the steps below.
+
 ## To v0.6.0
 
 v0.6.0 fixes the findings of a pre-release security review ([review/v0.6.0](../review/v0.6.0)). Several fixes change behaviour:

@@ -176,6 +176,8 @@ A call to a known infrastructure tool is judged as its equivalent command, with 
 
 The decision log is JSONL at `~/.local/state/applygate/decisions.jsonl` (mode 0600, rotated at 64 MiB, fields capped at 64 KiB), with regex redaction of keys, tokens and passwords; under a managed install it is still in the user's reach. Telemetry is off and has no default endpoint. `report` summarises the log; `suggest` proposes a config from an observe-mode log; `explain` prints the parse and decision trace; `selftest` runs the 163-scenario pack; `trust` and `approve` need a terminal.
 
+`scan` reads the session files Claude Code and Codex keep and judges every recorded tool call through the hook's own path, offline, with nothing run or written ([scan.md](scan.md)). Status: live on one machine's sessions (Claude Code 2.1.3xx, Codex 0.162 to 0.166, about 15,000 calls); the older Codex formats are tests only. Its opening section makes the checks of `doctor --boundary`; `scan --boundary` adds the credential audit, tests with stubs only. `scan --share` prints counts only: tests.
+
 ## Test and measurement assets
 
 | Asset | Size | Runs in CI |
