@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Flurit/applygate/internal/classify"
+	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/policy"
 )
@@ -40,6 +41,12 @@ var infraClasses = map[classify.Class]bool{
 
 var guardClasses = map[classify.Class]bool{classify.Tampering: true, classify.HookRewrite: true}
 
+// changeClasses are the actions that change infrastructure when they run.
+var changeClasses = map[classify.Class]bool{
+	classify.Mutating: true, classify.CloudWrite: true, classify.ApplySavedPlan: true, classify.UnreviewedApply: true,
+	classify.Destroy: true, classify.StateSurgery: true, classify.CloudDestructive: true,
+}
+
 // Row is one judged call, with secrets already redacted.
 type Row struct {
 	Time    time.Time `json:"time"`
@@ -57,8 +64,12 @@ type Row struct {
 	Group   string         `json:"group"`
 	Classes []string       `json:"classes,omitempty"`
 	Tier    string         `json:"tier,omitempty"`
-	Why     string         `json:"why,omitempty"`
-	Error   string         `json:"error,omitempty"`
+	// Change is set when the call would change infrastructure, whatever the
+	// verdict: the tier of the environment it aims at, the most protected
+	// one when it has several actions, or "unknown".
+	Change string `json:"change,omitempty"`
+	Why    string `json:"why,omitempty"`
+	Error  string `json:"error,omitempty"`
 	// NoConfig is true when no trusted .applygate.yaml covers the
 	// directory, so the user config or the defaults judged the call.
 	NoConfig bool `json:"no_config,omitempty"`
@@ -76,6 +87,18 @@ func NewRow(c Call, e decisionlog.Entry, repo string, noConfig, full bool) Row {
 		r.Kind = "shell"
 	default:
 		r.Kind = "file"
+	}
+	for _, a := range e.Actions {
+		if !changeClasses[a.Class] {
+			continue
+		}
+		t := string(a.Tier)
+		if t == "" {
+			t = "unknown"
+		}
+		if r.Change == "" || a.Tier.Rank() > config.Tier(r.Change).Rank() {
+			r.Change = t
+		}
 	}
 	// The actions that carry the call's verdict say why it was decided.
 	var why *policy.ActionResult
@@ -188,6 +211,8 @@ type Summary struct {
 	// counts calls whose directory no longer exists.
 	Unchecked, Gone int
 	Rows            []Row
+	// Exposure is what the boundary checks found, when they were made.
+	Exposure *Exposure
 }
 
 type listing struct {
@@ -238,7 +263,7 @@ func (s Summary) Render(w io.Writer, o RenderOptions) {
 	if o.Days > 0 {
 		window = fmt.Sprintf("the last %d days", o.Days)
 	}
-	fmt.Fprintf(w, "applygate %s: what it would decide today on the calls your agents already made\n\n", o.Version)
+	fmt.Fprintf(w, "applygate %s: what your coding agents can reach, and what it would decide today on the calls they already made\n\n", o.Version)
 	var agents []string
 	sessions := 0
 	for _, a := range []string{"claude", "codex"} {
@@ -252,6 +277,7 @@ func (s Summary) Render(w io.Writer, o RenderOptions) {
 			fmt.Fprintf(w, "%s%s archived session file%s compressed and not read.\n", indent, num(n), isAre(n))
 		}
 	}
+	s.renderExposure(w, o, sessions)
 	if sessions == 0 {
 		fmt.Fprintf(w, "No Claude Code or Codex session with a tool call was found in %s.\n", window)
 		compressed("")
@@ -367,7 +393,12 @@ func (s Summary) Render(w io.Writer, o RenderOptions) {
 	fmt.Fprintln(w, "\nHow to read this")
 	fmt.Fprintln(w, "  - Verdicts use today's config and today's files. A script or directory that has changed or gone since")
 	fmt.Fprintln(w, "    is judged as it is now, which is usually stricter than it was.")
-	fmt.Fprintln(w, "  - Nothing was run, written, or sent to a model or a cloud account.")
+	if s.Exposure != nil && s.Exposure.Audited {
+		fmt.Fprintln(w, "  - No recorded command was run and nothing was written or sent to a model. The credential audit asked AWS,")
+		fmt.Fprintln(w, "    Google Cloud, Azure and the clusters what the credentials here can do, read-only.")
+	} else {
+		fmt.Fprintln(w, "  - Nothing was run, written, or sent to a model or a cloud account.")
+	}
 	codexAsks := 0
 	for _, r := range s.Rows {
 		if r.Agent == "codex" && r.Verdict == policy.Ask {

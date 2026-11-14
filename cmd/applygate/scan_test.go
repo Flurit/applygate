@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -149,5 +151,117 @@ func TestScanJSONDirAndWindow(t *testing.T) {
 	}
 	if code := run([]string{"scan", "extra"}, nil, &out, &errb); code != 2 {
 		t.Errorf("an argument: exit %d", code)
+	}
+}
+
+// noCloud fails the test when anything asks a cloud CLI.
+func noCloud(t *testing.T) {
+	t.Helper()
+	old, oldHTTP := runCLI, gcpTestPermissions
+	runCLI = func(_ context.Context, bin string, args ...string) ([]byte, error) {
+		t.Errorf("scan ran %s %s", bin, strings.Join(args, " "))
+		return nil, errors.New("not allowed in this test")
+	}
+	gcpTestPermissions = func(context.Context, string, string, []string) ([]string, error) {
+		t.Error("scan asked Google Cloud")
+		return nil, errors.New("not allowed in this test")
+	}
+	t.Cleanup(func() { runCLI, gcpTestPermissions = old, oldHTTP })
+}
+
+func TestScanOpensWithWhatAgentsCanReachAndAsksNoCloud(t *testing.T) {
+	home, _ := scanHome(t)
+	noCloud(t)
+	if err := os.MkdirAll(filepath.Join(home, ".aws"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".aws", "credentials"), []byte("[default]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan"}, nil, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{
+		"credentials  not audited: this report contacts nothing. applygate scan --boundary asks",
+		"boundary     L0 of L3, as far as this machine shows without the audit",
+		"L1 not verified no managed install",
+		"L2 not verified credentials not audited",
+		"L2 not verified ~/.aws/credentials is readable by this user",
+		// Three destroys, the Codex delete and the plan apply.
+		"your agents issued 5 commands that change infrastructure",
+		"Nothing was run, written, or sent to a model or a cloud account.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	// What the agents can reach comes before what would have been decided.
+	if reach, infra := strings.Index(got, "What your agents can reach"), strings.Index(got, "Infrastructure commands"); reach < 0 || reach > infra {
+		t.Errorf("the report does not open with the boundary:\n%s", got)
+	}
+}
+
+func TestScanBoundaryAuditsTheCredentials(t *testing.T) {
+	scanHome(t)
+	old, oldHTTP := runCLI, gcpTestPermissions
+	runCLI, gcpTestPermissions = fakeCloud(t), fakeGCPPermissions(t)
+	defer func() { runCLI, gcpTestPermissions = old, oldHTTP }()
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--boundary"}, nil, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{
+		"can change production without a person\n  boundary     L0 of L3: the hook is the only check",
+		"L2 FAIL         aws profile prod-admin",
+		"A wrong verdict, or a call the hook never sees, reaches whatever these credentials allow.",
+		"The credential audit asked AWS,",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "not audited: this report contacts nothing") || strings.Contains(got, "sent to a model or a cloud account") {
+		t.Errorf("an audited report says it contacted nothing:\n%s", got)
+	}
+}
+
+func TestScanShareHoldsCountsOnly(t *testing.T) {
+	home, _ := scanHome(t)
+	noCloud(t)
+	var out, errb bytes.Buffer
+	if code := run([]string{"scan", "--share"}, nil, &out, &errb); code != 0 {
+		t.Fatalf("exit %d: %s", code, errb.String())
+	}
+	got := out.String()
+	for _, want := range []string{
+		"Counts only: no command, path, repository, account or program name is in this text.",
+		"sessions           2 (claude 1, codex 1)",
+		"repositories       1, 0 with a trusted config",
+		"infrastructure     5: block 4, ask 0, allow 0, saved plans 1",
+		"changes issued   5, 5 in a protected or unnamed environment",
+		"other shell        2: ask 1 (50%), allow 1",
+		"       1  shell syntax beyond a plain command",
+		"boundary           L0 of L3; credentials not audited",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	for _, leak := range []string{home, "/infra", "terraform", "kubectl", "payments", "envs", "~/", ".aws"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("the summary to share holds %q:\n%s", leak, got)
+		}
+	}
+	// --json is the judged calls and takes neither option.
+	if code := run([]string{"scan", "--json", "--share"}, nil, &out, &errb); code != 2 {
+		t.Errorf("--json with --share: exit %d, want 2", code)
+	}
+	if code := run([]string{"scan", "--json", "--boundary"}, nil, &out, &errb); code != 2 {
+		t.Errorf("--json with --boundary: exit %d, want 2", code)
 	}
 }

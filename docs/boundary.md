@@ -29,6 +29,8 @@ applygate doctor --boundary             # the report
 applygate doctor --boundary --require L2   # exit 1 below L2, for a script or CI
 ```
 
+`applygate scan --boundary` makes the same checks and puts them at the top of its report, above what the agents did in their recorded sessions ([scan.md](scan.md)).
+
 ## What the check does and does not cover
 
 - **L1** is exactly `doctor`'s managed checks. Without `install --managed --exclusive` you are at L0.

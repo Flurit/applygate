@@ -50,14 +50,26 @@ type boundaryCheck struct {
 type boundaryResult struct {
 	checks  []boundaryCheck
 	reached int
+	// audited is false when the cloud was not asked (applygate scan without
+	// --boundary): L2 then holds one check saying so.
+	audited bool
+	// What the credential audit found: credentials with no destructive path
+	// to production without a person, credentials with one, and findings
+	// that show neither (not checked, or in no environment the config names).
+	credsOK, credsFail, credsUnclear int
 }
 
 func (r *boundaryResult) add(level int, status, format string, a ...any) {
 	r.checks = append(r.checks, boundaryCheck{level, status, fmt.Sprintf(format, a...)})
 }
 
-func evalBoundary(cfg *config.Config) *boundaryResult {
-	r := &boundaryResult{}
+func evalBoundary(cfg *config.Config) *boundaryResult { return evalBoundaryWith(cfg, true) }
+
+// evalBoundaryWith makes the boundary checks. With audit false it makes only
+// the ones that read this machine: the cloud and the clusters are not asked
+// what the credentials can do, so L2 is not reached.
+func evalBoundaryWith(cfg *config.Config, audit bool) *boundaryResult {
+	r := &boundaryResult{audited: audit}
 
 	// L1: managed and exclusive.
 	if !config.Managed() {
@@ -76,24 +88,32 @@ func evalBoundary(cfg *config.Config) *boundaryResult {
 	}
 
 	// L2: credentials.
-	checked := 0
-	for _, f := range auditAll(cfg) {
-		switch f.level {
-		case "ok":
-			checked++
-		case "FAIL":
-			r.add(2, "FAIL", "%s", f.text)
-		default:
-			r.add(2, "not verified", "%s", f.text)
+	if audit {
+		for _, f := range auditAll(cfg) {
+			switch f.level {
+			case "ok":
+				r.credsOK++
+			case "FAIL":
+				r.credsFail++
+				r.add(2, "FAIL", "%s", f.text)
+			default:
+				r.credsUnclear++
+				r.add(2, "not verified", "%s", f.text)
+			}
 		}
-	}
-	if checked == 0 {
-		r.add(2, "not verified", "no AWS profile, kube context, gcloud account or Azure subscription could be audited, so nothing shows the agent's credentials cannot change production")
+		if r.credsOK == 0 {
+			r.add(2, "not verified", "no AWS profile, kube context, gcloud account or Azure subscription could be audited, so nothing shows the agent's credentials cannot change production")
+		} else {
+			r.add(2, "ok", "%d credential(s) audited with no destructive path without a person", r.credsOK)
+		}
+		for _, p := range credentialFiles() {
+			r.add(2, "not verified", "%s is readable by this user, so is any agent that runs as you; the audit above covers what it can do, not who can read it", p)
+		}
 	} else {
-		r.add(2, "ok", "%d credential(s) audited with no destructive path without a person", checked)
-	}
-	for _, p := range credentialFiles() {
-		r.add(2, "not verified", "%s is readable by this user, so is any agent that runs as you; the audit above covers what it can do, not who can read it", p)
+		r.add(2, "not verified", "credentials not audited: nothing was asked of AWS, Google Cloud, Azure or the clusters")
+		for _, p := range credentialFiles() {
+			r.add(2, "not verified", "%s is readable by this user, so is any agent that runs as you", p)
+		}
 	}
 
 	// L3: sandbox, and what only a person can vouch for.
