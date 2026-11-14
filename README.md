@@ -21,11 +21,13 @@ applygate is pre-1.0, for macOS and Linux.
 
 ```bash
 brew install Flurit/tap/applygate     # other ways to install: docs/install.md
+applygate scan                        # optional: look before you install a hook (below)
 cd your-infra-repo
 applygate init                        # .applygate.yaml for this repository, hooks for Claude Code and Codex, a user config if you have none
 applygate check "terraform -chdir=envs/prod destroy"
 ```
 
+- **Look first.** `applygate scan` needs no hook and no config. It reads the sessions Claude Code and Codex already recorded on your machine and shows what your agents can reach and what applygate would have decided on the calls they made. Nothing is run, and nothing leaves your machine ([docs/scan.md](docs/scan.md)).
 - **Using Codex?** Open it and run `/hooks` once to trust the new hook. Until you do, Codex skips it without saying so. `applygate doctor` tells you whether it will run.
 - **Two config files.** `.applygate.yaml` lists the repository's environments; commit it so your team shares it. It can only add protection, and after every edit a person runs `applygate trust`, so an agent cannot quietly relabel production. Your own settings, such as observe or enforce, live in `~/.config/applygate/config.yaml`.
 - **It starts in observe mode.** It logs what it would block and blocks nothing. That includes an agent editing or removing applygate itself, so try it where that is acceptable.
@@ -124,13 +126,13 @@ No model is needed. If you want a second opinion on calls the rules do not recog
 
 ## Privacy
 
-applygate makes no network calls by default, and logs decisions locally with secrets redacted. Three opt-in features do make network calls: the model judge, anonymous usage counts ([telemetry](docs/telemetry.md)), and live checks of your AWS identity and remote state.
+applygate makes no network calls by default, and logs decisions locally with secrets redacted. Three opt-in features do make network calls: the model judge, anonymous usage counts ([telemetry](docs/telemetry.md)), and live checks of your AWS identity and remote state. Three commands you run yourself also ask the cloud, read-only, what the credentials on your machine can do: `doctor --creds`, `doctor --boundary` and `scan --boundary`.
 
 ## Docs
 
 - [Install](docs/install.md): installer, Homebrew, Go, signature checks, the Claude Code plugin
 - [Configuration](docs/config.md) and [policy rules](docs/policy.md)
-- [Commands](docs/commands.md)
+- [Commands](docs/commands.md), [scan](docs/scan.md)
 - [Agents](docs/hosts.md), [MCP servers](docs/mcp.md), [CI](docs/ci.md)
 - [Limits](docs/limits.md), [threat model](docs/threat-model.md), [what has been tested](docs/capabilities.md)
 - [Upgrading from an earlier release](docs/upgrading.md), [changelog](CHANGELOG.md), [roadmap](docs/roadmap.md)

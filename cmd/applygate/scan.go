@@ -162,7 +162,7 @@ func exposure(audit bool) *scan.Exposure {
 		return &scan.Exposure{Error: "config: " + err.Error()}
 	}
 	r := evalBoundaryWith(cfg, audit)
-	x := &scan.Exposure{Audited: r.audited, Level: r.reached, CredsOK: r.credsOK, CredsFail: r.credsFail, CredsUnclear: r.credsUnclear}
+	x := &scan.Exposure{Audited: r.audited, Level: r.reached, CredsOK: r.credsOK, CredsFail: r.credsFail, CredsUnchecked: r.credsUnchecked, CredsUnplaced: r.credsUnplaced}
 	for _, c := range r.checks {
 		if c.level > 0 {
 			x.Checks = append(x.Checks, scan.Check{Level: c.level, Status: c.status, Text: c.text})

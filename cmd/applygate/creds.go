@@ -78,6 +78,15 @@ type credsFinding struct {
 	text  string
 }
 
+// unchecked reports whether a finding is a credential the audit could not
+// check (an expired sign-in, a missing permission, a CLI that is not
+// installed), as against one it checked and could not place in an
+// environment. Every finding of the first kind says "not checked" or "not
+// audited".
+func (f credsFinding) unchecked() bool {
+	return f.level == "WARN" && (strings.Contains(f.text, "not checked") || strings.Contains(f.text, "not audited"))
+}
+
 func cmdDoctorCreds(stdout, stderr io.Writer) int {
 	wd, _ := os.Getwd()
 	cfg, err := config.Load(config.UserPath(), wd)

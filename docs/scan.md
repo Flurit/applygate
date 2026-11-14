@@ -22,7 +22,9 @@ With `--boundary` it also runs the credential audit of `doctor --creds` ([creden
 
 - **A credential can change production without a person.** That is what a wrong verdict would reach; [credentials.md](credentials.md) shows how to close it.
 - **None of the audited credentials can.** If those are all your agents can use, you do not need the hook to protect production. The part of applygate that fits such a setup is the plan check in the pipeline ([ci.md](ci.md)).
-- **Some could not be checked or placed in an environment.** The audit then shows nothing either way, and the report says what to name in the config.
+- **Some could not be checked, or match no environment.** A credential whose sign-in has expired, or that lacks a permission the audit needs, is not checked: the report says to sign in and run it again. A credential that can make destructive changes in an environment no config names cannot be called production or not: the report says to name your environments. Either way the audit does not show that production is out of reach.
+
+Every audited credential is listed, the harmless ones too, with the identity the cloud returned for it.
 
 The section ends with how many commands that change infrastructure (an apply, a destroy, a state change, a cloud write) the agents issued in the sessions read, and how many of those aimed at an environment that is protected or that no config names. Issued is what the session records; whether a command succeeded is not known.
 
