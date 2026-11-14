@@ -216,8 +216,10 @@ func TestScanBoundaryAuditsTheCredentials(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"can change production without a person\n  boundary     L0 of L3: the hook is the only check",
+		"credentials  2 can change production without a person; 3 audited with no destructive path to production; 2 could not be checked; 4 can make destructive changes in an environment no config names\n  boundary     L0 of L3: the hook is the only check",
 		"L2 FAIL         aws profile prod-admin",
+		// Each audited credential is named, the harmless ones too.
+		"L2 ok           aws profile prod-readonly",
 		"A wrong verdict, or a call the hook never sees, reaches whatever these credentials allow.",
 		"The credential audit asked AWS,",
 	} {

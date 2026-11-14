@@ -45,7 +45,7 @@ What each host can do with the hook, as verified live, is the generated table in
 
 ## Scan
 
-`applygate scan` judges past calls with today's files and reads only Claude Code and Codex sessions; [scan.md](scan.md#limits) lists what that leaves out. It has been run on the real session files of one machine (Claude Code 2.1.3xx, Codex 0.162 to 0.166). `scan --boundary` runs the credential audit of `doctor --boundary`, which is tested with stubs only and has not been run against a real cloud account or cluster.
+`applygate scan` judges past calls with today's files and reads only Claude Code and Codex sessions; [scan.md](scan.md#limits) lists what that leaves out. It has been run on the real session files of one machine (Claude Code 2.1.3xx, Codex 0.162 to 0.166). `scan --boundary` runs the credential audit of `doctor --boundary`. On 2026-11-14 it was run against real accounts for the first time, on one machine: one AWS IAM user was audited end to end (its identity, then the policy simulator with MFA absent), and three AWS profiles and one gcloud account whose sign-in had expired were reported as not checked. Not yet seen against the real program: an AWS assumed role or SSO profile, a credential with a destructive path, the Kubernetes, Google Cloud and Azure audits.
 
 ## Known gaps
 

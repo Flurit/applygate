@@ -21,7 +21,7 @@ Each item carries one of these marks:
 | MCP | 15 infrastructure servers translated to the equivalent command; shell-like tools judged as shell; others logged | docs (table from each server's source) and tests |
 | Model judge | Optional second opinion on calls the rules do not recognise; can only make a verdict stricter | live in Claude Code (command backend, Anthropic endpoint); measured offline before the current filter |
 | Approvals | A person allows one asked call from a terminal | tests; off by default (no OS presence check) |
-| `doctor --creds`, `--boundary` | Whether the credentials here can change production without a person; assurance levels L0 to L3 | tests with stubs only |
+| `doctor --creds`, `--boundary` | Whether the credentials here can change production without a person; assurance levels L0 to L3 | live for one AWS IAM user (2026-11-14); otherwise tests with stubs only |
 | CI | `plan-check` and the GitHub Action | live on real plan JSON in CI |
 
 ## Agent hosts
@@ -165,8 +165,8 @@ A call to a known infrastructure tool is judged as its equivalent command, with 
 
 | Command | Checks | Status |
 |---|---|---|
-| `doctor --creds` | AWS: the policy simulator with MFA absent on 19 destructive actions (3 on the state bucket). Kubernetes: `auth can-i` for 4 verbs. Google Cloud: `testIamPermissions` for 17 permissions per project. Azure: role assignments, inherited and group ones included. A production credential with a destructive path fails | tests with stubs only |
-| `doctor --boundary` | L0 hook; L1 managed install checks pass; L2 a credential audited with no destructive path and none unverified; L3 a root-owned Claude Code sandbox plus attested CI apply and state guards. `--require L` exits 1 below it | tests with stubs only |
+| `doctor --creds` | AWS: the policy simulator with MFA absent on 19 destructive actions (3 on the state bucket). Kubernetes: `auth can-i` for 4 verbs. Google Cloud: `testIamPermissions` for 17 permissions per project. Azure: role assignments, inherited and group ones included. A production credential with a destructive path fails | AWS: live for one IAM user with no destructive action, and for expired sign-ins on AWS and gcloud, which are reported as not checked (2026-11-14, one machine). An assumed role or SSO profile, a credential with a destructive path, Kubernetes, Google Cloud and Azure: tests with stubs only |
+| `doctor --boundary` | L0 hook; L1 managed install checks pass; L2 a credential audited with no destructive path and none unverified; L3 a root-owned Claude Code sandbox plus attested CI apply and state guards. `--require L` exits 1 below it | L0 live on one machine (2026-11-14), with the audit as in the row above; L1 to L3: tests with stubs only |
 
 ## CI
 
@@ -176,7 +176,7 @@ A call to a known infrastructure tool is judged as its equivalent command, with 
 
 The decision log is JSONL at `~/.local/state/applygate/decisions.jsonl` (mode 0600, rotated at 64 MiB, fields capped at 64 KiB), with regex redaction of keys, tokens and passwords; under a managed install it is still in the user's reach. Telemetry is off and has no default endpoint. `report` summarises the log; `suggest` proposes a config from an observe-mode log; `explain` prints the parse and decision trace; `selftest` runs the 163-scenario pack; `trust` and `approve` need a terminal.
 
-`scan` reads the session files Claude Code and Codex keep and judges every recorded tool call through the hook's own path, offline, with nothing run or written ([scan.md](scan.md)). Status: live on one machine's sessions (Claude Code 2.1.3xx, Codex 0.162 to 0.166, about 15,000 calls); the older Codex formats are tests only. Its opening section makes the checks of `doctor --boundary`; `scan --boundary` adds the credential audit, tests with stubs only. `scan --share` prints counts only: tests.
+`scan` reads the session files Claude Code and Codex keep and judges every recorded tool call through the hook's own path, offline, with nothing run or written ([scan.md](scan.md)). Status: live on one machine's sessions (Claude Code 2.1.3xx, Codex 0.162 to 0.166, about 15,000 calls); the older Codex formats are tests only. Its opening section makes the checks of `doctor --boundary`; `scan --boundary` adds the credential audit (status in the table above). `scan --share` prints counts only: tests.
 
 ## Test and measurement assets
 
@@ -197,7 +197,7 @@ Capability:
 - `vault kv metadata delete` (and other vault writes) are not classified: they ask in a protected tier only because they are not on the allow-list, and are allowed in standard and disposable tiers.
 - pulumi, cdk, flux and argocd have no rules; `npx cdk deploy` asks only through strict shapes.
 - The plan gate's resource data is AWS only: a Google or Azure plan gets the generic rules (destroy count, replaces) but no stateful-type or exposure rules.
-- Seven of nine hosts, the managed install, every MCP translation, `doctor --creds` and `--boundary` have not been run against the real program.
+- Seven of nine hosts, the managed install and every MCP translation have not been run against the real program. `doctor --creds` and `--boundary` have been run against one AWS IAM user only; the Kubernetes, Google Cloud and Azure audits have not.
 - Claude Code and Codex were tested live on v0.6.0 (review/T3_RESULTS.md); not tested live: the prompt in plan and acceptEdits modes, a Codex user-scope hook launched from a subdirectory, and the Codex planfile search.
 - [hosts.md](hosts.md) says MCP is "not inspected" for Copilot CLI, OpenCode and Cline. The code would treat an `mcp__` tool name from them as MCP; whether they send one is not known.
 

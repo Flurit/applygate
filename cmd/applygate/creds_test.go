@@ -312,3 +312,35 @@ func TestDoctorCredsExit(t *testing.T) {
 		t.Errorf("output: %s", out.String())
 	}
 }
+
+// A finding that was not checked says so in words the boundary report
+// counts on; a credential that was checked and can do damage never does.
+func TestUncheckedFindingsAreToldFromUnplacedOnes(t *testing.T) {
+	old, oldHTTP := runCLI, gcpTestPermissions
+	runCLI, gcpTestPermissions = fakeCloud(t), fakeGCPPermissions(t)
+	defer func() { runCLI, gcpTestPermissions = old, oldHTTP }()
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	cfg := credsConfig()
+	got := map[string]credsFinding{}
+	for _, f := range append(auditAWS(cfg), auditKube(cfg)...) {
+		got[strings.SplitN(f.text, ":", 2)[0]] = f
+	}
+	for name, want := range map[string]bool{
+		"aws profile broken":        true,  // an expired SSO session
+		"aws profile mystery":       false, // can terminate instances, in no environment
+		"aws profile prod-admin":    false, // FAIL
+		"aws profile prod-readonly": false, // ok
+	} {
+		f, ok := got[name]
+		if !ok {
+			t.Fatalf("no finding for %s in %v", name, got)
+		}
+		if f.unchecked() != want {
+			t.Errorf("%s (%s %s): unchecked %v, want %v", name, f.level, f.text, f.unchecked(), want)
+		}
+	}
+	if (credsFinding{"WARN", "az: not audited (not installed)"}).unchecked() != true {
+		t.Error("a CLI that is not installed is a credential not checked")
+	}
+}

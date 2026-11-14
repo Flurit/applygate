@@ -19,9 +19,10 @@ type Exposure struct {
 	Level  int
 	Checks []Check
 	// The audited credentials: with no destructive path to production
-	// without a person, with one, and the findings that show neither (not
-	// checked, or in no environment the config names).
-	CredsOK, CredsFail, CredsUnclear int
+	// without a person, with one, those the audit could not check (an
+	// expired sign-in, a missing permission), and those that can make
+	// destructive changes in an environment the config does not name.
+	CredsOK, CredsFail, CredsUnchecked, CredsUnplaced int
 	// Error is why the checks could not be made at all.
 	Error string
 }
@@ -72,15 +73,23 @@ func (s Summary) renderExposure(w io.Writer, o RenderOptions, sessions int) {
 	case !x.Audited:
 		fmt.Fprintln(w, "  credentials  not audited: this report contacts nothing. applygate scan --boundary asks AWS, Google Cloud,")
 		fmt.Fprintln(w, "               Azure and the clusters whether the credentials here can change production without a person.")
-	case x.CredsFail > 0:
-		fmt.Fprintf(w, "  credentials  %s can change production without a person\n", num(x.CredsFail))
-	case x.CredsOK > 0 && x.CredsUnclear == 0:
+	case x.CredsFail == 0 && x.CredsOK > 0 && x.CredsUnchecked+x.CredsUnplaced == 0:
 		fmt.Fprintf(w, "  credentials  none of the %s audited can change production without a person\n", num(x.CredsOK))
-	case x.CredsOK > 0:
-		fmt.Fprintf(w, "  credentials  %s audited with no destructive path to production; %s finding%s could not be checked or placed\n",
-			num(x.CredsOK), num(x.CredsUnclear), plural(x.CredsUnclear))
 	default:
-		fmt.Fprintln(w, "  credentials  none could be audited, so nothing shows whether an agent can change production")
+		var parts []string
+		if n := x.CredsFail; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s can change production without a person", num(n)))
+		}
+		if n := x.CredsOK; n > 0 || x.CredsFail == 0 {
+			parts = append(parts, fmt.Sprintf("%s audited with no destructive path to production", num(n)))
+		}
+		if n := x.CredsUnchecked; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s could not be checked", num(n)))
+		}
+		if n := x.CredsUnplaced; n > 0 {
+			parts = append(parts, fmt.Sprintf("%s can make destructive changes in an environment no config names", num(n)))
+		}
+		fmt.Fprintf(w, "  credentials  %s\n", strings.Join(parts, "; "))
 	}
 	level := min(max(x.Level, 0), 3)
 	sofar := ""
@@ -103,13 +112,27 @@ func (s Summary) renderExposure(w io.Writer, o RenderOptions, sessions int) {
 	case x.CredsFail > 0:
 		fmt.Fprintln(w, "\n  A wrong verdict, or a call the hook never sees, reaches whatever these credentials allow.")
 		fmt.Fprintln(w, "  docs/credentials.md shows how to give the agent read-only access and keep writes behind MFA.")
-	case x.CredsOK > 0 && x.CredsUnclear == 0:
+	case x.CredsOK > 0 && x.CredsUnchecked+x.CredsUnplaced == 0:
 		fmt.Fprintln(w, "\n  If these are all the credentials your agents can use, you do not need the hook to protect production:")
 		fmt.Fprintln(w, "  that path is already closed, and the hook is a second check on it. What fits a setup like this is the")
 		fmt.Fprintln(w, "  plan check in your pipeline (docs/ci.md).")
 	default:
-		fmt.Fprintln(w, "\n  Until every credential is checked and placed in an environment, this does not show that production is")
-		fmt.Fprintln(w, "  out of reach. Name your environments in .applygate.yaml (applygate init), then run it again.")
+		fmt.Fprintln(w, "\n  This does not show that production is out of reach.")
+		if n := x.CredsUnchecked; n > 0 {
+			fmt.Fprintf(w, "  - %s could not be checked: the lines above say why, most often a sign-in that has expired or a\n", num(n))
+			fmt.Fprintln(w, "    permission the audit needs. Sign in again, then run it again.")
+		}
+		if n := x.CredsUnplaced; n > 0 {
+			match := "match"
+			if n == 1 {
+				match = "matches"
+			}
+			fmt.Fprintf(w, "  - %s can make destructive changes and %s no environment in the config, so applygate cannot tell\n", num(n), match)
+			fmt.Fprintln(w, "    whether that is production. Name your environments in .applygate.yaml (applygate init), then run it again.")
+		}
+		if x.CredsOK+x.CredsUnchecked+x.CredsUnplaced == 0 {
+			fmt.Fprintln(w, "  No credential was found to audit.")
+		}
 	}
 
 	if sessions > 0 {
@@ -260,7 +283,7 @@ func (s Summary) RenderShare(w io.Writer, o RenderOptions) {
 	default:
 		audit := "credentials not audited"
 		if x.Audited {
-			audit = fmt.Sprintf("credentials audited: %s with no destructive path to production, %s with one, %s unclear", num(x.CredsOK), num(x.CredsFail), num(x.CredsUnclear))
+			audit = fmt.Sprintf("credentials audited: %s with no destructive path to production, %s with one, %s not checked, %s in no named environment", num(x.CredsOK), num(x.CredsFail), num(x.CredsUnchecked), num(x.CredsUnplaced))
 		}
 		fmt.Fprintf(w, "\nboundary           L%d of L3; %s\n", min(max(x.Level, 0), 3), audit)
 		for lvl := 1; lvl <= 3; lvl++ {
