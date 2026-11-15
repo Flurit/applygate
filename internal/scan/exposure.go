@@ -120,7 +120,7 @@ func (s Summary) renderExposure(w io.Writer, o RenderOptions, sessions int) {
 		fmt.Fprintln(w, "\n  This does not show that production is out of reach.")
 		if n := x.CredsUnchecked; n > 0 {
 			fmt.Fprintf(w, "  - %s could not be checked: the lines above say why, most often a sign-in that has expired or a\n", num(n))
-			fmt.Fprintln(w, "    permission the audit needs. Sign in again, then run it again.")
+			fmt.Fprintln(w, "    permission the audit needs. Sign in again, or grant what the line names, then run it again.")
 		}
 		if n := x.CredsUnplaced; n > 0 {
 			match := "match"

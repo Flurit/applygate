@@ -38,6 +38,23 @@ How each credential is reported:
 
 It is read-only and changes nothing, but it contacts AWS, Google Cloud, Azure and the clusters with the credentials it audits. Run it yourself; the hook never runs it.
 
+### When AWS refuses the simulator call
+
+The audit asks the simulator as the identity it is auditing, so that identity needs `iam:SimulatePrincipalPolicy` on itself (and, for an assumed role, `iam:GetRole` on the role). An identity without it is reported as not checked, with AWS's refusal in the line. This was seen against a real IAM user on 2026-11-15. A refusal says nothing about what the identity can delete. Two ways to settle it:
+
+- **Grant it.** The action evaluates policies and changes nothing. Allow it on the identity's own ARN only:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:SimulatePrincipalPolicy",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:user/NAME"
+  }
+  ```
+
+  For a role, the resource is the role's ARN, and `iam:GetRole` joins the action. This statement has not been tested here.
+- **Check it by hand.** From a profile that may call the simulator, run `aws iam simulate-principal-policy --policy-source-arn ARN --action-names ...` for the identity, or use the policy simulator in the IAM console.
+
 ### What it does not see
 
 - **Policies the simulator does not evaluate.** The policy simulator does not evaluate service control policies, resource policies on the target (a bucket policy, a KMS key policy) or session policies (from AWS's documentation; not tested live). An SCP that denies the action makes the audit stricter than reality; a resource policy that allows it is missed.

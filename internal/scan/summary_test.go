@@ -240,7 +240,7 @@ func TestRenderOpensWithExposure(t *testing.T) {
 			[]string{"A wrong verdict", "Until every credential"}},
 		{"a sign-in has expired", &Exposure{Audited: true, CredsOK: 1, CredsUnchecked: 4, Checks: checks[:1]},
 			[]string{"credentials  1 audited with no destructive path to production; 4 could not be checked\n", "This does not show that production is out of reach.",
-				"- 4 could not be checked: the lines above say why", "Sign in again, then run it again."},
+				"- 4 could not be checked: the lines above say why", "Sign in again, or grant what the line names, then run it again."},
 			[]string{"you do not need the hook", "Name your environments"}},
 		{"a credential in no named environment", &Exposure{Audited: true, CredsOK: 3, CredsUnplaced: 1, Checks: checks[:1]},
 			[]string{"3 audited with no destructive path to production; 1 can make destructive changes in an environment no config names",

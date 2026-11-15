@@ -344,3 +344,37 @@ func TestUncheckedFindingsAreToldFromUnplacedOnes(t *testing.T) {
 		t.Error("a CLI that is not installed is a credential not checked")
 	}
 }
+
+// A signed-in identity that AWS does not let call the simulator on itself is
+// one that was not checked: the line keeps AWS's refusal and says what to
+// grant. Seen against a real IAM user on 2026-11-15.
+func TestRefusedSimulatorCallIsNotChecked(t *testing.T) {
+	old := runCLI
+	defer func() { runCLI = old }()
+	refusal := "An error occurred (AccessDenied) when calling the SimulatePrincipalPolicy operation: User: arn:aws:iam::444444444444:user/bootstrap is not authorized to perform: iam:SimulatePrincipalPolicy"
+	runCLI = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		a := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(a, "sts get-caller-identity"):
+			return []byte(`{"Account":"444444444444","Arn":"arn:aws:iam::444444444444:user/bootstrap"}`), nil
+		case strings.HasPrefix(a, "iam simulate-principal-policy"):
+			return nil, errors.New(refusal)
+		}
+		t.Errorf("unexpected call: %s", a)
+		return nil, errors.New("unexpected")
+	}
+	f := auditProfile(credsConfig(), "aws", "bootstrap")
+	if f.level != "WARN" || !f.unchecked() {
+		t.Errorf("got %s, unchecked %v: %s", f.level, f.unchecked(), f.text)
+	}
+	for _, want := range []string{
+		"aws profile bootstrap: arn:aws:iam::444444444444:user/bootstrap",
+		"not checked, iam simulate-principal-policy failed",
+		refusal,
+		"grant the profile iam:SimulatePrincipalPolicy on itself, or check it by hand (docs/credentials.md)",
+	} {
+		if !strings.Contains(f.text, want) {
+			t.Errorf("missing %q in: %s", want, f.text)
+		}
+	}
+}
