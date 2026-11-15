@@ -40,7 +40,7 @@ It is read-only and changes nothing, but it contacts AWS, Google Cloud, Azure an
 
 ### When AWS refuses the simulator call
 
-The audit asks the simulator as the identity it is auditing, so that identity needs `iam:SimulatePrincipalPolicy` on itself (and, for an assumed role, `iam:GetRole` on the role). An identity without it is reported as not checked, with AWS's refusal in the line. This was seen against a real IAM user on 2026-11-15. A refusal says nothing about what the identity can delete. Two ways to settle it:
+The audit asks the simulator as the identity it is auditing, so that identity needs `iam:SimulatePrincipalPolicy` on itself (and, for an assumed role, `iam:GetRole` on the role). An identity without it is reported as not checked, with AWS's refusal in the line. A refusal says nothing about what the identity can delete. Two ways to settle it:
 
 - **Grant it.** The action evaluates policies and changes nothing. Allow it on the identity's own ARN only:
 
@@ -52,7 +52,7 @@ The audit asks the simulator as the identity it is auditing, so that identity ne
   }
   ```
 
-  For a role, the resource is the role's ARN, and `iam:GetRole` joins the action. This statement has not been tested here.
+  For a role, the resource is the role's ARN, and `iam:GetRole` joins the action. The user form was tested against a real IAM user on 2026-11-15: AWS refused the call before the grant, and after it the audit ran and reported the five destructive actions that user may run without MFA. The role form has not been tested.
 - **Check it by hand.** From a profile that may call the simulator, run `aws iam simulate-principal-policy --policy-source-arn ARN --action-names ...` for the identity, or use the policy simulator in the IAM console.
 
 ### What it does not see
