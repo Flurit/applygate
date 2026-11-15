@@ -114,7 +114,7 @@ Known gaps are in [docs/limits.md](docs/limits.md), and what has been tested liv
 **In CI,** the same plan check runs between `plan -out` and `apply`, as a GitHub Action or a Terragrunt `before_hook` ([docs/ci.md](docs/ci.md)):
 
 ```yaml
-- uses: Flurit/applygate@v0.6.0
+- uses: Flurit/applygate@v0.6.1
   with:
     plan: tfplan
     working-directory: envs/prod
