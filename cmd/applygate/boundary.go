@@ -54,9 +54,10 @@ type boundaryResult struct {
 	// --boundary): L2 then holds one check saying so.
 	audited bool
 	// What the credential audit found: credentials with no destructive path
-	// to production without a person, credentials with one, and findings
-	// that show neither (not checked, or in no environment the config names).
-	credsOK, credsFail, credsUnclear int
+	// to production without a person, credentials with one, credentials it
+	// could not check, and credentials that can make destructive changes in
+	// an environment the config does not name.
+	credsOK, credsFail, credsUnchecked, credsUnplaced int
 }
 
 func (r *boundaryResult) add(level int, status, format string, a ...any) {
@@ -92,19 +93,24 @@ func evalBoundaryWith(cfg *config.Config, audit bool) *boundaryResult {
 		for _, f := range auditAll(cfg) {
 			switch f.level {
 			case "ok":
+				// Each audited credential is named, so a person sees which
+				// ones the level rests on.
 				r.credsOK++
+				r.add(2, "ok", "%s", f.text)
 			case "FAIL":
 				r.credsFail++
 				r.add(2, "FAIL", "%s", f.text)
 			default:
-				r.credsUnclear++
+				if f.unchecked() {
+					r.credsUnchecked++
+				} else {
+					r.credsUnplaced++
+				}
 				r.add(2, "not verified", "%s", f.text)
 			}
 		}
 		if r.credsOK == 0 {
 			r.add(2, "not verified", "no AWS profile, kube context, gcloud account or Azure subscription could be audited, so nothing shows the agent's credentials cannot change production")
-		} else {
-			r.add(2, "ok", "%d credential(s) audited with no destructive path without a person", r.credsOK)
 		}
 		for _, p := range credentialFiles() {
 			r.add(2, "not verified", "%s is readable by this user, so is any agent that runs as you; the audit above covers what it can do, not who can read it", p)

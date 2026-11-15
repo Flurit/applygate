@@ -312,3 +312,69 @@ func TestDoctorCredsExit(t *testing.T) {
 		t.Errorf("output: %s", out.String())
 	}
 }
+
+// A finding that was not checked says so in words the boundary report
+// counts on; a credential that was checked and can do damage never does.
+func TestUncheckedFindingsAreToldFromUnplacedOnes(t *testing.T) {
+	old, oldHTTP := runCLI, gcpTestPermissions
+	runCLI, gcpTestPermissions = fakeCloud(t), fakeGCPPermissions(t)
+	defer func() { runCLI, gcpTestPermissions = old, oldHTTP }()
+	t.Setenv("AWS_PROFILE", "")
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	cfg := credsConfig()
+	got := map[string]credsFinding{}
+	for _, f := range append(auditAWS(cfg), auditKube(cfg)...) {
+		got[strings.SplitN(f.text, ":", 2)[0]] = f
+	}
+	for name, want := range map[string]bool{
+		"aws profile broken":        true,  // an expired SSO session
+		"aws profile mystery":       false, // can terminate instances, in no environment
+		"aws profile prod-admin":    false, // FAIL
+		"aws profile prod-readonly": false, // ok
+	} {
+		f, ok := got[name]
+		if !ok {
+			t.Fatalf("no finding for %s in %v", name, got)
+		}
+		if f.unchecked() != want {
+			t.Errorf("%s (%s %s): unchecked %v, want %v", name, f.level, f.text, f.unchecked(), want)
+		}
+	}
+	if (credsFinding{"WARN", "az: not audited (not installed)"}).unchecked() != true {
+		t.Error("a CLI that is not installed is a credential not checked")
+	}
+}
+
+// A signed-in identity that AWS does not let call the simulator on itself is
+// one that was not checked: the line keeps AWS's refusal and says what to
+// grant. Seen against a real IAM user on 2026-11-15.
+func TestRefusedSimulatorCallIsNotChecked(t *testing.T) {
+	old := runCLI
+	defer func() { runCLI = old }()
+	refusal := "An error occurred (AccessDenied) when calling the SimulatePrincipalPolicy operation: User: arn:aws:iam::444444444444:user/bootstrap is not authorized to perform: iam:SimulatePrincipalPolicy"
+	runCLI = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		a := strings.Join(args, " ")
+		switch {
+		case strings.HasPrefix(a, "sts get-caller-identity"):
+			return []byte(`{"Account":"444444444444","Arn":"arn:aws:iam::444444444444:user/bootstrap"}`), nil
+		case strings.HasPrefix(a, "iam simulate-principal-policy"):
+			return nil, errors.New(refusal)
+		}
+		t.Errorf("unexpected call: %s", a)
+		return nil, errors.New("unexpected")
+	}
+	f := auditProfile(credsConfig(), "aws", "bootstrap")
+	if f.level != "WARN" || !f.unchecked() {
+		t.Errorf("got %s, unchecked %v: %s", f.level, f.unchecked(), f.text)
+	}
+	for _, want := range []string{
+		"aws profile bootstrap: arn:aws:iam::444444444444:user/bootstrap",
+		"not checked, iam simulate-principal-policy failed",
+		refusal,
+		"grant the profile iam:SimulatePrincipalPolicy on itself, or check it by hand (docs/credentials.md)",
+	} {
+		if !strings.Contains(f.text, want) {
+			t.Errorf("missing %q in: %s", want, f.text)
+		}
+	}
+}

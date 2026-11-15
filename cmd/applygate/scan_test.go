@@ -204,7 +204,14 @@ func TestScanOpensWithWhatAgentsCanReachAndAsksNoCloud(t *testing.T) {
 }
 
 func TestScanBoundaryAuditsTheCredentials(t *testing.T) {
-	scanHome(t)
+	home, _ := scanHome(t)
+	// The audit skips a cloud whose CLI is not installed, so the counts below
+	// would follow the machine. Put all four on PATH; fakeCloud answers them.
+	for _, cli := range []string{"aws", "kubectl", "gcloud", "az"} {
+		if err := os.WriteFile(filepath.Join(home, "bin", cli), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	old, oldHTTP := runCLI, gcpTestPermissions
 	runCLI, gcpTestPermissions = fakeCloud(t), fakeGCPPermissions(t)
 	defer func() { runCLI, gcpTestPermissions = old, oldHTTP }()
@@ -216,8 +223,11 @@ func TestScanBoundaryAuditsTheCredentials(t *testing.T) {
 	}
 	got := out.String()
 	for _, want := range []string{
-		"can change production without a person\n  boundary     L0 of L3: the hook is the only check",
+		"credentials  3 can change production without a person; 4 audited with no destructive path to production; 3 could not be checked; 5 can make destructive changes in an environment no config names\n  boundary     L0 of L3: the hook is the only check",
 		"L2 FAIL         aws profile prod-admin",
+		// Each audited credential is named, the harmless ones too.
+		"L2 ok           aws profile prod-readonly",
+		"L2 ok           az subscription Acme Readers",
 		"A wrong verdict, or a call the hook never sees, reaches whatever these credentials allow.",
 		"The credential audit asked AWS,",
 	} {

@@ -22,7 +22,9 @@ With `--boundary` it also runs the credential audit of `doctor --creds` ([creden
 
 - **A credential can change production without a person.** That is what a wrong verdict would reach; [credentials.md](credentials.md) shows how to close it.
 - **None of the audited credentials can.** If those are all your agents can use, you do not need the hook to protect production. The part of applygate that fits such a setup is the plan check in the pipeline ([ci.md](ci.md)).
-- **Some could not be checked or placed in an environment.** The audit then shows nothing either way, and the report says what to name in the config.
+- **Some could not be checked, or match no environment.** A credential whose sign-in has expired, or that lacks a permission the audit needs, is not checked: the report says to sign in and run it again. A credential that can make destructive changes in an environment no config names cannot be called production or not: the report says to name your environments. Either way the audit does not show that production is out of reach.
+
+Every audited credential is listed, the harmless ones too, with the identity the cloud returned for it.
 
 The section ends with how many commands that change infrastructure (an apply, a destroy, a state change, a cloud write) the agents issued in the sessions read, and how many of those aimed at an environment that is protected or that no config names. Issued is what the session records; whether a command succeeded is not known.
 
@@ -66,7 +68,7 @@ A call that appears in two session files, as after a resumed session, is counted
 - **Codex session formats.** The reader was checked against sessions written by Codex 0.162 to 0.166. Most hold a record of every completed command. Some `codex exec` sessions hold only the model's tool calls written as JavaScript; there a command is read when it is a plain string (`tools.exec_command({cmd:"..."})`) and left out when it is built at run time, and file edits are not read. Versions that recorded commands as model function calls are read from that format's shape and a test fixture, not from real sessions.
 - **Compressed archives** (`~/.codex/archived_sessions/*.jsonl.zst`) are not read; the report says how many there are.
 - **The boundary is this machine's, today.** The checks read the user config and the working directory `scan` runs in, like `doctor --boundary`, and say nothing about the machine a past session ran on. `--dir` does not narrow them.
-- **The credential audit has the limits of `doctor --boundary`** ([boundary.md](boundary.md), "What the check does and does not cover"): the Google Cloud and Azure audits are tested with stubs only, a credential in no environment the config names counts as unclear, and an MCP server with its own credentials is not seen.
+- **The credential audit has the limits of `doctor --boundary`** ([boundary.md](boundary.md), "What the check does and does not cover"): the Kubernetes and Azure audits are tested with stubs only, a credential in no environment the config names counts as unclear, and an MCP server with its own credentials is not seen.
 - **Other agents** (Cursor, Copilot CLI, Gemini CLI and the rest) are not read.
 - **Tool calls the hook may never see.** A session file records every tool the model called. Whether the agent sends each of them to its PreToolUse hook is the agent's business; a tool it handles internally is still judged here.
 - **The environment is the one scan runs in.** Variables that select a target, such as `AWS_PROFILE`, are taken from the shell you run `applygate scan` in, not from the session.

@@ -38,6 +38,23 @@ How each credential is reported:
 
 It is read-only and changes nothing, but it contacts AWS, Google Cloud, Azure and the clusters with the credentials it audits. Run it yourself; the hook never runs it.
 
+### When AWS refuses the simulator call
+
+The audit asks the simulator as the identity it is auditing, so that identity needs `iam:SimulatePrincipalPolicy` on itself (and, for an assumed role, `iam:GetRole` on the role). An identity without it is reported as not checked, with AWS's refusal in the line. A refusal says nothing about what the identity can delete. Two ways to settle it:
+
+- **Grant it.** The action evaluates policies and changes nothing. Allow it on the identity's own ARN only:
+
+  ```json
+  {
+    "Effect": "Allow",
+    "Action": "iam:SimulatePrincipalPolicy",
+    "Resource": "arn:aws:iam::ACCOUNT_ID:user/NAME"
+  }
+  ```
+
+  For a role, the resource is the role's ARN, and `iam:GetRole` joins the action. The user form was tested against a real IAM user on 2026-11-15: AWS refused the call before the grant, and after it the audit ran and reported the five destructive actions that user may run without MFA. The role form has not been tested.
+- **Check it by hand.** From a profile that may call the simulator, run `aws iam simulate-principal-policy --policy-source-arn ARN --action-names ...` for the identity, or use the policy simulator in the IAM console.
+
 ### What it does not see
 
 - **Policies the simulator does not evaluate.** The policy simulator does not evaluate service control policies, resource policies on the target (a bucket policy, a KMS key policy) or session policies (from AWS's documentation; not tested live). An SCP that denies the action makes the audit stricter than reality; a resource policy that allows it is missed.
@@ -131,7 +148,7 @@ Put writes behind a context whose credentials need the person: an OIDC login wit
 
 ## Google Cloud and Azure
 
-Both audits have been tested with stubbed CLI and API answers only, not against a live account.
+The gcloud audit was run against one real user account and project on 2026-11-15: it reported the 14 of the 17 permissions the account holds, as a warning while no config named the project and as `FAIL` once one named it protected. An expired gcloud sign-in is reported as not checked. A service account and a project with IAM conditions have not been tried. The az audit has been tested with stubbed CLI answers only.
 
 ### What the gcloud audit checks
 
