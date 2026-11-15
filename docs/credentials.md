@@ -148,7 +148,7 @@ Put writes behind a context whose credentials need the person: an OIDC login wit
 
 ## Google Cloud and Azure
 
-Both audits have been tested with stubbed CLI and API answers only, not against a live account.
+The gcloud audit was run against one real user account and project on 2026-11-15: it reported the 14 of the 17 permissions the account holds, as a warning while no config named the project and as `FAIL` once one named it protected. An expired gcloud sign-in is reported as not checked. A service account and a project with IAM conditions have not been tried. The az audit has been tested with stubbed CLI answers only.
 
 ### What the gcloud audit checks
 

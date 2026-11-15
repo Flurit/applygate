@@ -21,7 +21,7 @@ Each item carries one of these marks:
 | MCP | 15 infrastructure servers translated to the equivalent command; shell-like tools judged as shell; others logged | docs (table from each server's source) and tests |
 | Model judge | Optional second opinion on calls the rules do not recognise; can only make a verdict stricter | live in Claude Code (command backend, Anthropic endpoint); measured offline before the current filter |
 | Approvals | A person allows one asked call from a terminal | tests; off by default (no OS presence check) |
-| `doctor --creds`, `--boundary` | Whether the credentials here can change production without a person; assurance levels L0 to L3 | live for two AWS IAM users (2026-11-14 and 15), one with no destructive path and one with five; otherwise tests with stubs only |
+| `doctor --creds`, `--boundary` | Whether the credentials here can change production without a person; assurance levels L0 to L3 | live for two AWS IAM users and one Google Cloud user account (2026-11-14 and 15); Kubernetes, Azure and the rest: tests with stubs only |
 | CI | `plan-check` and the GitHub Action | live on real plan JSON in CI |
 
 ## Agent hosts
@@ -165,7 +165,7 @@ A call to a known infrastructure tool is judged as its equivalent command, with 
 
 | Command | Checks | Status |
 |---|---|---|
-| `doctor --creds` | AWS: the policy simulator with MFA absent on 19 destructive actions (3 on the state bucket). Kubernetes: `auth can-i` for 4 verbs. Google Cloud: `testIamPermissions` for 17 permissions per project. Azure: role assignments, inherited and group ones included. A production credential with a destructive path fails | AWS: live for one IAM user with no destructive action; for one with five, reported as `FAIL` when a config names its account protected and as a warning when none does; for a simulator call AWS refused and for expired sign-ins on AWS and gcloud, both reported as not checked (2026-11-14 and 15, one machine). An assumed role or SSO profile, the root user, Kubernetes, Google Cloud and Azure: tests with stubs only |
+| `doctor --creds` | AWS: the policy simulator with MFA absent on 19 destructive actions (3 on the state bucket). Kubernetes: `auth can-i` for 4 verbs. Google Cloud: `testIamPermissions` for 17 permissions per project. Azure: role assignments, inherited and group ones included. A production credential with a destructive path fails | AWS: live for one IAM user with no destructive action; for one with five, reported as `FAIL` when a config names its account protected and as a warning when none does; for a simulator call AWS refused and for expired sign-ins on AWS and gcloud, both reported as not checked (2026-11-14 and 15, one machine). Google Cloud: live for one user account on one project, holding 14 of the 17 permissions, `FAIL` when a config names the project protected (2026-11-15). An AWS assumed role or SSO profile, the root user, a Google Cloud service account, Kubernetes and Azure: tests with stubs only |
 | `doctor --boundary` | L0 hook; L1 managed install checks pass; L2 a credential audited with no destructive path and none unverified; L3 a root-owned Claude Code sandbox plus attested CI apply and state guards. `--require L` exits 1 below it | L0 live on one machine (2026-11-14), with the audit as in the row above; L1 to L3: tests with stubs only |
 
 ## CI
