@@ -130,6 +130,7 @@ applygate makes no network calls by default, and logs decisions locally with sec
 
 ## Docs
 
+- [Where it fits](docs/where-it-fits.md): next to pipelines, plan-only credentials, Sentinel and OPA, and who does not need it
 - [Install](docs/install.md): installer, Homebrew, Go, signature checks, the Claude Code plugin
 - [Configuration](docs/config.md) and [policy rules](docs/policy.md)
 - [Commands](docs/commands.md), [scan](docs/scan.md)
