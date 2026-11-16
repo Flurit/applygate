@@ -78,6 +78,15 @@ jobs:
           tier: standard
           binary: bin/applygate
           comment: true
+      - name: the released v0.6.1 binary, which has no comment format
+        id: released
+        uses: ./
+        with:
+          plan: review/real_plan/delete_real_shape.show.json
+          tier: standard
+          fail-on: never
+          comment: true
+          comment-key: released binary
       - name: outcomes are those of the check
         run: |
           test "${{ steps.blocked.outcome }}" = success
@@ -87,3 +96,5 @@ jobs:
           test "${{ steps.allowed.outputs.verdict }}" = allow
           test "${{ steps.hostile.outputs.verdict }}" = ask
           test "${{ steps.errored.outcome }}" = failure
+          test "${{ steps.released.outcome }}" = success
+          test "${{ steps.released.outputs.verdict }}" = ask
