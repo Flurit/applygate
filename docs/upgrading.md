@@ -2,6 +2,13 @@
 
 What to do when you upgrade from an earlier release. Every change is in [CHANGELOG.md](../CHANGELOG.md).
 
+## To v0.6.2
+
+Nothing to do when you come from v0.6.0 or v0.6.1. v0.6.2 adds the Action's pull-request comment ([ci.md](ci.md#a-comment-on-the-pull-request)) and changes no rule, verdict or default; hooks, configs and trust carry over as they are. The plugin exception under v0.6.1 below holds here too.
+
+- **The Action at the v0.6.2 tag installs v0.6.2.** At earlier tags it installed the release before the tag. If your workflow sets `version` itself, nothing changes.
+- **`scripts/ci-plan-check.sh` exits 2, not 1, for a working directory that does not exist or an unset `PLAN`.** This matters only if a script of yours tells the two codes apart; the Action fails the job either way.
+
 ## To v0.6.1
 
 Nothing to do when you come from v0.6.0. v0.6.1 adds `applygate scan` ([scan.md](scan.md)) and changes no rule, verdict or default; hooks, configs and trust carry over as they are.
