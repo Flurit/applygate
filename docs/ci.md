@@ -8,6 +8,7 @@ and exits 0 for allow, 4 for ask, 3 for block and 2 on an error. Nothing runs
 the apply it is about to run. Two of the three public Terraform incidents that
 destroyed production ran through CI with a plan that had gone stale or carried
 destroys nobody read, so this is where a plan-content check earns its place.
+How it sits next to Sentinel, OPA and approvals: [where-it-fits.md](where-it-fits.md).
 
 What `plan-check` judges: destroyed or replaced stateful resources, removed
 protection (deletion protection, final snapshot, `force_destroy`, versioning),
