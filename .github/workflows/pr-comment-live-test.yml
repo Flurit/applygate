@@ -83,13 +83,14 @@ jobs:
           working-directory: no/such/directory
           binary: bin/applygate
           comment: true
-      - name: install step, first run with the built binary
+      - name: install step, second run with a release that does not exist
         id: install
+        continue-on-error: true
         uses: ./
         with:
           plan: review/real_plan/create.show.json
           tier: standard
-          binary: bin/applygate
+          version: v9.9.9
           comment: true
           comment-key: install failure case
       - name: outcomes are those of the check
@@ -100,6 +101,7 @@ jobs:
           test "${{ steps.allowed.outputs.verdict }}" = allow
           test "${{ steps.hostile.outputs.verdict }}" = ask
           test "${{ steps.nodir.outcome }}" = failure
+          test "${{ steps.install.outcome }}" = failure
   legs:
     runs-on: ubuntu-latest
     permissions:
@@ -146,7 +148,7 @@ jobs:
         uses: ./
         with:
           plan: review/real_plan/delete_real_shape.show.json
-          tier: standard
+          tier: disposable
           fail-on: never
           binary: bin/applygate
           comment: true
