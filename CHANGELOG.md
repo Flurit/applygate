@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The Action installs the release it is tagged at.** A workflow that says `uses: Flurit/applygate@vX.Y.Z` reads `action.yml` from that tag, and the default of its `version` input was bumped only after each release, so the Action at v0.6.0 installed v0.5.0 and the Action at v0.6.1 installs v0.6.0 (for v0.6.1 the two judge a plan the same way; set `version` to choose). From the next release on, the default is set in the commit the tag is made on: a test fails while it differs from the newest changelog section, and the release workflow refuses a tag whose `action.yml` names another version. Published tags are not moved, so v0.6.0 and v0.6.1 stay as they are.
+
 ## v0.6.1 (2026-11-15)
 
 A new command, `applygate scan`, and documentation. No rule, verdict, tier or default changed: the hook decides every call as v0.6.0 does, and the scenario pack gives the same results. Nothing needs doing when upgrading from v0.6.0, except for the Claude Code plugin's pinned binary ([docs/upgrading.md](docs/upgrading.md)).
