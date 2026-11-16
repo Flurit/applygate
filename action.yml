@@ -44,8 +44,9 @@ inputs:
     default: "false"
   comment-key:
     description: >-
-      Name shown in the comment for what was judged. With the Terraform workspace it identifies the comment to update. Default
-      is working-directory and plan; set it when two steps of one pull request share both.
+      Name shown in the comment for what was judged, in place of working-directory and plan. The comment to update is found
+      by this name together with the workflow, the job and its matrix values; set it when two steps of one job judge the same
+      plan in the same directory.
     required: false
     default: ""
   binary:
@@ -113,15 +114,23 @@ runs:
         COMMENT_KEY: ${{ inputs.comment-key }}
         COMMENT_FILE: ${{ runner.temp }}/applygate-pr-comment.md
         COMMENT_COMMIT: ${{ github.event.pull_request.head.sha }}
+        COMMENT_SCOPE: ${{ toJSON(matrix) }}
       run: "${{ github.action_path }}/scripts/ci-plan-check.sh"
     # After the check whatever its result, so a blocked plan gets its comment
-    # before the job fails. The token is given to this step only, and the
-    # comment's text reaches gh as a file, never as part of a command.
+    # before the job fails, and also when the check did not run because
+    # applygate could not be installed: a comment that says allow must not
+    # stay then. The token is given to this step only, and the comment's text
+    # reaches gh as a file, never as part of a command.
     - name: Comment on the pull request
-      if: ${{ !cancelled() && inputs.comment == 'true' && steps.check.outcome != 'skipped' }}
+      if: ${{ !cancelled() && inputs.comment == 'true' }}
       shell: bash
       env:
         COMMENT_FILE: ${{ runner.temp }}/applygate-pr-comment.md
+        CHECK_OUTCOME: ${{ steps.check.outcome }}
+        PLAN: ${{ inputs.plan }}
+        WORKDIR: ${{ inputs.working-directory }}
+        COMMENT_KEY: ${{ inputs.comment-key }}
+        COMMENT_SCOPE: ${{ toJSON(matrix) }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         GH_TOKEN: ${{ github.token }}

@@ -27,7 +27,6 @@ import (
 	"github.com/Flurit/applygate/internal/plancomment"
 	"github.com/Flurit/applygate/internal/plangate"
 	"github.com/Flurit/applygate/internal/policy"
-	"github.com/Flurit/applygate/internal/preflight"
 	"github.com/Flurit/applygate/internal/shell"
 	"github.com/Flurit/applygate/internal/telemetry"
 )
@@ -42,8 +41,8 @@ Usage:
                                       dry-run a command through the policy (and the judge, if on)
   applygate explain [--cwd DIR] [--dir-unknown] [--agent NAME] [--no-judge] [--plan-json F=J] "<command>"
                                       show the parse, classification and decision trace
-  applygate plan-check [--tier T] [--cwd DIR] [--format comment] <plan.json>
-                                      evaluate "terraform show -json" output; --format comment
+  applygate plan-check [--tier T] [--cwd DIR] [--comment-file FILE] <plan.json>
+                                      evaluate "terraform show -json" output; --comment-file also
                                       writes the verdict as the Markdown of a pull-request comment
   applygate apply [--cwd DIR] [--engine terraform|tofu] <planfile> [args]
                                       judge a saved plan as the hooks would, confirm an ask by typing the
@@ -358,23 +357,16 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 	tier := fs.String("tier", "", "tier to evaluate for (default: resolved from --cwd)")
 	cwd := fs.String("cwd", "", "directory for tier and backend resolution (default: current)")
 	trustConfig := fs.Bool("trust-config", false, "read the repository's .applygate.yaml without a trust record, for CI, where the checked-out commit is the reviewed config")
-	format := fs.String("format", "text", "text, or comment: the verdict as the Markdown of a pull-request comment")
-	commentKey := fs.String("comment-key", "", "with --format comment: a name for what is judged, which with the workspace identifies the comment (default: the plan's path)")
-	commentCommit := fs.String("comment-commit", "", "with --format comment: the commit the plan was made from, shown in the comment")
-	commentError := fs.String("comment-error", "", "with --format comment: write the comment for a check that failed with this message before plan-check ran, and exit 2")
+	commentFile := fs.String("comment-file", "", "also write the verdict to this file as the Markdown of a pull-request comment; the output and the exit code stay as they are")
+	commentKey := fs.String("comment-key", "", "with --comment-file: the name the comment shows for what was judged (default: the plan's path)")
+	commentCommit := fs.String("comment-commit", "", "with --comment-file: the commit the plan was made from, shown in the comment")
+	commentJob := fs.String("comment-job", "", "with --comment-file: the workflow and job that ran the check, shown in the comment")
+	commentError := fs.String("comment-error", "", "with --comment-file: write the comment for a check that failed with this message before plan-check ran, and exit 2")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	comment := *format == "comment"
-	switch {
-	case *format != "text" && !comment:
-		fmt.Fprintf(stderr, "unknown format %q: use text or comment\n", *format)
-		return 2
-	case !comment && (*commentKey != "" || *commentCommit != "" || *commentError != ""):
-		fmt.Fprintln(stderr, "--comment-key, --comment-commit and --comment-error need --format comment")
-		return 2
-	case *commentCommit != "" && !plancomment.ValidCommit(*commentCommit):
-		fmt.Fprintln(stderr, "--comment-commit is not a commit hash")
+	if *commentFile == "" && (*commentKey != "" || *commentCommit != "" || *commentJob != "" || *commentError != "") {
+		fmt.Fprintln(stderr, "--comment-key, --comment-commit, --comment-job and --comment-error need --comment-file")
 		return 2
 	}
 	if *trustConfig {
@@ -385,26 +377,30 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 		dir, _ = os.Getwd()
 	}
 	dir, _ = filepath.Abs(dir)
-	// What the comment is about is known before the plan is read, so a
-	// check that fails still writes the comment a later run replaces.
-	ci := plancomment.Input{Key: *commentKey, Commit: *commentCommit, Version: hook.Version}
-	if comment {
-		ci.Workspace = preflight.Workspace(dir, hook.EnvMap())
-		if ci.Key == "" {
-			ci.Key = fs.Arg(0)
+	// The comment is written beside the check and never decides it: a
+	// commit that is not one is left out, and a file that cannot be
+	// written is a line on stderr.
+	ci := plancomment.Input{Key: *commentKey, Commit: *commentCommit, Job: *commentJob, Version: hook.Version}
+	if ci.Key == "" {
+		ci.Key = fs.Arg(0)
+	}
+	writeComment := func() {
+		if *commentFile == "" {
+			return
+		}
+		if err := os.WriteFile(*commentFile, []byte(plancomment.Render(ci)), 0o644); err != nil {
+			fmt.Fprintln(stderr, "applygate: the pull-request comment was not written:", err)
 		}
 	}
-	// fail reports an error; in the comment format the comment says the
-	// plan was not judged, so one that said allow does not stay.
+	// fail reports an error. The comment then says the plan was not judged,
+	// so one that said allow for an earlier commit does not stay.
 	fail := func(msg string) int {
 		fmt.Fprintln(stderr, msg)
-		if comment {
-			ci.Err = msg
-			io.WriteString(stdout, plancomment.Render(ci))
-		}
+		ci.Err = msg
+		writeComment()
 		return 2
 	}
-	if comment && *commentError != "" {
+	if *commentError != "" {
 		return fail(*commentError)
 	}
 	if fs.NArg() != 1 {
@@ -427,7 +423,7 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 	// The tier comes from the same signals the hook reads: the path, the
 	// workspace and the backend.
 	sig, be := policy.DirSignals(dir, hook.EnvMap())
-	ci.TierSet = t != ""
+	ci.TierSet, ci.Workspace = t != "", sig.Workspace
 	if t == "" {
 		r := cfg.Resolve(sig)
 		t = r.Tier
@@ -447,23 +443,20 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 		return fail(err.Error())
 	}
 	v := policy.SavedPlanVerdict(res, t)
-	if comment {
-		ci.Verdict, ci.Result = v, res
-		io.WriteString(stdout, plancomment.Render(ci))
-	} else {
-		fmt.Fprintf(stdout, "tier %s: %s (%d changes, %d deletes, %d replaces)\n", t, v, res.Changes, len(res.Deletes), len(res.Replaces))
-		for _, u := range cfg.Untrusted {
-			// Say so: the config's environments and protected_resources are
-			// not applied, and every directory is protected.
-			fmt.Fprintf(stdout, "- note: %s is not trusted, so it was not read and the tier is protected; trust it with applygate trust, or in CI pass --trust-config\n", u)
-		}
-		for _, f := range res.Findings {
-			fmt.Fprintf(stdout, "- %s %s: %s\n", f.Severity, f.Rule, f.Message)
-			for _, e := range f.Evidence {
-				fmt.Fprintf(stdout, "    %s\n", e)
-			}
+	fmt.Fprintf(stdout, "tier %s: %s (%d changes, %d deletes, %d replaces)\n", t, v, res.Changes, len(res.Deletes), len(res.Replaces))
+	for _, u := range cfg.Untrusted {
+		// Say so: the config's environments and protected_resources are
+		// not applied, and every directory is protected.
+		fmt.Fprintf(stdout, "- note: %s is not trusted, so it was not read and the tier is protected; trust it with applygate trust, or in CI pass --trust-config\n", u)
+	}
+	for _, f := range res.Findings {
+		fmt.Fprintf(stdout, "- %s %s: %s\n", f.Severity, f.Rule, f.Message)
+		for _, e := range f.Evidence {
+			fmt.Fprintf(stdout, "    %s\n", e)
 		}
 	}
+	ci.Verdict, ci.Result = v, res
+	writeComment()
 	switch v {
 	case policy.Block:
 		return 3

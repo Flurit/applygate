@@ -85,3 +85,13 @@ jobs:
           binary: bin/applygate
           comment: sometimes
       - run: test "${{ steps.badcomment.outcome }}" = failure
+      - name: a working directory that is not there is an error, with the comment asked for
+        id: nodir
+        continue-on-error: true
+        uses: ./
+        with:
+          plan: tfplan
+          working-directory: no/such/directory
+          binary: bin/applygate
+          comment: true
+      - run: test "${{ steps.nodir.outcome }}" = failure

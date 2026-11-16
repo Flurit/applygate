@@ -11,6 +11,7 @@ import (
 	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/plangate"
 	"github.com/Flurit/applygate/internal/policy"
+	"github.com/Flurit/applygate/internal/preflight"
 )
 
 // judge evaluates a plan as plan-check does and returns the comment input.
@@ -82,8 +83,8 @@ func TestBlockNamesTheStatefulResourceFirst(t *testing.T) {
 			t.Errorf("%q comes before the destroyed stateful resource:\n%s", later, body)
 		}
 	}
-	if !strings.HasPrefix(body, Marker("envs/prod/tfplan", "default")+"\n") {
-		t.Errorf("the comment does not start with its marker:\n%s", body)
+	if !strings.HasPrefix(body, "### applygate plan check: ⛔ block\n") {
+		t.Errorf("the comment does not start with its verdict, which the posting step reads:\n%s", body)
 	}
 }
 
@@ -223,7 +224,7 @@ var hostile = []string{
 	"aws_db_instance.e[\"--> </details> <details open><summary>x</summary> <!-- \"]",
 	"aws_db_instance.f[\"![img](https://evil.example/track.png) <img src=x onerror=alert(1)>\"]",
 	"aws_db_instance.g[\"\u202egnp.exe\u200b\u2066 \x1b[31mred\x07\"]",
-	"aws_db_instance.h[\"" + Marker("envs/prod/tfplan", "default") + "\"]",
+	"aws_db_instance.h[\"<!-- applygate:plan-check 0123456789abcdef -->\n<!-- applygate:run 99999999999 9 allow -->\"]",
 	"`aws_db_instance.i`",
 	"aws_db_instance.j[\"::error::x %0A| table | cell |\"]",
 	"aws_db_instance." + strings.Repeat("k", 5000),
@@ -261,33 +262,33 @@ var ownLine = regexp.MustCompile(`^(|### applygate plan check: \S+ (allow|ask|bl
 func checkHostile(t *testing.T, body string, in Input) {
 	t.Helper()
 	lines := strings.Split(strings.TrimSuffix(body, "\n"), "\n")
-	if lines[0] != Marker(in.Key, in.Workspace) {
-		t.Fatalf("the first line is not the marker: %q", lines[0])
+	if !regexp.MustCompile(`^### applygate plan check: \S+ (allow|ask|block|error)$`).MatchString(lines[0]) {
+		t.Fatalf("the first line is not the verdict: %q", lines[0])
 	}
 	details := 0
-	for i, line := range lines[1:] {
+	for i, line := range lines {
 		for _, r := range line {
 			if r < 0x20 || r == 0x7f || r == 0x202e || r == 0x200b && !strings.Contains(line, "<sub>") || r == 0x2066 || r == 0xfffe {
-				t.Errorf("line %d has the character %U: %q", i+2, r, line)
+				t.Errorf("line %d has the character %U: %q", i+1, r, line)
 			}
 		}
 		rest := stripCode(line)
-		for _, bad := range []string{"@", "<script", "<img", "<b>", "http", "](", "![", "-->", "<!--", "###", "[ ]", "evil", "octocat", "::error", "| table", "onerror", "gnp", "applygate:plan-check"} {
+		for _, bad := range []string{"@", "<script", "<img", "<b>", "http", "](", "![", "-->", "<!--", "###", "[ ]", "evil", "octocat", "::error", "| table", "onerror", "gnp", "applygate:plan-check", "applygate:run"} {
 			if strings.Contains(rest, bad) && !(bad == "###" && i == 0) {
-				t.Errorf("line %d has %q outside a code span: %q", i+2, bad, line)
+				t.Errorf("line %d has %q outside a code span: %q", i+1, bad, line)
 			}
 		}
 		if strings.Contains(rest, "`") {
-			t.Errorf("line %d has a backtick that closes no span: %q", i+2, line)
+			t.Errorf("line %d has a backtick that closes no span: %q", i+1, line)
 		}
 		if !ownLine.MatchString(rest) {
-			t.Errorf("line %d is not one of applygate's own: %q", i+2, line)
+			t.Errorf("line %d is not one of applygate's own: %q", i+1, line)
 		}
 		if strings.Contains(rest, "<details") || strings.Contains(rest, "</details") {
 			details++
 		}
 		if len(line) > 4000 {
-			t.Errorf("line %d is %d bytes long", i+2, len(line))
+			t.Errorf("line %d is %d bytes long", i+1, len(line))
 		}
 	}
 	if details != 0 && details != 2 {
@@ -311,35 +312,20 @@ func TestCodeSpanCannotBeClosedByItsText(t *testing.T) {
 }
 
 func TestTextEscapesMarkup(t *testing.T) {
-	got := text("see <b>x</b> & [a](http://b) @octocat #12 *bold* `c`")
-	for _, bad := range []string{"<b>", "](", "@octocat", "#12", " *bold*", " `c`"} {
+	got := text("see <b>x</b> & [a](http://b) @octocat #12 *bold* `c` www.example.com https://example.com a@b.co")
+	if !strings.Contains(got, `www\.example\.com`) {
+		t.Errorf("text() leaves a www host that GitHub links: %s", got)
+	}
+	for _, bad := range []string{"<b>", "](", "@octocat", "#12", " *bold*", " `c`", "www.example", "https://", "a@b"} {
 		if strings.Contains(got, bad) {
 			t.Errorf("text() keeps %q: %s", bad, got)
 		}
 	}
 }
 
-func TestMarkerIsStableAndSaysNothingOfTheKey(t *testing.T) {
-	a := Marker("envs/prod/tfplan", "default")
-	if a != Marker("envs/prod/tfplan", "default") {
-		t.Error("the same plan and workspace give two markers")
-	}
-	if !regexp.MustCompile(`^<!-- applygate:plan-check [0-9a-f]{16} -->$`).MatchString(a) {
-		t.Errorf("marker %q", a)
-	}
-	for _, other := range []string{Marker("envs/stage/tfplan", "default"), Marker("envs/prod/tfplan", "payments"), Marker("envs/prod/tfplandefault", "")} {
-		if other == a {
-			t.Error("two plans or workspaces share a marker")
-		}
-	}
-	if m := Marker("x --> <script>", "\n"); !regexp.MustCompile(`^<!-- applygate:plan-check [0-9a-f]{16} -->$`).MatchString(m) {
-		t.Errorf("a hostile key reaches the marker: %q", m)
-	}
-}
-
 func TestErrorCommentSaysThePlanWasNotJudged(t *testing.T) {
 	body := Render(Input{Key: "envs/prod/tfplan", Workspace: "default", Err: "plan JSON: not a plan", Commit: "5948de7aa11bb22cc33dd44", Version: "v0.0.0"})
-	mustContain(t, body, Marker("envs/prod/tfplan", "default"), "### applygate plan check: ❌ error", "could not judge this plan", "- `plan JSON: not a plan`", "judged at `5948de7aa11b`")
+	mustContain(t, body, "### applygate plan check: ❌ error", "Plan `envs/prod/tfplan`", "could not judge this plan", "- `plan JSON: not a plan`", "judged at `5948de7aa11b`")
 	for _, no := range []string{"allow", "tier"} {
 		if strings.Contains(body, no) {
 			t.Errorf("an error comment says %q:\n%s", no, body)
@@ -369,4 +355,65 @@ func TestDestroyReasonListsOnlyWhatIsNotNamedAbove(t *testing.T) {
 	// Stateless only: the destroy is the whole reason.
 	in = judge(t, plan(t, []change{{"aws_instance.web", "aws_instance", []string{"delete"}}}), config.Standard)
 	mustContain(t, Render(in), "⚠️ ask", "- A standard tier asks about any destroy or replace; this plan has 1\n  - `aws_instance.web is destroyed`\n")
+}
+
+// A long address is cut in its middle: the end, which names the resource and
+// says what happens to it, stays, however long a module path or a for_each
+// key is made.
+func TestLongAddressKeepsItsEnd(t *testing.T) {
+	pad := strings.Repeat("a", 20000)
+	in := judge(t, plan(t, []change{
+		{"module.m[\"" + pad + "\"].aws_db_instance.main", "aws_db_instance", []string{"delete"}},
+		{"module.m[\"" + strings.Repeat("é", 9000) + "\"].aws_instance.web", "aws_instance", []string{"delete"}},
+	}), config.Protected)
+	body := Render(in)
+	mustContain(t, body,
+		"\"].aws_db_instance.main (aws_db_instance) is destroyed`",
+		"\"].aws_instance.web is destroyed`",
+		"- `module.m[\"aaaa",
+		" … ",
+	)
+	for _, line := range strings.Split(body, "\n") {
+		if len(line) > 400 {
+			t.Errorf("a line is %d bytes long: %.80s", len(line), line)
+		}
+	}
+	if got := cutMiddle("0123456789", 3, 4); got != "012 … 6789" {
+		t.Errorf("cutMiddle = %q", got)
+	}
+	if got := cutMiddle("short", 3, 4); got != "short" {
+		t.Errorf("cutMiddle of a short string = %q", got)
+	}
+}
+
+// The job that judged the plan is in the footer, as untrusted text.
+func TestFooterNamesTheJob(t *testing.T) {
+	in := judge(t, realPlan(t, "create.show.json"), config.Standard)
+	in.Job, in.Commit = "terraform / plan { \"env\": \"prod\" } <b>@octocat</b>", "5948de7aa11bb22cc33dd44"
+	body := Render(in)
+	mustContain(t, body, "· job `terraform / plan { \"env\": \"prod\" } <b>@octocat</b>` · judged at `5948de7aa11b` ·")
+	checkHostile(t, body, in)
+}
+
+// No rule's message quotes the plan today. One that did would still not get
+// a link, a mention or markup into the comment: GitHub links a bare
+// www.example.com, so the dots are escaped with the rest.
+func TestMessageThatQuotesPlanTextIsEscaped(t *testing.T) {
+	in := Input{Key: "tfplan", Tier: config.Protected, TierSet: true, Verdict: policy.Block, Result: &plangate.Result{
+		Changes: 1,
+		Findings: []preflight.Finding{
+			{Rule: "future-rule", Severity: preflight.Critical, Message: "bucket www.example.com https://example.com/x <b>@octocat</b> [a](b) is public", Evidence: []string{"aws_s3_bucket.b"}},
+			{Rule: "other", Severity: preflight.Info, Message: "see WWW.Example.org"},
+		},
+	}}
+	body := Render(in)
+	mustContain(t, body, `www\.example\.com`, `WWW\.Example\.org`, `https\:\/\/example\.com\/x`, "&lt;b&gt;")
+	for _, line := range strings.Split(body, "\n") {
+		rest := stripCode(line)
+		for _, bad := range []string{"www.example", "WWW.Example", "https://", "<b>", "@octocat", "](b)"} {
+			if strings.Contains(rest, bad) {
+				t.Errorf("%q is outside a code span and not escaped: %q", bad, line)
+			}
+		}
+	}
 }

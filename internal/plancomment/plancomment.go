@@ -7,8 +7,6 @@
 package plancomment
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"regexp"
 	"sort"
@@ -24,13 +22,15 @@ import (
 
 // Input is what a comment says.
 type Input struct {
-	// Key names what was judged (the plan's path, or a name the workflow
-	// chose). With Workspace it identifies the comment, so a later run on
-	// the same plan updates it instead of adding another.
-	Key       string
+	// Key names what was judged: the plan's path, or a name the workflow
+	// chose.
+	Key string
+	// Workspace is the Terraform workspace, shown when it is not default.
 	Workspace string
-	// Commit is the commit the plan was made from; optional.
+	// Commit is the commit the plan was made from, and Job the workflow
+	// and job that judged it; both optional.
 	Commit  string
+	Job     string
 	Version string
 
 	Tier config.Tier
@@ -52,27 +52,19 @@ type Input struct {
 }
 
 const (
-	// markerPrefix opens the hidden first line a comment is found by.
-	markerPrefix = "<!-- applygate:plan-check "
 	// maxInline is how many resources a reason lists before the rest go to
 	// the collapsed block.
 	maxInline = 5
-	// maxItem cuts one quoted piece of plan text, in bytes.
-	maxItem = 240
+	// maxItem cuts one quoted piece of plan text, in bytes; itemHead of
+	// them are kept from its start and the rest from its end.
+	maxItem  = 300
+	itemHead = 100
 	// detailsBudget is where the collapsed block stops adding lines, and
 	// maxBody the size no comment exceeds: GitHub refuses a body over
-	// 65536 characters.
+	// 65536 characters, and the step that posts it adds two short lines.
 	detailsBudget = 40000
 	maxBody       = 60000
 )
-
-// Marker is the hidden first line of the comment for key and workspace. It
-// holds a hash, never the key itself, so nothing in it can end the HTML
-// comment or be read as markup.
-func Marker(key, workspace string) string {
-	sum := sha256.Sum256([]byte(key + "\x00" + workspace))
-	return markerPrefix + hex.EncodeToString(sum[:8]) + " -->"
-}
 
 var (
 	commitRe = regexp.MustCompile(`^[0-9a-fA-F]{7,64}$`)
@@ -111,7 +103,6 @@ type reason struct {
 // Render returns the comment body.
 func Render(in Input) string {
 	var b strings.Builder
-	b.WriteString(Marker(in.Key, in.Workspace) + "\n")
 	if in.Err != "" {
 		b.WriteString("### applygate plan check: ❌ error\n\n")
 		b.WriteString(subject(in) + "\n\n")
@@ -182,7 +173,6 @@ func Render(in Input) string {
 		// Not reachable with the limits above; a comment GitHub refuses
 		// would leave the last one in place, which may say allow.
 		var s strings.Builder
-		s.WriteString(Marker(in.Key, in.Workspace) + "\n")
 		fmt.Fprintf(&s, "### applygate plan check: %s\n\n", verdictTitle(in.Verdict))
 		s.WriteString(subject(in) + " · " + counts(res) + "\n\n" + meaning(in) + "\n\nThe findings are too long for a comment; the job log has them.\n\n" + footer(in))
 		return s.String()
@@ -365,6 +355,9 @@ func footer(in Input) string {
 		s += " " + in.Version
 	}
 	s += " · deterministic rules, no model"
+	if in.Job != "" {
+		s += " · job " + code(in.Job)
+	}
 	if ValidCommit(in.Commit) {
 		c := in.Commit
 		if len(c) > 12 {
@@ -385,38 +378,46 @@ func plural(n int, word string) string {
 // clean makes untrusted text one printable line: invalid UTF-8, control
 // characters (newlines included) and formatting characters (zero-width and
 // direction marks, which can hide or reorder text) are removed or made
-// spaces, and a long value is cut. The text is what plan-check prints in the
-// job log: addresses, attribute names and the rules' wording, which quote
-// no attribute values beyond the action names of a flagged IAM policy and
-// the name of a state bucket. The decision log's command-line redaction is
-// not run on it: it would cut the message after an address such as
-// aws_secretsmanager_secret.token.
+// spaces, and a long value is cut in its middle. The text is what plan-check
+// prints in the job log: addresses, attribute names and the rules' wording,
+// which quote no attribute values beyond the action names of a flagged IAM
+// policy and the name of a state bucket. The decision log's command-line
+// redaction is not run on it: it would cut the message after an address
+// such as aws_secretsmanager_secret.token.
 func clean(s string) string {
-	if len(s) > 4*maxItem {
-		s = cutBytes(s, 4*maxItem) + "…"
-	}
-	s = strings.ToValidUTF8(s, "�")
+	// Bound the work on a very long value before looking at its characters.
+	s = cutMiddle(s, 4*maxItem, 4*maxItem)
+	s = strings.ToValidUTF8(s, "\uFFFD")
 	s = strings.Map(func(r rune) rune {
 		switch {
-		case r == '\n' || r == '\r' || r == '\t' || unicode.IsSpace(r):
+		case unicode.IsSpace(r):
 			return ' '
 		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || unicode.Is(unicode.Co, r):
 			return -1
 		}
 		return r
 	}, s)
-	s = strings.TrimSpace(s)
-	if len(s) > maxItem {
-		s = cutBytes(s, maxItem) + "…"
-	}
-	return s
+	return cutMiddle(strings.TrimSpace(s), itemHead, maxItem-itemHead)
 }
 
-func cutBytes(s string, n int) string {
-	for n > 0 && !utf8.RuneStart(s[n]) {
-		n--
+// cutMiddle keeps the first head and the last tail bytes of s (whole runes)
+// and puts an ellipsis for what is between. The end is kept because it says
+// the most: an address ends with the resource's type and name, and evidence
+// with what happens to it, so a module path or a for_each key padded to
+// thousands of characters cannot push "aws_db_instance.main is destroyed"
+// out of the comment.
+func cutMiddle(s string, head, tail int) string {
+	if len(s) <= head+tail {
+		return s
 	}
-	return s[:n]
+	h, t := head, len(s)-tail
+	for h > 0 && !utf8.RuneStart(s[h]) {
+		h--
+	}
+	for t < len(s) && !utf8.RuneStart(s[t]) {
+		t++
+	}
+	return s[:h] + " … " + s[t:]
 }
 
 // code writes untrusted text as a code span. Inside one, Markdown reads
@@ -465,7 +466,9 @@ func text(s string) string {
 			// A zero-width space after it: no mention, no issue reference.
 			b.WriteRune(r)
 			b.WriteRune('​')
-		case '\\', '`', '*', '_', '{', '}', '[', ']', '(', ')', '!', '|', '~', ':', '/':
+		case '\\', '`', '*', '_', '{', '}', '[', ']', '(', ')', '!', '|', '~', ':', '/', '.':
+			// The dot too: GitHub makes a link of a bare www.example.com,
+			// and of nothing in www\.example\.com.
 			b.WriteByte('\\')
 			b.WriteRune(r)
 		default:
