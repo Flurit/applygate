@@ -22,7 +22,7 @@ Each item carries one of these marks:
 | Model judge | Optional second opinion on calls the rules do not recognise; can only make a verdict stricter | live in Claude Code (command backend, Anthropic endpoint); measured offline before the current filter |
 | Approvals | A person allows one asked call from a terminal | tests; off by default (no OS presence check) |
 | `doctor --creds`, `--boundary` | Whether the credentials here can change production without a person; assurance levels L0 to L3 | live for two AWS IAM users and one Google Cloud user account (2026-11-14 and 15); Kubernetes, Azure and the rest: tests with stubs only |
-| CI | `plan-check` and the GitHub Action | live on real plan JSON in CI |
+| CI | `plan-check` and the GitHub Action, with its optional pull-request comment | live on real plan JSON in CI; the comment posted and updated live on throwaway pull requests of this repository (2026-11-16), not on a pull request from a fork |
 
 ## Agent hosts
 

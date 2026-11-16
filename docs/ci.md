@@ -72,7 +72,7 @@ signature is required. Pin the action by commit SHA to fix both.
 on every push against two real AWS-provider plans.
 
 Which release it installs: the default of `version` in the `action.yml` your
-workflow pins. From the release after v0.6.1 on, that is the release the
+workflow pins. From v0.6.2 on, that is the release the
 action is tagged at. The action at the v0.6.0 and v0.6.1 tags installs the
 release before it (v0.5.0 and v0.6.0); set `version` there to choose. For
 v0.6.1 the two judge a plan the same way.
@@ -118,8 +118,8 @@ jobs:
       cancel-in-progress: true
     steps:
       # checkout, setup-terraform and terraform plan as above
-      # comment needs a release after v0.6.1: the action at the v0.6.1 tag
-      # has no such input and would run the check without commenting.
+      # comment needs v0.6.2 or later: the action at an earlier tag has no
+      # such input and would run the check without commenting.
       - uses: Flurit/applygate@v0.6.1
         with:
           plan: tfplan

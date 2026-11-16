@@ -43,7 +43,7 @@ Keep them on. An agent's permission rules match the text of a command, so they c
 
 ## In the pipeline: the plan check
 
-`applygate plan-check` reads the JSON of a saved plan and applies the plan rules the hook uses for `terraform apply tfplan`. It runs as a step between `plan` and `apply`, in GitHub Actions or any other CI, and nothing in it runs Terraform's apply ([ci.md](ci.md)). From the release after v0.6.1 the Action can also write the verdict on the pull request, beside what your policy check reports.
+`applygate plan-check` reads the JSON of a saved plan and applies the plan rules the hook uses for `terraform apply tfplan`. It runs as a step between `plan` and `apply`, in GitHub Actions or any other CI, and nothing in it runs Terraform's apply ([ci.md](ci.md)). From v0.6.2 the Action can also write the verdict on the pull request, beside what your policy check reports.
 
 ### Next to Sentinel, OPA, conftest and Terraform policy
 

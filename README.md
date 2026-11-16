@@ -111,7 +111,7 @@ Known gaps are in [docs/limits.md](docs/limits.md), and what has been tested liv
 
 **From your terminal,** `applygate apply tfplan` judges a saved plan the way the hooks do, then runs `terraform apply` (or `tofu`). On an ask you confirm by typing the environment's name.
 
-**In CI,** the same plan check runs between `plan -out` and `apply`, as a GitHub Action or a Terragrunt `before_hook` ([docs/ci.md](docs/ci.md)):
+**In CI,** the same plan check runs between `plan -out` and `apply`, as a GitHub Action or a Terragrunt `before_hook`. From v0.6.2 the Action can also write its verdict on the pull request ([docs/ci.md](docs/ci.md)):
 
 ```yaml
 - uses: Flurit/applygate@v0.6.1

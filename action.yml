@@ -27,7 +27,7 @@ inputs:
   version:
     description: applygate release tag to install (ignored when binary is set).
     required: false
-    default: v0.6.1
+    default: v0.6.2
   trust-config:
     description: >-
       Read the repository's .applygate.yaml without a trust record (true or false). A CI runner has no trust store, so without
@@ -79,7 +79,7 @@ runs:
         set -euo pipefail
         # A release tag only: the value names a download path.
         if ! [[ "$APPLYGATE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9]+)?)?$ ]]; then
-          echo "version must be a release tag such as v0.6.1" >&2
+          echo "version must be a release tag such as v0.6.2" >&2
           exit 2
         fi
         dir="$RUNNER_TEMP/applygate-bin"
