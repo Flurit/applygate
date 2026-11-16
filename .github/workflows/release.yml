@@ -30,6 +30,17 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      # A workflow that uses the Action at this tag reads action.yml from it,
+      # so the default there has to be this release, not the one before.
+      - name: the Action installs this release by default
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          grep -qxF "    default: $TAG" action.yml || {
+            echo "action.yml's default version is not $TAG: run scripts/bump-version-refs.sh --action $TAG and tag that commit (docs/project/RELEASE.md)" >&2
+            exit 1
+          }
       - name: test
         run: go test ./...
 

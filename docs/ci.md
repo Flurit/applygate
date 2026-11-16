@@ -62,13 +62,19 @@ error, missing binary) always fails the job: the gate fails closed.
 
 Inputs: `plan` (required), `tier`, `fail-on`, `working-directory`, `comment` and `comment-key` ([below](#a-comment-on-the-pull-request)),
 `terraform` (`tofu` for OpenTofu), `trust-config` (read the repository's
-`.applygate.yaml`, default false), `version` (a release tag such as v0.6.1,
-the default; anything else is an error), and `binary` to skip the download and
+`.applygate.yaml`, default false), `version` (a release tag such as v0.6.1;
+anything else is an error), and `binary` to skip the download and
 use a binary already on the runner. The release is installed with the
 `install.sh` that comes with the action, at the ref your workflow pins, and its
 signature is required. Pin the action by commit SHA to fix both.
 `.github/workflows/action-check.yml` in this repository exercises the action
 on every push against two real AWS-provider plans.
+
+Which release it installs: the default of `version` in the `action.yml` your
+workflow pins. From the release after v0.6.1 on, that is the release the
+action is tagged at. The action at the v0.6.0 and v0.6.1 tags installs the
+release before it (v0.5.0 and v0.6.0); set `version` there to choose. For
+v0.6.1 the two judge a plan the same way.
 
 ## Any other CI
 
