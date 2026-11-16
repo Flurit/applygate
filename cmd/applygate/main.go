@@ -24,6 +24,7 @@ import (
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/hook"
 	"github.com/Flurit/applygate/internal/judge"
+	"github.com/Flurit/applygate/internal/plancomment"
 	"github.com/Flurit/applygate/internal/plangate"
 	"github.com/Flurit/applygate/internal/policy"
 	"github.com/Flurit/applygate/internal/shell"
@@ -40,8 +41,9 @@ Usage:
                                       dry-run a command through the policy (and the judge, if on)
   applygate explain [--cwd DIR] [--dir-unknown] [--agent NAME] [--no-judge] [--plan-json F=J] "<command>"
                                       show the parse, classification and decision trace
-  applygate plan-check [--tier T] [--cwd DIR] <plan.json>
-                                      evaluate "terraform show -json" output
+  applygate plan-check [--tier T] [--cwd DIR] [--comment-file FILE] <plan.json>
+                                      evaluate "terraform show -json" output; --comment-file also
+                                      writes the verdict as the Markdown of a pull-request comment
   applygate apply [--cwd DIR] [--engine terraform|tofu] <planfile> [args]
                                       judge a saved plan as the hooks would, confirm an ask by typing the
                                       environment name, then run the engine's apply (the human door)
@@ -355,48 +357,90 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 	tier := fs.String("tier", "", "tier to evaluate for (default: resolved from --cwd)")
 	cwd := fs.String("cwd", "", "directory for tier and backend resolution (default: current)")
 	trustConfig := fs.Bool("trust-config", false, "read the repository's .applygate.yaml without a trust record, for CI, where the checked-out commit is the reviewed config")
+	commentFile := fs.String("comment-file", "", "also write the verdict to this file as the Markdown of a pull-request comment; the output and the exit code stay as they are")
+	commentKey := fs.String("comment-key", "", "with --comment-file: the name the comment shows for what was judged (default: the plan's path)")
+	commentCommit := fs.String("comment-commit", "", "with --comment-file: the commit the plan was made from, shown in the comment")
+	commentJob := fs.String("comment-job", "", "with --comment-file: the workflow and job that ran the check, shown in the comment")
+	commentError := fs.String("comment-error", "", "with --comment-file: write the comment for a check that failed with this message before plan-check ran, and exit 2")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *commentFile == "" && (*commentKey != "" || *commentCommit != "" || *commentJob != "" || *commentError != "") {
+		fmt.Fprintln(stderr, "--comment-key, --comment-commit, --comment-job and --comment-error need --comment-file")
 		return 2
 	}
 	if *trustConfig {
 		config.TrustAll = true
-	}
-	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "expected a plan JSON file (terraform show -json tfplan > plan.json)")
-		return 2
-	}
-	js, err := os.ReadFile(fs.Arg(0))
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
 	}
 	dir := *cwd
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
 	dir, _ = filepath.Abs(dir)
+	// The comment is written beside the check and never decides it: a
+	// commit that is not one is left out, and a file that cannot be
+	// written is a line on stderr.
+	ci := plancomment.Input{Key: *commentKey, Commit: *commentCommit, Job: *commentJob, Version: hook.Version}
+	if ci.Key == "" {
+		ci.Key = fs.Arg(0)
+	}
+	writeComment := func() {
+		if *commentFile == "" {
+			return
+		}
+		if err := os.WriteFile(*commentFile, []byte(plancomment.Render(ci)), 0o644); err != nil {
+			fmt.Fprintln(stderr, "applygate: the pull-request comment was not written:", err)
+		}
+	}
+	// fail reports an error. The comment then says the plan was not judged,
+	// so one that said allow for an earlier commit does not stay.
+	fail := func(msg string) int {
+		fmt.Fprintln(stderr, msg)
+		ci.Err = msg
+		writeComment()
+		return 2
+	}
+	if *commentError != "" {
+		return fail(*commentError)
+	}
+	if fs.NArg() != 1 {
+		return fail("expected a plan JSON file (terraform show -json tfplan > plan.json)")
+	}
+	js, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return fail(err.Error())
+	}
 	cfg, err := config.Load(config.UserPath(), dir)
 	if err != nil {
-		fmt.Fprintln(stderr, "config error:", err)
-		return 2
+		return fail("config error: " + err.Error())
 	}
 	t := config.Tier(*tier)
 	switch t {
 	case "", config.Protected, config.Standard, config.Disposable:
 	default:
-		fmt.Fprintf(stderr, "unknown tier %q: use protected, standard or disposable\n", t)
-		return 2
+		return fail(fmt.Sprintf("unknown tier %q: use protected, standard or disposable", t))
 	}
 	// The tier comes from the same signals the hook reads: the path, the
 	// workspace and the backend.
 	sig, be := policy.DirSignals(dir, hook.EnvMap())
+	ci.TierSet, ci.Workspace = t != "", sig.Workspace
 	if t == "" {
-		t = cfg.Resolve(sig).Tier
+		r := cfg.Resolve(sig)
+		t = r.Tier
+		ci.Env = r.Env
+		for _, m := range r.Matched {
+			// The config's path patterns are absolute once loaded; the
+			// comment shows them as the config writes them.
+			if cfg.Root != "" {
+				m = strings.ReplaceAll(m, filepath.ToSlash(cfg.Root)+"/", "")
+			}
+			ci.Matched = append(ci.Matched, m)
+		}
 	}
+	ci.Tier, ci.Untrusted = t, cfg.Untrusted
 	res, err := plangate.Evaluate(plangate.Input{PlanJSON: js, MaxDestroy: cfg.MaxDestroy(t), Scope: cfg.PlanGate.Scope, Protected: cfg.ProtectedResources, Backend: be}, plangate.DefaultRules())
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
+		return fail(err.Error())
 	}
 	v := policy.SavedPlanVerdict(res, t)
 	fmt.Fprintf(stdout, "tier %s: %s (%d changes, %d deletes, %d replaces)\n", t, v, res.Changes, len(res.Deletes), len(res.Replaces))
@@ -411,6 +455,8 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "    %s\n", e)
 		}
 	}
+	ci.Verdict, ci.Result = v, res
+	writeComment()
 	switch v {
 	case policy.Block:
 		return 3

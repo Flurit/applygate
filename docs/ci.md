@@ -60,7 +60,7 @@ second pair of eyes; `fail-on: never` turns the step into a report, useful
 while a team is still tuning its config. An error (unreadable plan, config
 error, missing binary) always fails the job: the gate fails closed.
 
-Inputs: `plan` (required), `tier`, `fail-on`, `working-directory`,
+Inputs: `plan` (required), `tier`, `fail-on`, `working-directory`, `comment` and `comment-key` ([below](#a-comment-on-the-pull-request)),
 `terraform` (`tofu` for OpenTofu), `trust-config` (read the repository's
 `.applygate.yaml`, default false), `version` (a release tag such as v0.6.1;
 anything else is an error), and `binary` to skip the download and
@@ -96,6 +96,131 @@ terraform show -json tfplan > tfplan.json
 applygate plan-check --cwd . tfplan.json; rc=$?
 case $rc in 0) ;; 4) echo "needs review" ;; 3) exit 1 ;; *) exit 1 ;; esac
 ```
+
+## A comment on the pull request
+
+With `comment: true` the action also writes the verdict on the pull request, so
+a reviewer sees it beside the diff and next to what Sentinel, OPA or a branch
+policy report, without opening the job log. It is off by default, because it
+needs a permission the check itself does not:
+
+```yaml
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # for the comment only
+    # One run per pull request at a time, the newest: see "Which verdict stays".
+    concurrency:
+      group: plan-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    steps:
+      # checkout, setup-terraform and terraform plan as above
+      # comment needs a release after v0.6.1: the action at the v0.6.1 tag
+      # has no such input and would run the check without commenting.
+      - uses: Flurit/applygate@v0.6.1
+        with:
+          plan: tfplan
+          working-directory: envs/prod
+          comment: true
+```
+
+**What it says.** The verdict (allow, ask, block, or error when the plan could
+not be judged), the plan, the tier and the environment it resolved from, and the
+reasons, with the destroyed or replaced stateful resources first. Each reason
+lists up to five resources; longer lists, and what was found but did not decide
+the verdict, are in a collapsed block. A plan with thousands of changes still
+gives a short comment, cut to fit GitHub's size limit with the rest left to the
+job log.
+
+> ### applygate plan check: ⛔ block
+>
+> Plan `envs/prod/tfplan` · environment `prod` (`path envs/prod/**`) · tier **protected** · 2 changes, 1 destroyed, 0 replaced
+>
+> The rules for a protected tier say this plan should not be applied as it is.
+>
+> **Why block**
+>
+> - **critical** plan destroys or replaces stateful resources (`stateful-destroyed`)
+>   - `aws_db_instance.main (aws_db_instance) is destroyed`
+> - A protected tier blocks any destroy or replace; this plan has 1 (1 named above)
+> - **critical** plan removes data protection (`protection-removed`)
+>   - `aws_db_instance.main: final snapshot skipped while it is being deleted`
+
+**Which comment.** There is one comment for each plan a job judges, and later
+runs update it; a plan that is fixed turns its block into an allow in place.
+The comment is found by a hidden first line, a hash of:
+
+- what was judged: `working-directory` and `plan`, as a path in the
+  repository (the runner's checkout directory is not part of it), or
+  `comment-key` when you set it, which is also the name the comment shows;
+- who judged it: the workflow's name, the job, the job's matrix values and
+  `TF_WORKSPACE`.
+
+So two workflows, two jobs or the legs of a matrix each get their own comment
+for the same plan, and none of the hash comes from files in the working
+directory, so a run that fails early still finds the comment. Renaming the
+workflow or the job starts a new comment and leaves the old one. Two steps of
+one job that judge the same plan in the same directory (at two tiers, or after
+`terraform workspace select`) share a comment: give each a `comment-key`. Until
+you do, the comment shows the more severe of their verdicts and the step leaves
+a notice that names `comment-key`, so an allow never covers a block of the same
+run. Only a comment written by the workflow's own token (`github-actions[bot]`)
+is updated; one a contributor starts with the same hidden line is ignored.
+
+**Which verdict stays.** A hidden second line records the run that wrote the
+comment. A run does not replace a comment a later run wrote, so a slow run for
+an older commit cannot put its verdict over a newer one. The comparison is made
+when the step reads the comments, and two runs that finish in the same second
+can still cross; the `concurrency` group in the example removes that, and saves
+the runner time. If two runs post a first comment at once, the comment exists
+twice; both are updated from then on.
+
+**Errors.** A check that ends in an error replaces the comment with one that
+says the plan was not judged, so a comment that said allow for an earlier commit
+does not stay. That covers what `plan-check` reports (an unreadable plan, a
+config error) and what fails before it runs (a missing plan or working
+directory, `terraform show` failing, a bad input). When applygate itself cannot
+be installed (a failed download or signature check) the check does not run: a
+comment an earlier run wrote is changed to say so, and where there is none, none
+is made. One case is left: a job that fails before it reaches the action (the
+plan step itself, say) does not run the action, and the comment keeps the
+verdict of the last run that did. The failed job is what shows it.
+
+**The check does not change.** `plan-check` runs once, as without the comment,
+and with `--comment-file` writes the comment beside the output it always
+printed; the verdict, the outputs and the exit code are the same. When the
+comment cannot be written the step says why and the job goes on:
+
+- the run is not for a pull request (a push, a schedule): nothing is posted;
+- the token cannot comment: the job lacks `pull-requests: write`, or the pull
+  request comes from a fork, where GitHub makes the token of a `pull_request`
+  run read-only whatever the workflow asks;
+- the installed release cannot write a comment (`version` set to v0.6.1 or
+  earlier), or `gh` is not on a self-hosted runner.
+
+The action uses the job's `github.token` for this and takes no other token. It
+reads the pull request from `pull_request` and `pull_request_target` events.
+
+**Untrusted text.** Everything in the comment that comes from the plan or the
+repository (resource addresses, the rules' evidence, environment names, paths)
+is untrusted. It is written only inside code spans, on one line, with control
+and direction characters removed, so a resource named to look like a link, a
+mention, a heading or HTML shows as its characters. A value longer than 300
+bytes is cut in its middle: the end of an address, which names the resource and
+says what happens to it, stays however long a module path or a `for_each` key
+is. The text is the one the job log already has: resource addresses, attribute
+names and the rules' wording. The plan check quotes no attribute values apart
+from the action names of an IAM policy it flags and the name of a state bucket,
+and the comment adds none. The text never passes through a shell command: it
+goes from `plan-check` to a file and from the file to `gh`.
+
+**On another CI.** `COMMENT_FILE=comment.md scripts/ci-plan-check.sh` writes the
+same Markdown to a file for your own posting step (`COMMENT_KEY` names the
+plan), and `applygate plan-check --comment-file comment.md plan.json` does it
+without the script. The two hidden lines are added by
+`scripts/ci-pr-comment.sh`, the GitHub posting step; the file has none.
 
 ## Terragrunt
 

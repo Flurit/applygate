@@ -9,26 +9,90 @@
 #   WORKDIR        directory the plan belongs to (default: .)
 #   TF_BIN         terraform or tofu, for show -json on a planfile (default: terraform)
 #   TRUST_CONFIG   true to read the repository config without a trust record (default: false)
+#   COMMENT_FILE   file to write the verdict to as the Markdown of a pull-request comment
+#                  (default: none). scripts/ci-pr-comment.sh posts it on GitHub; on another
+#                  CI, post the file yourself.
+#   COMMENT        false to write no comment although COMMENT_FILE is set (default: true)
+#   COMMENT_KEY    name the comment shows for what was judged (default: WORKDIR and PLAN,
+#                  relative to GITHUB_WORKSPACE)
+#   COMMENT_COMMIT commit the plan was made from, shown in the comment (default: none)
+#   COMMENT_SCOPE  what tells this job from others of its name, such as its matrix values;
+#                  shown in the comment after the workflow and job (default: none)
 # Exit codes: 0 when the verdict passes FAIL_ON, 1 when it does not, 2 on an error.
+# The comment never changes them. plan-check runs once: with --comment-file it
+# writes the comment beside the output it always printed. A release without
+# that flag (v0.6.1 and before) is run as before, without a comment.
 set -euo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/ci-comment-key.sh"
 bin=${APPLYGATE_BIN:-applygate}
-plan=${PLAN:?PLAN is required}
+plan=${PLAN:-}
 tier=${TIER:-}
 fail_on=${FAIL_ON:-block}
 workdir=${WORKDIR:-.}
 tf=${TF_BIN:-terraform}
-case "$fail_on" in block|ask|never) ;; *) echo "FAIL_ON must be block, ask or never, not '$fail_on'" >&2; exit 2 ;; esac
 
-cd "$workdir"
-[ -f "$plan" ] || { echo "plan file not found: $plan (in $(pwd))" >&2; exit 2; }
+comment_file=${COMMENT_FILE:-}
+case "${COMMENT:-true}" in
+    true) ;;
+    false) comment_file="" ;;
+    *) echo "COMMENT must be true or false, not '$COMMENT'" >&2; exit 2 ;;
+esac
+# The arguments that make plan-check write the comment; none when no comment
+# is asked for or this applygate cannot write one.
+cargs=()
+if [ -n "$comment_file" ]; then
+    case "$comment_file" in /* | [A-Za-z]:[\\/]*) ;; *) comment_file="$(pwd)/$comment_file" ;; esac
+    # A file an earlier step left is not this run's verdict.
+    rm -f "$comment_file"
+    help=$("$bin" plan-check -h 2>&1 || true)
+    case "$help" in
+        *-comment-file*)
+            cargs=(--comment-file "$comment_file" --comment-key "$(comment_key)")
+            if [[ "${COMMENT_COMMIT:-}" =~ ^[0-9a-fA-F]{7,64}$ ]]; then
+                cargs+=(--comment-commit "$COMMENT_COMMIT")
+            fi
+            job=${GITHUB_WORKFLOW:-}${GITHUB_WORKFLOW:+ / }${GITHUB_JOB:-}
+            case "${COMMENT_SCOPE:-}" in
+                "" | null) ;;
+                *) job="$job $(printf '%s' "$COMMENT_SCOPE" | tr -s ' \t\r\n' ' ')" ;;
+            esac
+            if [ -n "$job" ]; then
+                cargs+=(--comment-job "$job")
+            fi
+            ;;
+        *)
+            echo "applygate: no pull-request comment: this applygate cannot write one (releases up to v0.6.1); the check runs as usual"
+            comment_file=""
+            ;;
+    esac
+fi
+
+json=""
+# die MESSAGE: an error before plan-check could judge the plan. The comment
+# says so too: one that said allow for an earlier commit must not stay.
+die() {
+    echo "$1" >&2
+    if [ -n "$json" ] && [ "$json" != "$plan" ]; then
+        rm -f "$json"
+    fi
+    if [ -n "$comment_file" ]; then
+        "$bin" plan-check "${cargs[@]}" --comment-error "$1" > /dev/null 2>&1 || true
+    fi
+    exit 2
+}
+
+case "$fail_on" in block|ask|never) ;; *) die "FAIL_ON must be block, ask or never, not '$fail_on'" ;; esac
+[ -n "$plan" ] || die "PLAN is required"
+cd "$workdir" 2> /dev/null || die "working directory not found: $workdir"
+[ -f "$plan" ] || die "plan file not found: $plan (in $(pwd))"
 json=$plan
 # A saved planfile is a zip; its JSON is produced by show -json.
 if [ "$(head -c1 "$plan")" != "{" ]; then
     # A private temp file: the plan JSON holds values, and a predictable
     # name could be created by someone else first.
-    json=$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/applygate-plan.XXXXXXXX") || { echo "cannot create a temp file" >&2; exit 2; }
+    json=$(mktemp "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/applygate-plan.XXXXXXXX") || { json=""; die "cannot create a temp file"; }
     chmod 600 "$json"
-    "$tf" show -json "$plan" > "$json" || { rm -f "$json"; echo "$tf show -json failed on $plan" >&2; exit 2; }
+    "$tf" show -json "$plan" > "$json" || die "$tf show -json failed on $plan"
 fi
 
 set +e
@@ -37,9 +101,10 @@ args=(plan-check --cwd .)
 case "${TRUST_CONFIG:-false}" in
     true) args+=(--trust-config) ;;
     false | "") ;;
-    *) echo "TRUST_CONFIG must be true or false, not '$TRUST_CONFIG'" >&2; exit 2 ;;
+    *) die "TRUST_CONFIG must be true or false, not '$TRUST_CONFIG'" ;;
 esac
-out=$("$bin" "${args[@]}" "$json" 2>&1)
+# An empty array is an unset variable to the bash 3.2 of macOS.
+out=$("$bin" "${args[@]}" ${cargs[@]+"${cargs[@]}"} "$json" 2>&1)
 code=$?
 set -e
 [ "$json" != "$plan" ] && rm -f "$json"
@@ -50,7 +115,11 @@ case "$code" in
     3) verdict=block ;;
     *) verdict=error ;;
 esac
-
+# plan-check writes the comment for an error it reports itself; one it could
+# not report (it was killed, or is not there) is written here.
+if [ "$verdict" = error ] && [ -n "$comment_file" ] && [ ! -s "$comment_file" ]; then
+    "$bin" plan-check "${cargs[@]}" --comment-error "plan-check ended with exit code $code before it gave a verdict" > /dev/null 2>&1 || true
+fi
 # The output quotes the plan (resource addresses, values), which whoever
 # wrote the configuration controls: drop control characters other than
 # newline and tab, and end the multi-line output with a random delimiter

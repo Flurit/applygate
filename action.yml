@@ -35,6 +35,20 @@ inputs:
       read is the one in the checked-out commit, so on pull requests from forks it is the contributor's.
     required: false
     default: "false"
+  comment:
+    description: >-
+      Write the verdict as a comment on the pull request (true or false), one comment per plan, updated on later runs. Needs
+      "permissions: pull-requests: write" on the job. When the run is not for a pull request or the token cannot comment (a
+      pull request from a fork), the step says so and the job goes on. The verdict and the exit code are the same either way.
+    required: false
+    default: "false"
+  comment-key:
+    description: >-
+      Name shown in the comment for what was judged, in place of working-directory and plan. The comment to update is found
+      by this name together with the workflow, the job and its matrix values; set it when two steps of one job judge the same
+      plan in the same directory.
+    required: false
+    default: ""
   binary:
     description: Path to an existing applygate binary. Skips the release download; for this repository's own CI.
     required: false
@@ -96,4 +110,28 @@ runs:
         WORKDIR: ${{ inputs.working-directory }}
         TRUST_CONFIG: ${{ inputs.trust-config }}
         TF_BIN: ${{ inputs.terraform }}
+        COMMENT: ${{ inputs.comment }}
+        COMMENT_KEY: ${{ inputs.comment-key }}
+        COMMENT_FILE: ${{ runner.temp }}/applygate-pr-comment.md
+        COMMENT_COMMIT: ${{ github.event.pull_request.head.sha }}
+        COMMENT_SCOPE: ${{ toJSON(matrix) }}
       run: "${{ github.action_path }}/scripts/ci-plan-check.sh"
+    # After the check whatever its result, so a blocked plan gets its comment
+    # before the job fails, and also when the check did not run because
+    # applygate could not be installed: a comment that says allow must not
+    # stay then. The token is given to this step only, and the comment's text
+    # reaches gh as a file, never as part of a command.
+    - name: Comment on the pull request
+      if: ${{ !cancelled() && inputs.comment == 'true' }}
+      shell: bash
+      env:
+        COMMENT_FILE: ${{ runner.temp }}/applygate-pr-comment.md
+        CHECK_OUTCOME: ${{ steps.check.outcome }}
+        PLAN: ${{ inputs.plan }}
+        WORKDIR: ${{ inputs.working-directory }}
+        COMMENT_KEY: ${{ inputs.comment-key }}
+        COMMENT_SCOPE: ${{ toJSON(matrix) }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        GH_TOKEN: ${{ github.token }}
+      run: "${{ github.action_path }}/scripts/ci-pr-comment.sh"
