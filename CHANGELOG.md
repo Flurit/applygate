@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **The Action can write its verdict on the pull request.** With `comment: true` (off by default) the plan check's verdict, the tier and environment it was judged in, and the reasons appear as a comment on the pull request, with the destroyed or replaced stateful resources first and long lists in a collapsed block. There is one comment per plan (working directory, plan and Terraform workspace, or a `comment-key` you choose), updated in place on later runs, so a fixed plan turns its block into an allow. The job needs `permissions: pull-requests: write`; when the run is not for a pull request, or the token cannot comment (a pull request from a fork, a missing permission), the step says so and the job goes on. The verdict, the outputs and the exit code do not change. Text from the plan is written only inside code spans and never passes through a shell command. `applygate plan-check --format comment` prints the same Markdown for other CI systems ([docs/ci.md](docs/ci.md#a-comment-on-the-pull-request)).
+
 ## v0.6.1 (2026-11-15)
 
 A new command, `applygate scan`, and documentation. No rule, verdict, tier or default changed: the hook decides every call as v0.6.0 does, and the scenario pack gives the same results. Nothing needs doing when upgrading from v0.6.0, except for the Claude Code plugin's pinned binary ([docs/upgrading.md](docs/upgrading.md)).

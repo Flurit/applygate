@@ -60,7 +60,7 @@ second pair of eyes; `fail-on: never` turns the step into a report, useful
 while a team is still tuning its config. An error (unreadable plan, config
 error, missing binary) always fails the job: the gate fails closed.
 
-Inputs: `plan` (required), `tier`, `fail-on`, `working-directory`,
+Inputs: `plan` (required), `tier`, `fail-on`, `working-directory`, `comment` and `comment-key` ([below](#a-comment-on-the-pull-request)),
 `terraform` (`tofu` for OpenTofu), `trust-config` (read the repository's
 `.applygate.yaml`, default false), `version` (a release tag such as v0.6.1,
 the default; anything else is an error), and `binary` to skip the download and
@@ -90,6 +90,95 @@ terraform show -json tfplan > tfplan.json
 applygate plan-check --cwd . tfplan.json; rc=$?
 case $rc in 0) ;; 4) echo "needs review" ;; 3) exit 1 ;; *) exit 1 ;; esac
 ```
+
+## A comment on the pull request
+
+With `comment: true` the action also writes the verdict on the pull request, so
+a reviewer sees it beside the diff and next to what Sentinel, OPA or a branch
+policy report, without opening the job log. It is off by default, because it
+needs a permission the check itself does not:
+
+```yaml
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # for the comment only
+    steps:
+      # checkout, setup-terraform and terraform plan as above
+      - uses: Flurit/applygate@v0.6.1
+        with:
+          plan: tfplan
+          working-directory: envs/prod
+          comment: true
+```
+
+The input and the comment format are in the release after v0.6.1.
+
+What the comment says: the verdict (allow, ask, block, or error when the plan
+could not be judged), the plan, the tier and the environment it resolved from,
+and the reasons, with the destroyed or replaced stateful resources first. Each
+reason lists up to five resources; longer lists, and what was found but did not
+decide the verdict, are in a collapsed block. A plan with thousands of changes
+still gives a short comment, cut to fit GitHub's size limit with the rest left
+to the job log. A check that ends in an error updates the comment to say so,
+so one that said allow for an earlier commit does not stay.
+
+> ### applygate plan check: ⛔ block
+>
+> Plan `envs/prod/tfplan` · environment `prod` (`path envs/prod/**`) · tier **protected** · 2 changes, 1 destroyed, 0 replaced
+>
+> The rules for a protected tier say this plan should not be applied as it is.
+>
+> **Why block**
+>
+> - **critical** plan destroys or replaces stateful resources (`stateful-destroyed`)
+>   - `aws_db_instance.main (aws_db_instance) is destroyed`
+> - A protected tier blocks any destroy or replace; this plan has 1 (1 named above)
+> - **critical** plan removes data protection (`protection-removed`)
+>   - `aws_db_instance.main: final snapshot skipped while it is being deleted`
+
+One comment per plan. The comment starts with a hidden marker made from
+`working-directory`, `plan` and the Terraform workspace, and a later run for the
+same three updates that comment instead of adding one; a plan that is fixed
+turns its block into an allow in place. Two steps that share all three (a
+matrix that differs only in variables, say) would overwrite each other's
+comment: give each a `comment-key`, which replaces the directory and plan in
+the marker and is the name the comment shows. Only a comment written by the
+workflow's own token (`github-actions[bot]`) is updated.
+
+The comment does not change the check. The verdict, the outputs and the exit
+code are those of the run without it: the comment comes from a second run of
+`plan-check` on the same JSON that only formats, and it is dropped when that
+run does not end as the check did. When the comment cannot be written the step
+says why and the job goes on:
+
+- the run is not for a pull request (a push, a schedule): nothing is posted;
+- the token cannot comment: the job lacks `pull-requests: write`, or the pull
+  request comes from a fork, where GitHub makes the token of a `pull_request`
+  run read-only whatever the workflow asks;
+- the installed release has no comment format (`version` set to v0.6.1 or
+  earlier), or `gh` is not on a self-hosted runner.
+
+The action uses the job's `github.token` for this and takes no other token. It
+reads the pull request from `pull_request` and `pull_request_target` events.
+
+Everything in the comment that comes from the plan or the repository (resource
+addresses, the rules' evidence, environment names, paths) is untrusted text. It
+is written only inside code spans, on one line, with control and direction
+characters removed, so a resource named to look like a link, a mention, a
+heading or HTML shows as its characters. The text is the one the job log
+already has: resource addresses, attribute names and the rules' wording. The
+plan check quotes no attribute values apart from the action names of an IAM
+policy it flags and the name of a state bucket, and the comment adds none. The
+text never passes through a shell command: it goes from `plan-check` to a file
+and from the file to `gh`.
+
+On another CI, `COMMENT_FILE=comment.md scripts/ci-plan-check.sh` writes the
+same Markdown to a file for your own posting step (`COMMENT_KEY` names it), and
+`applygate plan-check --format comment --comment-key NAME plan.json` prints it.
+`scripts/ci-pr-comment.sh` is the GitHub posting step.
 
 ## Terragrunt
 

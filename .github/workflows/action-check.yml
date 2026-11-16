@@ -3,6 +3,12 @@ name: action-check
 # Exercises action.yml against this commit's own binary with the two real
 # AWS-provider plans kept under review/real_plan, so a change to the action
 # or to plan-check shows up here.
+#
+# Three steps ask for the pull-request comment (comment: true) while the job
+# has no pull-requests: write, so each run takes the path where the Action
+# cannot comment: on a push there is no pull request, on a pull request the
+# token is refused. The verdicts, the outputs and the failing step must be
+# what they are without the comment.
 
 on:
   push:
@@ -31,6 +37,7 @@ jobs:
           tier: protected
           fail-on: never
           binary: bin/applygate
+          comment: true
       - name: destructive plan in a standard tier asks
         id: asked
         uses: ./
@@ -47,12 +54,17 @@ jobs:
           tier: standard
           fail-on: block
           binary: bin/applygate
+          comment: true
+          comment-key: create plan, standard tier
       - name: assert verdicts
         run: |
           test "${{ steps.blocked.outputs.verdict }}" = block
           test "${{ steps.blocked.outputs.exit-code }}" = 3
           test "${{ steps.asked.outputs.verdict }}" = ask
           test "${{ steps.allowed.outputs.verdict }}" = allow
+          test "${{ steps.allowed.outputs.exit-code }}" = 0
+          test "${{ steps.blocked.outcome }}" = success
+          test "${{ steps.allowed.outcome }}" = success
       - name: fail-on block really fails
         id: mustfail
         continue-on-error: true
@@ -61,4 +73,15 @@ jobs:
           plan: review/real_plan/delete_real_shape.show.json
           tier: protected
           binary: bin/applygate
+          comment: true
       - run: test "${{ steps.mustfail.outcome }}" = failure
+      - name: a comment value that is not true or false is an error
+        id: badcomment
+        continue-on-error: true
+        uses: ./
+        with:
+          plan: review/real_plan/create.show.json
+          tier: standard
+          binary: bin/applygate
+          comment: sometimes
+      - run: test "${{ steps.badcomment.outcome }}" = failure

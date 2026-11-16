@@ -24,8 +24,10 @@ import (
 	"github.com/Flurit/applygate/internal/decisionlog"
 	"github.com/Flurit/applygate/internal/hook"
 	"github.com/Flurit/applygate/internal/judge"
+	"github.com/Flurit/applygate/internal/plancomment"
 	"github.com/Flurit/applygate/internal/plangate"
 	"github.com/Flurit/applygate/internal/policy"
+	"github.com/Flurit/applygate/internal/preflight"
 	"github.com/Flurit/applygate/internal/shell"
 	"github.com/Flurit/applygate/internal/telemetry"
 )
@@ -40,8 +42,9 @@ Usage:
                                       dry-run a command through the policy (and the judge, if on)
   applygate explain [--cwd DIR] [--dir-unknown] [--agent NAME] [--no-judge] [--plan-json F=J] "<command>"
                                       show the parse, classification and decision trace
-  applygate plan-check [--tier T] [--cwd DIR] <plan.json>
-                                      evaluate "terraform show -json" output
+  applygate plan-check [--tier T] [--cwd DIR] [--format comment] <plan.json>
+                                      evaluate "terraform show -json" output; --format comment
+                                      writes the verdict as the Markdown of a pull-request comment
   applygate apply [--cwd DIR] [--engine terraform|tofu] <planfile> [args]
                                       judge a saved plan as the hooks would, confirm an ask by typing the
                                       environment name, then run the engine's apply (the human door)
@@ -355,60 +358,110 @@ func cmdPlanCheck(args []string, stdout, stderr io.Writer) int {
 	tier := fs.String("tier", "", "tier to evaluate for (default: resolved from --cwd)")
 	cwd := fs.String("cwd", "", "directory for tier and backend resolution (default: current)")
 	trustConfig := fs.Bool("trust-config", false, "read the repository's .applygate.yaml without a trust record, for CI, where the checked-out commit is the reviewed config")
+	format := fs.String("format", "text", "text, or comment: the verdict as the Markdown of a pull-request comment")
+	commentKey := fs.String("comment-key", "", "with --format comment: a name for what is judged, which with the workspace identifies the comment (default: the plan's path)")
+	commentCommit := fs.String("comment-commit", "", "with --format comment: the commit the plan was made from, shown in the comment")
+	commentError := fs.String("comment-error", "", "with --format comment: write the comment for a check that failed with this message before plan-check ran, and exit 2")
 	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	comment := *format == "comment"
+	switch {
+	case *format != "text" && !comment:
+		fmt.Fprintf(stderr, "unknown format %q: use text or comment\n", *format)
+		return 2
+	case !comment && (*commentKey != "" || *commentCommit != "" || *commentError != ""):
+		fmt.Fprintln(stderr, "--comment-key, --comment-commit and --comment-error need --format comment")
+		return 2
+	case *commentCommit != "" && !plancomment.ValidCommit(*commentCommit):
+		fmt.Fprintln(stderr, "--comment-commit is not a commit hash")
 		return 2
 	}
 	if *trustConfig {
 		config.TrustAll = true
-	}
-	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "expected a plan JSON file (terraform show -json tfplan > plan.json)")
-		return 2
-	}
-	js, err := os.ReadFile(fs.Arg(0))
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
 	}
 	dir := *cwd
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
 	dir, _ = filepath.Abs(dir)
+	// What the comment is about is known before the plan is read, so a
+	// check that fails still writes the comment a later run replaces.
+	ci := plancomment.Input{Key: *commentKey, Commit: *commentCommit, Version: hook.Version}
+	if comment {
+		ci.Workspace = preflight.Workspace(dir, hook.EnvMap())
+		if ci.Key == "" {
+			ci.Key = fs.Arg(0)
+		}
+	}
+	// fail reports an error; in the comment format the comment says the
+	// plan was not judged, so one that said allow does not stay.
+	fail := func(msg string) int {
+		fmt.Fprintln(stderr, msg)
+		if comment {
+			ci.Err = msg
+			io.WriteString(stdout, plancomment.Render(ci))
+		}
+		return 2
+	}
+	if comment && *commentError != "" {
+		return fail(*commentError)
+	}
+	if fs.NArg() != 1 {
+		return fail("expected a plan JSON file (terraform show -json tfplan > plan.json)")
+	}
+	js, err := os.ReadFile(fs.Arg(0))
+	if err != nil {
+		return fail(err.Error())
+	}
 	cfg, err := config.Load(config.UserPath(), dir)
 	if err != nil {
-		fmt.Fprintln(stderr, "config error:", err)
-		return 2
+		return fail("config error: " + err.Error())
 	}
 	t := config.Tier(*tier)
 	switch t {
 	case "", config.Protected, config.Standard, config.Disposable:
 	default:
-		fmt.Fprintf(stderr, "unknown tier %q: use protected, standard or disposable\n", t)
-		return 2
+		return fail(fmt.Sprintf("unknown tier %q: use protected, standard or disposable", t))
 	}
 	// The tier comes from the same signals the hook reads: the path, the
 	// workspace and the backend.
 	sig, be := policy.DirSignals(dir, hook.EnvMap())
+	ci.TierSet = t != ""
 	if t == "" {
-		t = cfg.Resolve(sig).Tier
+		r := cfg.Resolve(sig)
+		t = r.Tier
+		ci.Env = r.Env
+		for _, m := range r.Matched {
+			// The config's path patterns are absolute once loaded; the
+			// comment shows them as the config writes them.
+			if cfg.Root != "" {
+				m = strings.ReplaceAll(m, filepath.ToSlash(cfg.Root)+"/", "")
+			}
+			ci.Matched = append(ci.Matched, m)
+		}
 	}
+	ci.Tier, ci.Untrusted = t, cfg.Untrusted
 	res, err := plangate.Evaluate(plangate.Input{PlanJSON: js, MaxDestroy: cfg.MaxDestroy(t), Scope: cfg.PlanGate.Scope, Protected: cfg.ProtectedResources, Backend: be}, plangate.DefaultRules())
 	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 2
+		return fail(err.Error())
 	}
 	v := policy.SavedPlanVerdict(res, t)
-	fmt.Fprintf(stdout, "tier %s: %s (%d changes, %d deletes, %d replaces)\n", t, v, res.Changes, len(res.Deletes), len(res.Replaces))
-	for _, u := range cfg.Untrusted {
-		// Say so: the config's environments and protected_resources are
-		// not applied, and every directory is protected.
-		fmt.Fprintf(stdout, "- note: %s is not trusted, so it was not read and the tier is protected; trust it with applygate trust, or in CI pass --trust-config\n", u)
-	}
-	for _, f := range res.Findings {
-		fmt.Fprintf(stdout, "- %s %s: %s\n", f.Severity, f.Rule, f.Message)
-		for _, e := range f.Evidence {
-			fmt.Fprintf(stdout, "    %s\n", e)
+	if comment {
+		ci.Verdict, ci.Result = v, res
+		io.WriteString(stdout, plancomment.Render(ci))
+	} else {
+		fmt.Fprintf(stdout, "tier %s: %s (%d changes, %d deletes, %d replaces)\n", t, v, res.Changes, len(res.Deletes), len(res.Replaces))
+		for _, u := range cfg.Untrusted {
+			// Say so: the config's environments and protected_resources are
+			// not applied, and every directory is protected.
+			fmt.Fprintf(stdout, "- note: %s is not trusted, so it was not read and the tier is protected; trust it with applygate trust, or in CI pass --trust-config\n", u)
+		}
+		for _, f := range res.Findings {
+			fmt.Fprintf(stdout, "- %s %s: %s\n", f.Severity, f.Rule, f.Message)
+			for _, e := range f.Evidence {
+				fmt.Fprintf(stdout, "    %s\n", e)
+			}
 		}
 	}
 	switch v {

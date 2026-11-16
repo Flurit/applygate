@@ -10,7 +10,7 @@
 | `applygate trust` | Review and trust this repository's `.applygate.yaml`; until then it is not read and every directory is protected |
 | `/usr/bin/sudo /path/to/applygate install --managed --exclusive` | Root-owned install the agent's user cannot change ([managed.md](managed.md)) |
 | `applygate approve [ID]` | Allow once a call an agent was stopped on because it could not ask you; without ID, list pending requests |
-| `applygate plan-check plan.json` | Judge `terraform show -json` output |
+| `applygate plan-check plan.json` | Judge `terraform show -json` output; `--format comment` prints the verdict as the Markdown of a pull-request comment ([ci.md](ci.md#a-comment-on-the-pull-request)) |
 | `applygate scan [--days N] [--dir DIR] [--boundary] [--share]` | What your agents can reach (the boundary checks; `--boundary` adds the credential audit), and what applygate would decide on the calls Claude Code and Codex already made, read from their session files; no hook needed, nothing is run. `--share` prints counts only ([scan.md](scan.md)) |
 | `applygate report` / `suggest` | Summarize the decision log / propose a config from it |
 | `applygate doctor` | Check config, hooks and versions |
