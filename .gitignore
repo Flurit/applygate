@@ -1,5 +1,6 @@
 /bin/
 /dist/
+/applygate
 *.test
 *.out
 replay.md
