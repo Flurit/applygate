@@ -1,0 +1,89 @@
+name: pr-comment-live-test
+
+# Throwaway, for one pull request that is never merged: runs the Action with
+# comment: true and pull-requests: write, so the comment is posted for real.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go build -trimpath -o bin/applygate ./cmd/applygate
+      - name: block (the step fails after the comment is posted)
+        id: blocked
+        continue-on-error: true
+        uses: ./
+        with:
+          plan: review/real_plan/delete_real_shape.show.json
+          tier: protected
+          binary: bin/applygate
+          comment: true
+      - name: allow, with a comment-key
+        id: allowed
+        uses: ./
+        with:
+          plan: review/real_plan/create.show.json
+          tier: standard
+          binary: bin/applygate
+          comment: true
+          comment-key: create plan (standard tier)
+      - name: a plan with hostile resource names
+        run: |
+          python3 - <<'PY'
+          import json
+          names = [
+              'aws_db_instance.a["](https://example.com/x) @ghost #1 <script>alert(1)</script>"]',
+              'aws_db_instance.b["`](https://example.com/y)`"]',
+              'aws_db_instance.c["```\\n### not a heading ``"]',
+              'aws_db_instance.d["x\n\n### injected heading\n\n- [ ] task @ghost"]',
+              'aws_db_instance.e["--> </details> <details open><summary>x</summary> <!-- "]',
+              'aws_db_instance.f["![img](https://example.com/t.png) <img src=x onerror=alert(1)>"]',
+              'aws_db_instance.g["‮gnp.exe​ www.example.com :tada: Flurit/applygate#1"]',
+              'aws_db_instance.h["::error::not an annotation"]',
+          ]
+          rcs = [{"address": n, "mode": "managed", "type": "aws_db_instance", "name": "x",
+                  "change": {"actions": ["delete", "create"], "before": {}, "after": {}}} for n in names]
+          json.dump({"format_version": "1.2", "planned_values": {}, "resource_changes": rcs},
+                    open("hostile.json", "w"))
+          PY
+      - name: hostile names, standard tier
+        id: hostile
+        uses: ./
+        with:
+          plan: hostile.json
+          tier: standard
+          fail-on: never
+          binary: bin/applygate
+          comment: true
+      - name: a file that is not a plan (error)
+        id: errored
+        continue-on-error: true
+        uses: ./
+        with:
+          plan: go.sum
+          tier: standard
+          binary: bin/applygate
+          comment: true
+      - name: outcomes are those of the check
+        run: |
+          test "${{ steps.blocked.outcome }}" = failure
+          test "${{ steps.blocked.outputs.verdict }}" = block
+          test "${{ steps.blocked.outputs.exit-code }}" = 3
+          test "${{ steps.allowed.outcome }}" = success
+          test "${{ steps.allowed.outputs.verdict }}" = allow
+          test "${{ steps.hostile.outputs.verdict }}" = ask
+          test "${{ steps.errored.outcome }}" = failure
