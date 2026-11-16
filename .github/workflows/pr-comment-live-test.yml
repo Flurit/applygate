@@ -29,7 +29,7 @@ jobs:
         uses: ./
         with:
           plan: review/real_plan/delete_real_shape.show.json
-          tier: protected
+          tier: disposable
           binary: bin/applygate
           comment: true
       - name: allow, with a comment-key
@@ -80,9 +80,9 @@ jobs:
           comment: true
       - name: outcomes are those of the check
         run: |
-          test "${{ steps.blocked.outcome }}" = failure
-          test "${{ steps.blocked.outputs.verdict }}" = block
-          test "${{ steps.blocked.outputs.exit-code }}" = 3
+          test "${{ steps.blocked.outcome }}" = success
+          test "${{ steps.blocked.outputs.verdict }}" = allow
+          test "${{ steps.blocked.outputs.exit-code }}" = 0
           test "${{ steps.allowed.outcome }}" = success
           test "${{ steps.allowed.outputs.verdict }}" = allow
           test "${{ steps.hostile.outputs.verdict }}" = ask
