@@ -2,6 +2,12 @@
 
 What to do when you upgrade from an earlier release. Every change is in [CHANGELOG.md](../CHANGELOG.md).
 
+## To v0.6.3
+
+Nothing to do when you come from v0.6.0, v0.6.1 or v0.6.2. v0.6.3 reorganises the documentation and tidies the code; it changes no rule, verdict or default, and hooks, configs and trust carry over as they are. The plugin exception under v0.6.1 below holds here too.
+
+- **Links into the docs may need updating.** `docs/migration.md` is now the last section of this page, the corpus trial is `review/oss-corpus/trial.md`, and the records that were under `docs/project/` are in `review/`. [limits.md](limits.md) has new headings, by topic.
+
 ## To v0.6.2
 
 Nothing to do when you come from v0.6.0 or v0.6.1. v0.6.2 adds the Action's pull-request comment ([ci.md](ci.md#a-comment-on-the-pull-request)) and changes no rule, verdict or default; hooks, configs and trust carry over as they are. The plugin exception under v0.6.1 below holds here too.
