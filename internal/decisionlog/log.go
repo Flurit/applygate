@@ -196,7 +196,7 @@ func RedactJSONCut(raw string, max int) string {
 
 // maxField caps a text field of a log entry, and maxRedact the text one
 // entry redacts in all: redacting megabytes of command text would take
-// seconds the hook does not have (4H3), and one call must not fill the log.
+// seconds the hook does not have, and one call must not fill the log.
 const (
 	maxField  = 64 << 10
 	maxRedact = 512 << 10

@@ -150,7 +150,7 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 	}
 	js, err := deps.PlanJSON(a.Engine, a.Dir, a.PlanFile)
 	if err != nil {
-		// F10: distinguish a plan file that simply does not exist from one that
+		// Distinguish a plan file that simply does not exist from one that
 		// exists but cannot be read. A missing file means there is nothing to
 		// apply, so it is High (protected tier asks) rather than Critical
 		// (block). An existing-but-unreadable plan stays Critical: applygate

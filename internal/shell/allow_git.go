@@ -2,9 +2,9 @@ package shell
 
 import "strings"
 
-// Stage 6a: git by subcommand, each with the options it may be given, by exact
-// name. This replaces gitSubs (a subcommand list) and gitDeny (a list of the
-// options that run a program), which lost to every option nobody listed.
+// git by subcommand, each with the options it may be given, by exact name.
+// A list of the options that run a program loses to every option nobody
+// listed, so the options that are understood are listed instead.
 //
 // What the lists leave out, on purpose, for every subcommand:
 //   - options that run a program: --ext-diff, --textconv, --filters, --exec,

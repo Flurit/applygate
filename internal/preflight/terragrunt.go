@@ -9,7 +9,7 @@ import (
 )
 
 // Terragrunt is what a unit's terragrunt.hcl says about where it runs: the
-// remote_state values and the terraform.source (4H12).
+// remote_state values and the terraform.source.
 type Terragrunt struct {
 	// Backend are the remote_state config values. A value built with
 	// Terragrunt functions keeps its literal parts

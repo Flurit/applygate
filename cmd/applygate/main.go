@@ -236,7 +236,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) (code int) 
 		return 2
 	}
 	// check keeps its own judge cache: what it is asked must never decide
-	// what the hook serves (review finding A13).
+	// what the hook serves.
 	opt := hook.Options{Env: hook.EnvMap(), JudgeCache: strings.TrimSuffix(config.JudgeCachePath(), ".json") + "-check.json"}
 	if len(planJSON) > 0 {
 		m := map[string]string{}
@@ -292,7 +292,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, explain bool) (code int) 
 	d := policy.Decide(ev, cfg, deps)
 	// The judge answers check only for a person at a terminal: an agent
 	// that ran check could probe the user's judge, with the user's key,
-	// for a wording it allows (finding 2M23).
+	// for a wording it allows.
 	if !*noJudge && cfg.JudgeOn() && !isTerminal(os.Stdin) {
 		*noJudge = true
 		fmt.Fprintln(stderr, "applygate: the model judge is not asked: check asks it only at a terminal")

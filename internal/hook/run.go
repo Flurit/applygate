@@ -214,7 +214,7 @@ func Deps(ctx context.Context, cfg *config.Config, opt Options) policy.Deps {
 	}
 	if !opt.NoGit {
 		// One git check per directory: a command with hundreds of destroys
-		// in one directory used to run it per action (finding I6).
+		// in one directory would otherwise run it per action.
 		var mu sync.Mutex
 		seen := map[string]*preflight.Finding{}
 		d.Lockfile = func(dir string) *preflight.Finding {

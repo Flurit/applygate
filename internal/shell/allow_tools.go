@@ -2,8 +2,8 @@ package shell
 
 import "strings"
 
-// Stage 2 of the allow-list (review/v0.6.0/2026-11-05-allow-list-plan.md): the
-// programs that had a deny list of options, now an exact list of what is
+// The download, archive and text tools (curl, wget, zip, yq, rg, printf,
+// tflint, actionlint), each with an exact list of the options that are
 // understood. Where an option writes a file, the analysis judges that write
 // itself only for the options in writes; every other output option is absent.
 

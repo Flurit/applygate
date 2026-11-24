@@ -5,6 +5,20 @@ import (
 	"testing"
 )
 
+// Regression tests for defects found in security reviews, by topic.
+
+// A promisor remote makes a local read fetch from the network.
+func TestGitSafeKeyPartialClone(t *testing.T) {
+	for _, k := range []string{"remote.origin.promisor", "remote.origin.partialclonefilter", "extensions.partialclone"} {
+		if GitSafeKey(k, "true", false) {
+			t.Errorf("%s is on the safe list", k)
+		}
+	}
+	if !GitSafeKey("extensions.worktreeconfig", "true", false) {
+		t.Error("extensions.worktreeConfig should stay safe")
+	}
+}
+
 func analyze(cmd, dir string) *Result {
 	return Analyze(cmd, Options{Dir: dir, Env: map[string]string{"HOME": "/home/u"}, ReadFile: func(string) ([]byte, error) { return nil, errNone{} }})
 }

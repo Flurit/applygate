@@ -255,7 +255,7 @@ func translateOne(s Server, tl Tool, tool string, args map[string]any, parseErr 
 			for i, c := range cmds {
 				// The server splits the words itself, with shell quoting but
 				// no shell: a newline or ; is a space or an argument there,
-				// so the command is judged as the one argv it becomes (4M1).
+				// so the command is judged as the one argv it becomes.
 				f, why := splitWords(c)
 				if why != "" {
 					r.Command = unresolved(tool, "the server splits "+quote(c)+" into words itself, and "+why)

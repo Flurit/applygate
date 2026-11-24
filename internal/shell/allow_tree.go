@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Stage 6 of the allow-list: programs with subcommands, where each subcommand
+// Programs with subcommands, where each subcommand
 // has its own exact option list (git, docker, gh and the policy scanners).
 // A tree reads the program's global options, takes the first word that is not
 // an option as the subcommand, and checks the rest against that subcommand's

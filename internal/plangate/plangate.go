@@ -43,8 +43,8 @@ type Protection struct {
 }
 
 // dbWithFinalSnapshot is the set of resource types that have both
-// deletion_protection and skip_final_snapshot, so the narrowed F11 create rule
-// (both safeguards off at once) applies to them.
+// deletion_protection and skip_final_snapshot, so the create rule (both
+// safeguards off at once) applies to them.
 var dbWithFinalSnapshot = map[string]bool{
 	"aws_db_instance":     true,
 	"aws_rds_cluster":     true,
@@ -189,7 +189,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 				crit(&protection, rc.Address+": "+pr.What+" (the setting is removed, so the provider's default applies)")
 			}
 		}
-		// F11 (narrowed): a database created with no safety net at all —
+		// A database created with no safety net at all —
 		// deletion protection off AND the final snapshot skipped — is High, so
 		// a protected tier asks. A create with only one safeguard off (e.g.
 		// protection off but a final snapshot kept) is allowed and recorded as
@@ -404,7 +404,7 @@ var exposureAttrs = map[string][]string{
 	"aws_secretsmanager_secret_policy":    {"policy"},
 	"aws_lambda_permission":               {"principal"},
 	"aws_lambda_function_url":             {"authorization_type"},
-	// 4H14: every type exposed reads.
+	// Every type exposed reads.
 	"aws_default_security_group":      {"ingress"},
 	"aws_db_instance":                 {"publicly_accessible"},
 	"aws_rds_cluster_instance":        {"publicly_accessible"},
@@ -415,7 +415,7 @@ var exposureAttrs = map[string][]string{
 	"aws_iam_user_policy_attachment":  {"policy_arn"},
 	"aws_iam_group_policy_attachment": {"policy_arn"},
 	"aws_iam_policy_attachment":       {"policy_arn"},
-	// Round 7: the policy attribute of the OpenSearch and Elasticsearch
+	// The policy attribute of the OpenSearch and Elasticsearch
 	// domains is access_policies; attachment sets, SSO and sharing.
 	"aws_opensearch_domain":                      {"access_policies"},
 	"aws_elasticsearch_domain":                   {"access_policies"},

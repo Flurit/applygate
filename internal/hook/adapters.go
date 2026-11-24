@@ -372,7 +372,7 @@ const maxMCPArgs = 4096
 
 // mcpArguments is an MCP call's tool_input as compact JSON for the log,
 // redacted and capped at maxMCPArgs bytes, with bounded work however large
-// the input (4H3).
+// the input.
 func mcpArguments(raw json.RawMessage) string {
 	var buf bytes.Buffer
 	if json.Compact(&buf, raw) != nil {

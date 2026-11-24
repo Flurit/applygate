@@ -1166,7 +1166,7 @@ func terragruntDir(a *Action, args []shell.Word) []shell.Word {
 	}
 	// --config names the terragrunt.hcl to run. Terraform still runs in the
 	// working directory, so the call is judged in both: a config in prod is
-	// prod's, and a dev config does not make a prod directory dev (4H26).
+	// prod's, and a dev config does not make a prod directory dev.
 	var config *shell.Word
 	setConfig := func(w shell.Word) { config = &w }
 	for _, k := range []string{"TERRAGRUNT_WORKING_DIR", "TG_WORKING_DIR"} {
@@ -1180,7 +1180,7 @@ func terragruntDir(a *Action, args []shell.Word) []shell.Word {
 		}
 	}
 	// --source replaces the unit's terraform.source: the configuration
-	// that runs, and its backend block, come from there (4H12).
+	// that runs, and its backend block, come from there.
 	setSource := func(w shell.Word) {
 		if !w.Resolved || w.Text == "" {
 			a.SourceUnknown = true

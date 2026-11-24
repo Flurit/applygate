@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+// Regression tests for defects found in security reviews, by topic.
+
 const stateBucketRepo = `version: 1
 mode: enforce
 strict: false

@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+// Regression tests for defects found in security reviews, by topic.
+
 // A configuration file the hook cannot read in full hides every signal in it:
 // padded past the cap, it must make the target unknown, not absent.
 func TestConfigUnreadableOversize(t *testing.T) {

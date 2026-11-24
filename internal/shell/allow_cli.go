@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// Stage 4 of the allow-list: the command-line tools whose calls have a
+// The command-line tools whose calls have a
 // subcommand, by a list of the subcommands and options that are understood.
 // Subcommands that change a cluster, an account or a state are not plain here
 // whatever their options: the classifier gives them their class, and in a

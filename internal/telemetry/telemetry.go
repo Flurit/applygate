@@ -424,7 +424,7 @@ var (
 	knownModes    = map[string]bool{"enforce": true, "observe": true}
 	knownVerdicts = map[string]bool{"allow": true, "ask": true, "block": true}
 	// A release version, with at most a standard pre-release tag: free
-	// text after the dash could carry anything (finding 2D12).
+	// text after the dash could carry anything.
 	semverRe = regexp.MustCompile(`^v?\d{1,4}\.\d{1,4}\.\d{1,4}(-(alpha|beta|rc|dev)(\.?\d{1,3})?)?$`)
 )
 

@@ -387,7 +387,7 @@ type Vars struct {
 // the configuration may change. A value that is var.NAME gives every value
 // the variable may have (-var, -var-file, TF_VAR_NAME, terraform.tfvars,
 // *.auto.tfvars, its default). Any other computed value, or a variable with
-// no value found, is unknown, and unknown says why (4H10).
+// no value found, is unknown, and unknown says why.
 func ProviderAWS(dir string, vars Vars) (profiles, roles []string, unknown string) {
 	files := parsedFiles(dir)
 	var vv *varValues
@@ -1136,7 +1136,7 @@ func BackendFromConfig(dir string, declared, recorded *Backend, configs []string
 	switch {
 	case declared != nil:
 		// A computed value in the block stays unknown: a file or pair
-		// may not set it (4H9).
+		// may not set it.
 		be.Type, be.Unreadable = declared.Type, declared.Unreadable
 		for k, v := range declared.Config {
 			be.Config[k] = v

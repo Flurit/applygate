@@ -108,7 +108,7 @@ func FindRepoConfig(dir string) string {
 // RepoConfigs returns every repository config from the outermost ancestor
 // of dir down to dir, outermost first. The ancestors are those of where dir
 // really is, after symlinks: a directory reached through a link from outside
-// the repository still gets the repository's config (4H15). Configs on the
+// the repository still gets the repository's config. Configs on the
 // path as written that are not among those follow, as nested configs that
 // may only tighten.
 func RepoConfigs(dir string) []string {
@@ -375,7 +375,7 @@ func mergeBytes(cfg *Config, path string, b []byte, l layer) error {
 	switch {
 	case l == layerUserManaged && !reflect.DeepEqual(c.Judge, Judge{}):
 		// Under a managed install the judge is the system config's: the
-		// agent's user may neither turn it off (R5-5) nor name a command
+		// agent's user may neither turn it off nor name a command
 		// for it to run.
 		ignored("judge (under a managed install it comes from the system config)")
 	case repo:

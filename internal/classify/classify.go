@@ -246,7 +246,7 @@ func Invocations(res *shell.Result, opt Options) []Action {
 	var written []string
 	// named collects the paths earlier steps name in their arguments: a
 	// program applygate does not model (aws s3 cp, scp, rclone, a script)
-	// may write any of them (4H13).
+	// may write any of them.
 	var named []string
 	// retarget holds the cluster, project or subscription an earlier step
 	// selected (kubectl config use-context, gcloud config set project, az

@@ -8,6 +8,8 @@ import (
 	"github.com/Flurit/applygate/internal/shell"
 )
 
+// Regression tests for defects found in security reviews, by topic.
+
 // state writes the layout the round-11 reproductions use: a protected
 // directory with a local state file next to a dev one.
 func round11Dirs(t *testing.T) (root string) {

@@ -248,7 +248,7 @@ func TestHangingJudgeStaysInsideTheBudget(t *testing.T) {
 // Round-2 judge findings: the judge's tier follows a cd (2M12), write
 // content past the cap is unjudgeable rather than cut (2M15), and a known
 // MCP tool's arguments reach the judge with its command (2M16).
-func TestJudgeRound2(t *testing.T) {
+func TestJudgeTierContentCapAndMCPArguments(t *testing.T) {
 	root, opt := judgeSetup(t, "enforce", "")
 	f := &fakeJudge{verdict: policy.Allow}
 	runJudged(t, Claude{}, opt, f, "Bash", filepath.Join(root, "dev"), map[string]any{"command": "cd ../prod && ./cleanup.sh --all"})

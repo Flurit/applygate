@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Stage 6b: the container, forge and policy-scanner CLIs by subcommand and
+// The container, forge and policy-scanner CLIs by subcommand and
 // option list. Each leaf names the options it understands; what is left out
 // either runs a program (docker -H ssh://, gh --web and --editor, an external
 // checks directory, a plugin), reads options from a file (trivy --config,

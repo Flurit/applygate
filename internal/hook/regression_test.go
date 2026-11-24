@@ -8,6 +8,57 @@ import (
 	"github.com/Flurit/applygate/internal/policy"
 )
 
+// Regression tests for defects found in security reviews, by topic.
+
+// A tool applygate has no table for is looked into: a command in any field
+// is judged as shell, and every other call is scanned for guard files and
+// logged. Only the host's bookkeeping tools pass unseen.
+func TestUnknownToolsAreLookedInto(t *testing.T) {
+	cases := []struct {
+		tool  string
+		input map[string]any
+		kind  policy.EventKind
+		cmd   string
+	}{
+		{"PowerShell", map[string]any{"script": "terraform destroy"}, policy.KindShell, "destroy"},
+		{"Monitor", map[string]any{"cmdline": "terraform destroy"}, policy.KindShell, "destroy"},
+		{"terminal_run", map[string]any{"cmd_text": "terraform destroy"}, policy.KindShell, "destroy"},
+		{"future_tool", map[string]any{"opts": map[string]any{"line": "kubectl delete ns prod"}}, policy.KindShell, "kubectl delete"},
+		{"save_file", map[string]any{"target": "/home/u/.claude/settings.json", "data": "{}"}, policy.KindMCP, ""},
+		{"TodoWrite", map[string]any{"todos": []any{map[string]any{"content": "run terraform destroy later"}}}, policy.KindOther, ""},
+		{"WebFetch", map[string]any{"url": "https://example.com", "prompt": "terraform destroy"}, policy.KindOther, ""},
+	}
+	for _, c := range cases {
+		ev, ok, err := Claude{}.Parse([]byte(event(c.tool, "/w", c.input)))
+		if err != nil || !ok {
+			t.Fatalf("%s: %v %v", c.tool, ok, err)
+		}
+		if ev.Kind != c.kind || c.cmd != "" && !strings.Contains(ev.Command, c.cmd) {
+			t.Errorf("%s: kind %s command %q, want %s with %q", c.tool, ev.Kind, ev.Command, c.kind, c.cmd)
+		}
+	}
+}
+
+// A program and its arguments in separate fields of a tool no table knows
+// are one command.
+func TestUnknownToolArgumentFields(t *testing.T) {
+	for _, in := range []string{
+		`{"command":"terraform","args":["destroy","-auto-approve"]}`,
+		`{"executable":"terraform","arguments":["-chdir=../prod","destroy","-auto-approve"]}`,
+		`{"program":"terraform","argv":["destroy"]}`,
+	} {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(in), &m); err != nil {
+			t.Fatal(err)
+		}
+		var ev policy.Event
+		classifyUnknown(&ev, "SomeNewTool", m)
+		if ev.Kind != policy.KindShell || !strings.Contains(ev.Command, "destroy") {
+			t.Errorf("%s: kind %v command %q", in, ev.Kind, ev.Command)
+		}
+	}
+}
+
 // An internal error must never let a command that runs an infrastructure
 // program through, whatever the on_error setting resolves to for the root.
 func TestInternalErrorFailsClosedForInfrastructureCommands(t *testing.T) {

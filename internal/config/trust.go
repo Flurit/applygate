@@ -40,7 +40,7 @@ func TrustPath() string {
 func TrustCommand() string {
 	if Managed() {
 		// The managed binary by its path: the applygate first on the
-		// agent's PATH may be one it planted (R6-4).
+		// agent's PATH may be one it planted.
 		// sudo by its path too: a sudo planted earlier on PATH would be
 		// handed the person's password.
 		if b := ManagedBinary(); b != "" {

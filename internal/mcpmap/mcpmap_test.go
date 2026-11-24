@@ -100,7 +100,7 @@ func TestTranslateEdgeCases(t *testing.T) {
 // Round-2 MCP findings without an attack-pack replay: Terragrunt's config
 // and include_dirs (2M13), a # in call_aws (2M18), tfmcp apply without a
 // plan_id (2M19).
-func TestTranslateRound2(t *testing.T) {
+func TestTranslateConfigDirsAndPlanIDs(t *testing.T) {
 	tb := Rules()
 	for _, c := range []struct{ tool, args, want string }{
 		{"mcp__tf__ExecuteTerragruntCommand", `{"command": "destroy", "working_directory": "/r/dev", "terragrunt_config": "/r/prod/terragrunt.hcl"}`, "--config=/r/prod/terragrunt.hcl"},

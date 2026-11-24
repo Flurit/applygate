@@ -51,11 +51,11 @@ type Signals struct {
 	WorkspaceUnknown string
 	// StateDirs are the directories of local state files the command
 	// reads or writes (-state=, -state-out=, a local backend's path): each
-	// brings its own directory's environment (4H11).
+	// brings its own directory's environment.
 	StateDirs []string
 	// SourceDirs are local directories the configuration that runs comes
 	// from (a terragrunt terraform.source or --source): their backend
-	// block, and so their environment, may be the one used (4H12).
+	// block, and so their environment, may be the one used.
 	SourceDirs []string
 }
 
