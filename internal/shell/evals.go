@@ -10,7 +10,7 @@ import (
 // Places where the shell evaluates text as code without a word that looks
 // like a command: arithmetic (an array subscript in it may hold a command
 // substitution that runs), builtin callbacks (mapfile -C, compgen -C) and
-// prompt variables. Round 9 found each of them; the rule is that text the
+// prompt variables. The rule is that text the
 // shell evaluates must be shown to be a number, a name or a literal command
 // the analyzer can follow, or the command is unbounded.
 

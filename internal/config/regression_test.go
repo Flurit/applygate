@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"testing"
+)
+
+// Regression tests for defects found in security reviews, by topic.
 
 func TestBackendMatchIgnoresSpelling(t *testing.T) {
 	pat := "https://gitlab.com/api/v4/projects/123/terraform/state/main"

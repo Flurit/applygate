@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestStage6Programs(t *testing.T) {
+func TestAllowListScanPrograms(t *testing.T) {
 	plain := []string{
 		"docker ps", "docker ps -a --format '{{.Names}}'", "docker images -q", "docker image ls --digests", "docker image inspect x", "docker inspect -f '{{.State}}' c", "docker logs -f --tail 20 c",
 		"docker version", "docker info", "docker context ls", "docker context show", "docker compose ps", "docker compose -f x.yml config -q", "docker compose logs --tail 5 web", "docker -H unix:///var/run/docker.sock ps",
@@ -125,7 +125,7 @@ func TestOutputOptionsStayNextToTheEntries(t *testing.T) {
 	}
 }
 
-func TestStage6Readers(t *testing.T) {
+func TestAllowListReaders(t *testing.T) {
 	plain := []string{"ls -la", "ls -lah dir", "ls -1 a b", "ls --color=auto", "ls -ltr", "ls -R .", "cat a.txt", "cat -n a b", "head -n 5 f", "head -5 f", "head -c 100 f", "tail -n +3 f", "tail -f log", "tail -n 20 f",
 		"wc -l f", "wc -lw a b", "cut -d, -f1 f", "cut -c1-5 f", "basename -s .txt a.txt", "basename a/b", "dirname a/b", "realpath .", "realpath -m x", "readlink -f a", "seq 1 10", "seq -5 5", "seq -s, 1 3",
 		`cat "$f"`, `ls "$d"`, "cat a | head -3 | wc -l"}

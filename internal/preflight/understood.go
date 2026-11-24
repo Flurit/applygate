@@ -17,8 +17,8 @@ import (
 //
 // The scans in RunsPrograms and RunsBackendPrograms are lists of things known
 // to run a program: each new file kind, option or module source that was not
-// on a list was an allow (round 9: .tfquery.hcl, -backend-config, a module
-// init fetches, graph -type=plan, a file over the size cap). Understood turns
+// on a list was an allow (.tfquery.hcl, -backend-config, a module init
+// fetches, graph -type=plan, a file over the size cap). Understood turns
 // it around. A configuration is plain only when everything it makes Terraform
 // load is both understood and pinned locally:
 //

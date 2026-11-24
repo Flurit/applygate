@@ -80,7 +80,7 @@ func TestAllowListLooseProgramsTakeVariableOperands(t *testing.T) {
 	}
 }
 
-func TestAllowListStage2(t *testing.T) {
+func TestAllowListDownloadAndTextTools(t *testing.T) {
 	plain := []string{
 		"curl -sSL https://example.com/x", "curl -fsSL -o out.sh https://example.com/x", "curl -s -H 'Accept: application/json' https://example.com",
 		"curl -X POST -d @body.json https://example.com", "curl -sS -w '%{http_code}' https://example.com", "curl -I https://example.com",
@@ -121,7 +121,7 @@ func TestAllowListStage2(t *testing.T) {
 	}
 }
 
-func TestStage3Grammars(t *testing.T) {
+func TestAllowListRedirectAndCdGrammars(t *testing.T) {
 	plain := []string{"cd dir && ls", "cd -P dir", "cd", "cd ..", "echo x > out.txt", "echo x >> out.txt", "cat < in.txt", "ls 2>&1", "ls >/dev/null 2>&1", "cat <<EOF\nhi\nEOF", `cd "$HOME"`}
 	for _, c := range plain {
 		if !plainCall(t, c) {
@@ -138,7 +138,7 @@ func TestStage3Grammars(t *testing.T) {
 	}
 }
 
-func TestStage4Verbs(t *testing.T) {
+func TestAllowListCloudVerbs(t *testing.T) {
 	plain := []string{
 		"terraform plan -input=false -out=tfplan", "terraform import a.b id", "kubectl port-forward p 80:80", "aws eks update-kubeconfig --name c", "terraform plan -var-file=prod.tfvars -var 'a=b' -target=module.x", "terraform validate -json", "terraform fmt -check -recursive",
 		"terraform -chdir=envs/dev plan -no-color", "terraform show -json tfplan", "terraform output -raw x", "terraform state list", "terraform state show aws_s3_bucket.a",

@@ -366,7 +366,7 @@ type analyzer struct {
 	// here-document body or an assignment value.
 	noGlob int
 	// written holds the paths earlier steps of the command write
-	// (written.go); writtenUnknown is set when a step writes to a path
+	// (earlierwrites.go); writtenUnknown is set when a step writes to a path
 	// that cannot be resolved.
 	written        map[string]writeKind
 	writtenUnknown bool

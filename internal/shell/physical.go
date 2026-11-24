@@ -11,7 +11,7 @@ var evalSymlinks = filepath.EvalSymlinks
 
 // PhysicalJoin joins p to dir the way the kernel resolves it: a ".." goes up
 // from where the path so far really is, after its symlinks, not from its
-// text. filepath.Join drops "m/.." even when m links to another tree (4T1).
+// text. filepath.Join drops "m/.." even when m links to another tree.
 // A path with no ".." is only cleaned, and so is one whose physical form is
 // the same place as its text; a part that does not exist is joined as text.
 func PhysicalJoin(dir, p string) string {

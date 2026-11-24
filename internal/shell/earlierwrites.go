@@ -99,7 +99,7 @@ func (a *analyzer) wrote(st *state, w Word, k writeKind) {
 
 // noteWrites records the paths a program writes.
 func (a *analyzer) noteWrites(bn string, rest []Word, st *state) {
-	// The write rules (writes.go) say which words a call writes; a path that
+	// The write rules (writerules.go) say which words a call writes; a path that
 	// is only removed or has its mode changed does not make a later read
 	// unknown.
 	for _, w := range writesOf(bn, rest) {

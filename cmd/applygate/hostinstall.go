@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -263,20 +264,11 @@ func hookBinaries(agent string, b []byte) ([]string, bool) {
 	// One file can hold an applygate entry per event (Windsurf has three).
 	var bins []string
 	for _, bin := range scan.applygateBins {
-		if !contains(bins, bin) {
+		if !slices.Contains(bins, bin) {
 			bins = append(bins, bin)
 		}
 	}
 	return bins, ok
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 func hookEntry(verb, agent, scope string, stdout, stderr io.Writer) int {

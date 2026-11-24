@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/Flurit/applygate/internal/classify"
@@ -362,7 +363,7 @@ func parseFor(agent string, raw []byte, events ...string) (policy.Event, call, b
 	if err != nil {
 		return policy.Event{}, c, false, err
 	}
-	if c.event != "" && !contains(events, c.event) {
+	if c.event != "" && !slices.Contains(events, c.event) {
 		return policy.Event{}, c, false, nil
 	}
 	if c.tool == "" {
@@ -370,15 +371,6 @@ func parseFor(agent string, raw []byte, events ...string) (policy.Event, call, b
 	}
 	ev, err := c.toEvent(agent)
 	return ev, c, err == nil, err
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // exit2 is the block every host in this file understands: exit code 2 with

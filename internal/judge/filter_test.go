@@ -90,7 +90,7 @@ func TestResidual(t *testing.T) {
 // Programs started through the environment or options, path traversal out
 // of /tmp, and paths attached to options go to the judge (findings 2M9,
 // 2M10); redaction that hides programs is caught (2M8).
-func TestRelevantRound2(t *testing.T) {
+func TestRelevantProgramsStartedByEnvOrOptions(t *testing.T) {
 	for _, c := range []struct {
 		cmd  string
 		want bool

@@ -92,7 +92,7 @@ func (p *prog) check(name string, args []Word) string {
 }
 
 // parsed is a plain call as the matcher read it: its operands and the
-// values of its options. The write rules (writes.go) read it, so a path the
+// values of its options. The write rules (writerules.go) read it, so a path the
 // classifier judges as written is the one the matcher took for that
 // operand or option, not one a second parser found.
 type parsed struct {

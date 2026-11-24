@@ -218,7 +218,7 @@ func managedGuards() []string {
 // separator (TG_TF_PATH) is that path. Under a managed
 // install the binary, after symlinks, and the directory holding it must be
 // root's alone: one the agent's user can replace could answer the plan gate
-// with any plan it likes (4H1).
+// with any plan it likes.
 func (c *Config) EngineBinary(name string) (string, error) {
 	p := c.PlanGate.Engines[name]
 	if p == "" {

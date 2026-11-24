@@ -5,10 +5,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Flurit/applygate/internal/policy"
 )
 
+// Regression tests for defects found in security reviews, by topic.
+
 // Redaction gaps (finding 2D1).
-func TestRedactRound2(t *testing.T) {
+func TestRedactMoreForms(t *testing.T) {
 	for _, c := range []struct{ in, secret string }{
 		{`DB_PASSWORD="correct horse battery"`, "horse"},
 		{`mysql -u root -p'S3cr3t pw' db`, "S3cr3t"},
@@ -34,7 +38,7 @@ func TestRedactRound2(t *testing.T) {
 
 // Notes are redacted (2D2), and an oversized line does not hide the
 // entries after it (2D3).
-func TestLogRound2(t *testing.T) {
+func TestLogRedactsNotesAndSkipsOversizedLines(t *testing.T) {
 	e := Entry{Notes: []string{"MCP tool x judged as: curl -H 'Authorization: Bearer abc123' x"}}
 	redactEntry(&e)
 	if strings.Contains(e.Notes[0], "abc123") {
@@ -65,7 +69,7 @@ func TestHugeCommandIsCut(t *testing.T) {
 }
 
 // More secret-bearing forms (finding 3D3).
-func TestRedactRound3(t *testing.T) {
+func TestRedactSecretBearingForms(t *testing.T) {
 	for _, c := range []struct{ in, secret string }{
 		{`aws ssm put-parameter --name /db/pw --type SecureString --value hunter2xyz`, "hunter2xyz"},
 		{`kubectl create secret generic db --from-literal=password=hunter2xyz`, "hunter2xyz"},
@@ -79,5 +83,68 @@ func TestRedactRound3(t *testing.T) {
 		if out := Redact(c.in); strings.Contains(out, c.secret) {
 			t.Errorf("%q -> %q still holds %q", c.in, out, c.secret)
 		}
+	}
+}
+
+func TestUnclosedKeyMarker(t *testing.T) {
+	closed := "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----"
+	if UnclosedKeyMarker(closed) {
+		t.Error("a complete key is closed")
+	}
+	if !UnclosedKeyMarker("echo a '-----BEGIN PRIVATE KEY-----'; pulumi destroy --yes") {
+		t.Error("a header with no end marker hides what follows")
+	}
+	if UnclosedKeyMarker("echo hello") {
+		t.Error("no marker")
+	}
+}
+
+func TestRedactActionFields(t *testing.T) {
+	e := &Entry{Actions: []policy.ActionResult{{Backend: "https://deploy:Hunter2SuperSecret@state.example.com/dev"}}}
+	redactEntry(e)
+	if strings.Contains(e.Actions[0].Backend, "Hunter2SuperSecret") {
+		t.Errorf("backend address kept its password: %s", e.Actions[0].Backend)
+	}
+}
+
+func TestRedactJSONFindsEscapedSecrets(t *testing.T) {
+	for _, in := range []string{
+		`{"command":"export DB_PASSWORD=\"hunter2SHELLPW\" && ./deploy.sh"}`,
+		`{"command":"mysql -u root -p\"hunter2MYSQL\" db"}`,
+		`{"body":"{\"password\":\"hunter2NEST\",\"user\":\"x\"}"}`,
+		`{"password":"hunter2KEY","user":"x"}`,
+		`{"query":"ALTER USER bob PASSWORD 'hunter2SQL'"}`,
+	} {
+		out := RedactJSONCut(in, 4096)
+		if strings.Contains(out, "hunter2") {
+			t.Errorf("secret left in %s -> %s", in, out)
+		}
+	}
+	if out := RedactJSONCut(`{"target":"prod-db","verb":"delete"}`, 4096); !strings.Contains(out, "prod-db") {
+		t.Errorf("an ordinary value was redacted: %s", out)
+	}
+	if out := RedactJSONCut(`not json password=hunter2`, 4096); strings.Contains(out, "hunter2") {
+		t.Errorf("text fallback: %s", out)
+	}
+}
+
+func TestBypassIsNotASecretName(t *testing.T) {
+	for _, in := range []string{"somecli --bypass-approval prod-db", "somecli --compass north", "somecli --passthrough x"} {
+		if out := Redact(in); out != in {
+			t.Errorf("%q redacted to %q", in, out)
+		}
+	}
+	for _, in := range []string{"somecli --pass hunter2", "somecli --db-pass hunter2", "somecli --password hunter2", "pass=hunter2"} {
+		if out := Redact(in); strings.Contains(out, "hunter2") {
+			t.Errorf("%q not redacted: %q", in, out)
+		}
+	}
+}
+
+func TestEntryPathsAndCwdAreRedacted(t *testing.T) {
+	e := &Entry{Paths: []string{"notes.txt", "password=hunter2hunter2"}, Cwd: "/work/token=abcdef123456"}
+	redactEntry(e)
+	if strings.Contains(strings.Join(e.Paths, " "), "hunter2") || strings.Contains(e.Cwd, "abcdef123456") {
+		t.Errorf("not redacted: %v %s", e.Paths, e.Cwd)
 	}
 }
