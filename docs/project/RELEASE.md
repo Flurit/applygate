@@ -19,4 +19,4 @@ The order matters. The Action's default version goes into the commit the tag is 
 - `scripts/pin-plugin-release.sh vX.Y.Z`: pins the Claude Code plugin to the release's verified sha256 values and bumps the plugin version.
 - `scripts/bump-version-refs.sh vX.Y.Z`: points the install and CI examples at the release, and lists any other mention of the old version.
 - Update the Homebrew formula in `packaging/homebrew/applygate.rb` and `Flurit/homebrew-tap` from the signed `checksums.txt`.
-- Record the verification in `docs/project/ACCEPTANCE.md`.
+- Record the verification in `docs/project/release-log.md`, as a new section at the top.

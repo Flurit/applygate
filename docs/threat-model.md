@@ -17,25 +17,82 @@ A **mistaken or manipulated agent** running with the developer's privileges. For
 
 - A malicious insider, or an attacker with the developer's shell outside the agent.
 - An agent that reaches cloud credentials by a path the hook does not see (see [limits](limits.md)).
-- Compromise of the applygate binary, the agent, or the toolchain. Without a managed install that includes a `terraform` the agent puts on `PATH` by a route the hook does not see; writing `terraform`, `tofu` or `terragrunt` into a `PATH` directory is blocked as tampering.
-- Writes by routes the hook does not inspect: code in another language that writes a guard file without naming it, or a process the agent started earlier. This includes a program placed in a `PATH` directory that way: strict shapes trusts programs by name, so a plant there runs as the program it replaces.
+- Compromise of the applygate binary, the agent, or the toolchain. Without a managed install ([managed.md](managed.md)) that includes a `terraform` the agent puts on `PATH` by a route the hook does not see; writing `terraform`, `tofu` or `terragrunt` into a `PATH` directory is blocked as tampering.
+- Writes by routes the hook does not inspect: code in another language that writes a guard file ([Self-protection](#self-protection)) without naming it, or a process the agent started earlier. This includes a program placed in a `PATH` directory that way: strict shapes ([policy.md](policy.md)) trusts programs by name, so a plant there runs as the program it replaces.
 
 ## Self-protection
 
-**A managed install is the only guarantee.** Without one, self-protection is best-effort: the hook blocks the routes it knows, and an agent with the user's shell can, in the end, change anything the user can. Red-team round 4 found ten such routes in one pass ([review/v0.6.0/2026-11-03-red-team-round-4.md](../review/v0.6.0/2026-11-03-red-team-round-4.md)), and enumerating writers does not converge. The list below is what the best-effort checks cover.
+A **guard file** is a file the protection depends on: an agent's hook settings, applygate's own config, log and binary, and the other files listed below. An agent that changes one can switch the guard off, so the hook treats a write to a guard file as tampering.
 
-- Agent edits to `.claude/settings*.json`, managed settings, `.codex/hooks.json` and `config.toml`, the hook files of the other hosts (`.cursor/hooks.json`, `.gemini/settings.json`, `.github/hooks/`, `~/.copilot/hooks/` and `settings.json`, `.windsurf/hooks.json`, `~/.codeium/windsurf/hooks.json`, `.devin/config.json`, `~/.config/devin/config.json`, `.opencode/plugins/`, `~/.config/opencode/plugins/`, `.clinerules/hooks/`, `~/Documents/Cline/Hooks/`), `.applygate.yaml`, the user config, the decision log, the approval store, the judge cache, the telemetry settings, the applygate binary, the Claude Code plugin's installed copy, marketplace clone, data directory and download cache (its launcher script and the binary it fetched), every Claude Code plugin's files, Claude Code skills, subagents and commands (project and user; their frontmatter can declare hooks), the MCP server lists of every host (`.mcp.json`, `~/.claude.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `~/.copilot/mcp-config.json`, `~/.codeium/windsurf/mcp_config.json`, `~/.gemini/extensions/`, `opencode.json`), the config files in which a program strict shapes trusts names a command to run (`~/.gitconfig`, `~/.config/git/`, `~/.aws/config`, `~/.aws/cli/`, `~/.kube/config`, `~/.config/gh/`, `~/.docker/config.json`, `~/.terraformrc`, `~/.terraform.d/`, `~/.tflint.d/`, `~/.wgetrc`, helm's plugins), and any program strict shapes trusts by name, or that the hook and its plugin run (`sh`, `sudo`, `sha256sum`, `aws`, `git`, …), placed in a `PATH` directory the user can write, are blocked in every tier and mode except observe. **Observe mode turns self-protection off**, as it turns every block off: it is for a trial, not for an environment an agent should not be able to change. These paths follow `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, and are compared after resolving symlinks and, on macOS and Windows, case. A directory that holds one counts too, so moving, copying or extracting into it is blocked, and so is removing it when a guard file under it exists and its loss can weaken the guard (removing a directory that holds only Terraform providers, git hooks, MCP server lists, skills or other files that matter only for what is placed in them is not; [limits.md](limits.md)). A pattern such as `**/.claude/settings.json` stands for that file under home, the repository config's directory, the nearest git root and the session directory the hook's environment names (`CLAUDE_PROJECT_DIR`, `GEMINI_PROJECT_DIR`, `DEVIN_PROJECT_DIR`); at those repository and session roots, `git checkout`, `pull` and the other work-tree rewrites ask rather than block (a hook file a commit brings in is then the person's call, and a rewritten `.applygate.yaml` is not read until trusted again). This covers the Write and Edit tools, `apply_patch`, MCP tools outside the known-tool table, shell redirection (on compound commands too), and code in other languages that names a guard file.
+How far that holds depends on how applygate is installed.
 
-  Shell commands are judged by **default-deny**: a program that names a guard file, or a guarded directory, is tampering unless it is on a short read-only list (`cat`, `head`, `ls`, `grep`, `diff`, `git status`/`log`/`diff`/`add`/`commit`, …). A program that writes, removes or extracts also may not name a directory that holds a guard file. Words applygate cannot resolve count when their literal text names a guard file (`${HOME:-x}/.claude/settings.json`) or when they are a glob that could match one. This does not depend on knowing how a program writes. The cost is that some reads outside the list, such as `cp ~/.claude/settings.json /tmp` or `sed -n 1p .applygate.yaml`, are blocked too.
-- A repository config can only add protection. Every `.applygate.yaml` from the repository root down applies, and observe mode, `strict: false`, looser tiers and error handling, aliases, moving the log and network access (the model judge included) come from the user config only; a repository config may turn the judge off.
-- The model judge reads text the agent wrote, which an attacker may have shaped to talk it into "allow". Its verdict is merged as the stricter of the two, and it only sees calls the rules allow, so a judge that is fooled gives the verdict the rules would have given without it ([judge.md](judge.md)). Its cache reads back only escalations (`ask`, `block`), so a planted cache entry cannot make it skip a call; under a managed install the cache is not used, the judge program must be root's, and a judge that fails is treated like one the call broke. A call that breaks it (too large, refused, unreadable answer) is asked about outside disposable environments.
-- Telemetry is off by default and carries only anonymous verdict counts ([telemetry.md](telemetry.md)). Its settings file is a guard path, `applygate telemetry on|off` run by an agent is blocked as guard tampering in every tier, and `APPLYGATE_TELEMETRY=0` or `DO_NOT_TRACK=1` in the environment forces it off whatever the file says.
-- **Repository configs must be trusted.** A `.applygate.yaml` is read only when a person approved its exact content with `applygate trust`, which shows the file and needs a terminal. A config that is new, or changed by any route (a git checkout, an extraction, a clone, a program applygate does not know), is not read, and every directory is judged as protected until a person trusts it. An agent that runs `applygate trust` is blocked as guard tampering.
-- **Nested agents and package managers.** Starting an agent CLI from an agent is tampering when it turns hooks or permission checks off (`claude --bare`, `CLAUDE_CODE_SIMPLE`, `codex --disable hooks`, `codex -p`, `gemini --yolo`, `copilot --allow-all-tools`) or points the agent at other settings (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HOME=`); `npx`, `bunx` and `pnpx` of an agent package are judged the same way. Package managers that install, remove or replace `applygate` or `seatbelt` are tampering, and so is writing an executable of that name into a directory on `PATH` or editing a shell start-up file. A copy of the running binary is recognized by its content, whatever its name.
-- **The Claude Code plugin pins its binary.** The first `applygate` the launcher finds is pinned by path and sha256 in the plugin's data directory; later calls run only that file, and only while its hash is unchanged.
-- **Without a managed install,** an agent with the user's shell can, in the end, change anything the user can: the checks above see the routes they know, and a route they do not see can still change a guard file. Treat it as a guard against mistakes, not against an agent that is trying to get around it.
-- **A managed install** (`sudo applygate install --managed`, [managed.md](managed.md)) is the guarantee: a root-owned binary, a root-owned system config read first, a user config that may then only tighten (the judge included), a system trust store, and the hook in Claude Code's managed settings with bypass mode off. The agent's user cannot change any of it. Two parts stay in the agent's user's reach and are hardened instead: the state directory (the decision log, and the approval store, which the install turns off), and the programs the hook runs. The plan gate runs `terraform`, `tofu` or `terragrunt` only from a root-owned path (`plan_gate.engines` in the system config, or one on `PATH` that root owns and only root can write); otherwise the saved plan is unverifiable. The Claude Code keys are from its docs and not yet tested live; the Codex snippet is printed, not written, and not tested live. `applygate init` installs at user scope (`~/.claude/settings.json`, `~/.codex/hooks.json`) so the hook fires whichever directory the session starts in; that is still a file the developer owns.
-- When a host does not report the directory a command runs in (Codex 0.165.0), applygate judges the command at the most protected tier it could be in under the session root rather than trusting the root's tier ([limits.md](limits.md), [hosts.md](hosts.md)).
+- **A managed install is the only guarantee.** With `sudo applygate install --managed`, root owns the binary, a system config that is read first, the trust store, and the hook in Claude Code's managed settings with bypass mode off. The user config may then only tighten, the judge included. The agent's user cannot change any of it. [managed.md](managed.md) has the parts, the setup and what it does not cover.
+  - Two parts stay in the agent's user's reach and are hardened instead: the state directory (the decision log, and the approval store, which the install turns off), and the programs the hook runs. The plan gate runs `terraform`, `tofu` or `terragrunt` only from a root-owned path; otherwise the saved plan is unverifiable ([managed.md](managed.md) names the paths).
+  - The Claude Code keys are from its docs and not yet tested live. The Codex snippet is printed, not written, and not tested live.
+- **Without a managed install, self-protection is best-effort.** The hook blocks the routes it knows, and a route it does not see can still change a guard file: an agent with the user's shell can, in the end, change anything the user can. Listing every program that can write a file does not converge. Treat it as a guard against mistakes, not against an agent that is trying to get around it.
+  - `applygate init` installs at user scope (`~/.claude/settings.json`, `~/.codex/hooks.json`) so the hook fires whichever directory the session starts in. That is still a file the developer owns.
+- **Observe mode turns self-protection off**, as it turns every block off. It is for a trial, not for an environment an agent should not be able to change.
+
+The rest of this section is what the best-effort checks cover.
+
+### Guard files
+
+A write to any of these is blocked in every tier and in every mode except observe:
+
+- **Agent hook settings:**
+  - Claude Code and Codex: `.claude/settings*.json`, managed settings, `.codex/hooks.json` and `config.toml`;
+  - the other hosts: `.cursor/hooks.json`, `.gemini/settings.json`, `.github/hooks/`, `~/.copilot/hooks/` and `settings.json`, `.windsurf/hooks.json`, `~/.codeium/windsurf/hooks.json`, `.devin/config.json`, `~/.config/devin/config.json`, `.opencode/plugins/`, `~/.config/opencode/plugins/`, `.clinerules/hooks/`, `~/Documents/Cline/Hooks/`.
+- **applygate's own files:** `.applygate.yaml`, the user config, the decision log, the approval store, the judge cache, the telemetry settings and the applygate binary.
+- **Claude Code extensions:** the applygate plugin's installed copy, marketplace clone, data directory and download cache (its launcher script and the binary it fetched); every Claude Code plugin's files; Claude Code skills, subagents and commands, project and user (their frontmatter can declare hooks).
+- **MCP server lists of every host:** `.mcp.json`, `~/.claude.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `~/.copilot/mcp-config.json`, `~/.codeium/windsurf/mcp_config.json`, `~/.gemini/extensions/`, `opencode.json`.
+- **Config files in which a trusted program names a command to run.** Strict shapes ([policy.md](policy.md)) trusts some programs by name, and these files can make them run something else: `~/.gitconfig`, `~/.config/git/`, `~/.aws/config`, `~/.aws/cli/`, `~/.kube/config`, `~/.config/gh/`, `~/.docker/config.json`, `~/.terraformrc`, `~/.terraform.d/`, `~/.tflint.d/`, `~/.wgetrc`, helm's plugins.
+- **Programs planted on `PATH`:** any program strict shapes trusts by name, or that the hook and its plugin run (`sh`, `sudo`, `sha256sum`, `aws`, `git`, …), placed in a `PATH` directory the user can write.
+
+How the paths are matched:
+
+- They follow `XDG_CONFIG_HOME`, `XDG_STATE_HOME`, `CLAUDE_CONFIG_DIR` and `CODEX_HOME`.
+- They are compared after resolving symlinks and, on macOS and Windows, case.
+- A pattern such as `**/.claude/settings.json` stands for that file under home, the repository config's directory, the nearest git root and the session directory the hook's environment names (`CLAUDE_PROJECT_DIR`, `GEMINI_PROJECT_DIR`, `DEVIN_PROJECT_DIR`).
+
+### What counts as tampering
+
+- **Tools and routes covered:** the Write and Edit tools, `apply_patch`, MCP tools outside the known-tool table, shell redirection (on compound commands too), and code in other languages that names a guard file.
+- **Shell commands are judged by default-deny.** A program that names a guard file, or a guarded directory, is tampering unless it is on a short read-only list (`cat`, `head`, `ls`, `grep`, `diff`, `git status`/`log`/`diff`/`add`/`commit`, …). This does not depend on knowing how a program writes.
+  - Words applygate cannot resolve count when their literal text names a guard file (`${HOME:-x}/.claude/settings.json`) or when they are a glob that could match one.
+  - The cost: some reads outside the list are blocked too, such as `cp ~/.claude/settings.json /tmp` or `sed -n 1p .applygate.yaml`.
+- **Directories that hold a guard file count too.**
+  - A program that writes, removes or extracts may not name such a directory. Moving, copying or extracting into it is blocked.
+  - Removing it is blocked when a guard file under it exists and its loss can weaken the guard. Removing a directory that holds only Terraform providers, git hooks, MCP server lists, skills or other files that matter only for what is placed in them is not ([limits.md](limits.md)).
+- **Git rewrites at a repository or session root ask rather than block.** `git checkout`, `pull` and the other work-tree rewrites there are the person's call: a commit may bring in a hook file, and a rewritten `.applygate.yaml` is not read until trusted again.
+
+### Repository configs
+
+- **A repository config can only add protection.** Every `.applygate.yaml` from the repository root down applies. Observe mode, `strict: false`, looser tiers and error handling, aliases, moving the log and network access (the model judge included) come from the user config only. A repository config may turn the judge off.
+- **Repository configs must be trusted.** A `.applygate.yaml` is read only when a person approved its exact content with `applygate trust`, which shows the file and needs a terminal.
+  - A config that is new, or changed by any route (a git checkout, an extraction, a clone, a program applygate does not know), is not read, and every directory is judged as protected until a person trusts it.
+  - An agent that runs `applygate trust` is blocked as guard tampering.
+
+### Nested agents, package managers and the plugin
+
+- **Nested agents.** Starting an agent CLI from an agent is tampering when it:
+  - turns hooks or permission checks off (`claude --bare`, `CLAUDE_CODE_SIMPLE`, `codex --disable hooks`, `codex -p`, `gemini --yolo`, `copilot --allow-all-tools`);
+  - points the agent at other settings (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HOME=`).
+
+  `npx`, `bunx` and `pnpx` of an agent package are judged the same way.
+- **Package managers** that install, remove or replace `applygate` or `seatbelt` are tampering. So is writing an executable of that name into a directory on `PATH`, or editing a shell start-up file. A copy of the running binary is recognized by its content, whatever its name.
+- **The Claude Code plugin pins its binary.** The first `applygate` the launcher finds is pinned by path and sha256 in the plugin's data directory. Later calls run only that file, and only while its hash is unchanged.
+
+### Model judge and telemetry
+
+- **The model judge reads text the agent wrote,** which an attacker may have shaped to talk it into "allow". Its verdict is merged as the stricter of the two, and it only sees calls the rules allow, so a judge that is fooled gives the verdict the rules would have given without it ([judge.md](judge.md)).
+  - Its cache reads back only escalations (`ask`, `block`), so a planted cache entry cannot make it skip a call.
+  - A call that breaks the judge (too large, refused, unreadable answer) is asked about outside disposable environments.
+  - Under a managed install the cache is not used, the judge program must be root's, and a judge that fails is treated like one the call broke.
+- **Telemetry** is off by default and carries only anonymous verdict counts ([telemetry.md](telemetry.md)). Its settings file is a guard path, and `applygate telemetry on|off` run by an agent is blocked as guard tampering in every tier. `APPLYGATE_TELEMETRY=0` or `DO_NOT_TRACK=1` in the environment forces it off whatever the file says.
+
+### An unreported command directory
+
+When a host does not report the directory a command runs in (Codex 0.165.0), applygate judges the command at the most protected tier it could be in under the session root rather than trusting the root's tier ([limits.md](limits.md), [hosts.md](hosts.md)).
 
 ## Recommended pairing
 

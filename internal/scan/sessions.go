@@ -226,7 +226,7 @@ func ReadCodex(r io.Reader, emit func(Call)) {
 				c := base
 				// Codex runs the command in the workdir the model chose, but
 				// its hook is told the turn's directory and no workdir
-				// (docs/limits.md, "Codex working directory"): the call is
+				// (docs/limits.md, "When the host does not report the command's directory"): the call is
 				// judged as the hook would see it.
 				c.Ran = pathOf(it.Cwd)
 				if c.Cwd == "" {

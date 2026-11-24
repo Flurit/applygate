@@ -4,7 +4,7 @@
 
 Date: 2026-10-28. "Before" is v0.1.1 (`48a1d26`). "After" is v0.1.2: the fixes this trial prompted (PR #17) plus the three policy decisions taken on its findings (below).
 
-This is a **stand-in for the roadmap's observe-mode trial**, not the trial itself. The [roadmap](roadmap.md) asks for seatbelt in observe mode on 5 real repositories while people and agents work in them. This trial replays the commands that 5 public Terraform repositories document or run (READMEs, CI workflows, Makefiles, scripts) through `seatbelt check`, and reviews every ask and block by hand. It measures false positives on realistic infrastructure commands. It does not measure what an agent would actually do, and it never exercises the plan gate (no command in the corpus applies a saved plan).
+This is a **stand-in for the roadmap's observe-mode trial**, not the trial itself. The roadmap asked for seatbelt in observe mode on 5 real repositories while people and agents work in them. This trial replays the commands that 5 public Terraform repositories document or run (READMEs, CI workflows, Makefiles, scripts) through `seatbelt check`, and reviews every ask and block by hand. It measures false positives on realistic infrastructure commands. It does not measure what an agent would actually do, and it never exercises the plan gate (no command in the corpus applies a saved plan).
 
 Nothing was executed. The extractor only reads files; seatbelt ran with an empty `PATH` (so `terraform`, `aws` and `git` could not start), a fake `HOME` and no user config. Reproduce with `review/oss-corpus/run.sh <seatbelt binary> <workdir>`, which clones the repositories at the commits below. The rerun reproduces the recorded verdicts exactly.
 
@@ -106,7 +106,7 @@ One apparent miss was an extraction artifact: `./destroy.sh prod` in the EKS hub
 2. **`kubectl delete` keeps asking in disposable tiers.** A disposable directory does not prove the kube context points at a sandbox cluster, and seatbelt cannot see the context. The 9 debatable asks stay.
 3. **AWS SDK code counts as infrastructure.** Python, Node and non-shell scripts that mention `boto3`, `botocore`, `aws-sdk`, `@aws-sdk/` or `github.com/aws/aws-sdk-go` are dynamic: ask in protected and standard tiers, allow in disposable ones. Scenarios D56 and B34. This closed the boto3 miss and added one ask on a read-only script.
 
-After v0.1.2, the unknown-wrapper backstop was checked against the same corpus: no verdict changed and it caused no text-mention false positives ([review/oss-corpus/backstop.md](../review/oss-corpus/backstop.md)).
+After v0.1.2, the unknown-wrapper backstop was checked against the same corpus: no verdict changed and it caused no text-mention false positives ([review/oss-corpus/backstop.md](backstop.md)).
 
 ## Limits of this trial
 
