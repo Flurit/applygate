@@ -4,16 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/Flurit/applygate/internal/config"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/Flurit/applygate/internal/config"
 	"github.com/Flurit/applygate/internal/hook"
 	"github.com/Flurit/applygate/internal/reviewgap"
 )
@@ -66,7 +67,7 @@ func TestAttackPack(t *testing.T) {
 			var failed []string
 			ran := 0
 			for _, s := range byFinding[f] {
-				if len(s.GOOS) > 0 && !contains(s.GOOS, runtime.GOOS) {
+				if len(s.GOOS) > 0 && !slices.Contains(s.GOOS, runtime.GOOS) {
 					continue
 				}
 				formats := s.Formats
@@ -217,7 +218,7 @@ func runAttack(t *testing.T, s AttackScenario, format, self string) (string, str
 		a = hook.Codex{}
 	}
 	v, msg := ParseClaudeOutput(hook.Run(a, bytes.NewReader(b), opt))
-	ok := contains(s.Expect, v)
+	ok := slices.Contains(s.Expect, v)
 	for _, m := range s.MustMention {
 		if !strings.Contains(msg, m) {
 			ok = false

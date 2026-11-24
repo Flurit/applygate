@@ -2,6 +2,7 @@ package hook
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestInjectedPanicsNeverAllowInProtectedTier(t *testing.T) {
 				panic("injected at " + s)
 			}
 		}
-		if contains(hookSites, site) {
+		if slices.Contains(hookSites, site) {
 			PanicHook = hit
 			defer func() { PanicHook = nil }()
 		} else {

@@ -1498,8 +1498,8 @@ func (c *Config) Resolve(s Signals) Resolution {
 					if guard.FoldCase {
 						fq, fd = guard.Fold(q), guard.Fold(d)
 					}
-					if classify.MatchGlob(q, d) || classify.MatchGlob(strings.TrimSuffix(q, "/**"), d) ||
-						classify.MatchGlob(fq, fd) || classify.MatchGlob(strings.TrimSuffix(fq, "/**"), fd) {
+					if guard.MatchGlob(q, d) || guard.MatchGlob(strings.TrimSuffix(q, "/**"), d) ||
+						guard.MatchGlob(fq, fd) || guard.MatchGlob(strings.TrimSuffix(fq, "/**"), fd) {
 						pathMatched[i] = true
 						if why == "" {
 							why = "path " + p
@@ -1724,7 +1724,7 @@ func globEq(pattern, v string) bool {
 	if ok, err := filepath.Match(pattern, v); err == nil && ok {
 		return true
 	}
-	return classify.MatchGlob(pattern, v)
+	return guard.MatchGlob(pattern, v)
 }
 
 // ResolveUnknownDir resolves the tier for a command whose directory the host
@@ -1790,7 +1790,7 @@ func (c *Config) ResolveUnder(root string, s Signals, why string) Resolution {
 
 // globCouldMatchUnder reports whether a path glob can match root or some
 // directory under it. Patterns are compared segment by segment, as
-// classify.MatchGlob does; a pattern starting with ** or without a leading
+// guard.MatchGlob does; a pattern starting with ** or without a leading
 // slash can anchor anywhere, so it is tried at every depth of root.
 func globCouldMatchUnder(pattern, root string) bool {
 	pattern = filepath.ToSlash(pattern)
@@ -1843,7 +1843,7 @@ func globCoversSubtree(pattern, root string) bool {
 		return false
 	}
 	for d := filepath.ToSlash(root); ; d = pathDir(d) {
-		if classify.MatchGlob(prefix, d) {
+		if guard.MatchGlob(prefix, d) {
 			return true
 		}
 		if d == "/" || d == "." || d == "" {

@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Flurit/applygate/internal/hook"
@@ -159,7 +160,7 @@ func Replay(p *Pack, dir string) ([]Outcome, error) {
 		}
 		o := hook.Run(hook.Claude{}, bytes.NewReader(s.Event(repo, home)), opt)
 		v, msg := ParseClaudeOutput(o)
-		pass := contains(s.Expect, v)
+		pass := slices.Contains(s.Expect, v)
 		for _, m := range s.MustMention {
 			if !strings.Contains(msg, m) {
 				pass = false
@@ -200,15 +201,6 @@ func ParseClaudeOutput(o hook.Output) (string, string) {
 		return string(policy.Allow), r.HSO.Reason
 	}
 	return "error", r.HSO.Reason
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // Summary scores outcomes the way the v0 spec does: dangerous pass on block

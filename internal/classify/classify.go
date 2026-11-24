@@ -1547,16 +1547,12 @@ func IsProtectedPath(p string, patterns []string) bool {
 
 func matchAny(p string, patterns []string) bool {
 	for _, pat := range patterns {
-		if MatchGlob(pat, p) {
+		if guard.MatchGlob(pat, p) {
 			return true
 		}
 	}
 	return false
 }
-
-// MatchGlob matches slash paths against patterns supporting *, ? and **.
-// A pattern without a leading slash matches any suffix of the path.
-func MatchGlob(pattern, p string) bool { return guard.MatchGlob(pattern, p) }
 
 // selfTamper returns why an applygate command changes applygate itself, or
 // "". Only a person approves a call, applies a plan through applygate,

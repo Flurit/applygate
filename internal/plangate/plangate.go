@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -165,7 +166,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 			}
 		}
 		for _, pr := range rules.Protection {
-			if !contains(pr.Types, rc.Type) {
+			if !slices.Contains(pr.Types, rc.Type) {
 				continue
 			}
 			bv, bok := lookup(before, pr.Attr)
@@ -452,7 +453,7 @@ func unknownWatched(rc *tfjson.ResourceChange, rules *Rules) []string {
 	// Protection can only be removed from a resource that exists.
 	if acts := normalActions(rc.Change.Actions); acts.Update() || acts.Replace() {
 		for _, pr := range rules.Protection {
-			if contains(pr.Types, rc.Type) && (pr.When == "change" || pr.When == "both") {
+			if slices.Contains(pr.Types, rc.Type) && (pr.When == "change" || pr.When == "both") {
 				attrs = append(attrs, pr.Attr)
 			}
 		}
@@ -1037,15 +1038,6 @@ func without(list, drop []string) []string {
 		}
 	}
 	return out
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 func firstString(after, before map[string]any, keys ...string) string {

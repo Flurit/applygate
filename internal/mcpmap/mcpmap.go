@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -161,7 +162,7 @@ func (t *Table) Translate(fullName string, raw json.RawMessage, cwd string) (Res
 		// still known: it is asked about, not allowed as an unknown tool.
 		for _, s := range t.Servers {
 			for _, tl := range s.Tools {
-				if contains(tl.Names, tool) {
+				if slices.Contains(tl.Names, tool) {
 					return Result{Server: s.Name, Command: unresolved(tool, "its arguments are not a JSON object"), Note: tl.Note, Persistent: tl.Persistent}, true
 				}
 			}
@@ -172,7 +173,7 @@ func (t *Table) Translate(fullName string, raw json.RawMessage, cwd string) (Res
 	var all []Result
 	for _, s := range t.Servers {
 		for _, tl := range s.Tools {
-			if !contains(tl.Names, tool) || !hasAll(args, tl.Requires) {
+			if !slices.Contains(tl.Names, tool) || !hasAll(args, tl.Requires) {
 				continue
 			}
 			all = append(all, translateOne(s, tl, tool, args, parseErr))
@@ -794,15 +795,6 @@ func quote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-func contains(ss []string, s string) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 func hasAll(args map[string]any, keys []string) bool {

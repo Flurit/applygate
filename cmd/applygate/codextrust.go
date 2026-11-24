@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -168,7 +169,7 @@ func codexHookTrust(path string, hooksJSON, configTOML []byte) []codexHookStatus
 	if abs, err := filepath.Abs(path); err == nil && abs != path {
 		sources = append(sources, abs)
 	}
-	if real, err := filepath.EvalSymlinks(path); err == nil && !contains(sources, real) {
+	if real, err := filepath.EvalSymlinks(path); err == nil && !slices.Contains(sources, real) {
 		sources = append(sources, real)
 	}
 	var out []codexHookStatus

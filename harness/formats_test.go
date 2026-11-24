@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -267,7 +268,7 @@ func TestScenarioPackPerHost(t *testing.T) {
 					}
 					want = append(want, e)
 				}
-				exact := contains(want, v)
+				exact := slices.Contains(want, v)
 				// The reason names the tier, which is the most protected one
 				// when the directory is unconfirmed, so the expected mentions
 				// are checked only where the payload carries the directory.
