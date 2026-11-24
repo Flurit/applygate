@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.6.3 (2026-11-24)
+
+A cleanup release: the documentation is organised by topic, and the code is tidied without changing what it does. No rule, verdict, tier or default changed: the hook decides every call and `plan-check` judges every plan as v0.6.2 does, and the scenario pack gives the same results. Nothing needs doing when upgrading from v0.6.2, except for the Claude Code plugin's pinned binary ([docs/upgrading.md](docs/upgrading.md)).
+
+- **[docs/limits.md](docs/limits.md) is organised by topic.** What applygate does not see, cover or guarantee is grouped by what you would look up (shell analysis, directories and tiers, Terraform, state files, git, cloud CLIs, self-protection, the plan gate, hosts, the asks you may not expect), and each limit is said once.
+  - **Statements that disagreed with the code are corrected.** Claude Code enforces an ask as a block in the `dontAsk`, `acceptEdits` and `plan` modes; the page said only `dontAsk`. `terragrunt version`, `help` and `fmt` ask in a protected directory; only `--version`, `--help`, `hclfmt` and `hcl fmt` are plain. `git branch --unset-upstream` asks.
+  - **Gaps the page used to leave to a review report are listed.** Examples: host files that are not guarded (`opencode.jsonc`, `~/.codex/rules/`, `.gemini/.env`), `aws … test-failover` allowed in a protected directory, and `vault secrets disable` with no destructive class. None is new in this release; they are now where a reader finds them.
+- **The v0.6.0 section of this changelog is shortened** to what changed for a user. The review reports it summarised are in [review/v0.6.0](review/v0.6.0).
+- **Pages that moved.**
+  - `docs/migration.md` is now the "From seatbelt" section of [docs/upgrading.md](docs/upgrading.md).
+  - The open-source corpus trial is [review/oss-corpus/trial.md](review/oss-corpus/trial.md).
+  - The records that were under `docs/project/` (the v1 acceptance report, the independent verification, the spec alignment) are in [review/](review), kept as they were. Each release's verification is in [docs/project/release-log.md](docs/project/release-log.md).
+- **[docs/roadmap.md](docs/roadmap.md) is rewritten:** direction, what exists, what is next, what is on hold.
+- **[docs/policy.md](docs/policy.md) has a list of terms and sub-headings** under its long steps. The step numbers other pages cite are unchanged. The threat model, the capability inventory and the judge page lose review history and repeated text; every rule, non-goal and limit they stated is still stated.
+- **`applygate hosts` names the acceptance report at its new path.** That is the only output of the binary that changed.
+- **A smaller source tree.** The model-judge experiment's generated results (5.3 MB) are no longer in the repository or in the module archive that `go install` downloads; they are in the tree at the v0.6.2 tag. Unreferenced code is removed, and the four largest source files are split by responsibility with no line of code changed.
+- **Dependencies:** `golang.org/x/text` 0.44.0.
+
 ## v0.6.2 (2026-11-16)
 
 The GitHub Action can write the plan check's verdict on the pull request, and it installs the release it is tagged at. No rule, verdict, tier or default changed: the hook decides every call and `plan-check` judges every plan as v0.6.1 does, and the scenario pack gives the same results. Nothing needs doing when upgrading from v0.6.1, except for the Claude Code plugin's pinned binary ([docs/upgrading.md](docs/upgrading.md)).
