@@ -1,6 +1,6 @@
 # Roadmap
 
-applygate is a deterministic, local check that runs before a coding agent's infrastructure command executes and returns allow, ask or block. It is not a sandbox and not an AI reviewer: an opt-in [model judge](judge.md) can add a prompt for calls the rules do not recognize, never remove one. This page is the public summary of the project's planning document; "the spec" in older project notes refers to that document.
+applygate is a deterministic, local check that runs before a coding agent's infrastructure command executes and returns allow, ask or block. It is not a sandbox and not an AI reviewer: an opt-in [model judge](judge.md) can add a prompt for calls the rules do not recognize, never remove one.
 
 ## Principles
 
@@ -14,38 +14,43 @@ applygate is a deterministic, local check that runs before a coding agent's infr
 
 **Not goals:** sandboxing, credential brokering or network isolation (pair applygate with plan-only credentials and an isolated runner); general MCP governance; drift detection, cost control or code review.
 
-## Stages
+## Direction
 
-Each stage ships on its own and must pass its gate before the next starts.
+The setup to aim for is one where agents hold no credentials that can change production: plan-only credentials for agents, a managed install, and applies that a person or a pipeline reviews. applygate is for the time before a team is there, and for the steps that setup leaves open ([where-it-fits.md](where-it-fits.md)):
 
-| Stage | Goal | Scope | Gate to the next stage |
-|---|---|---|---|
-| **v0** harness | Find where existing guards fail on infrastructure | Scenario pack, replay runner, comparison of existing guards | Enough dangerous scenarios missed by existing guards to justify v1 |
-| **v1** core (current) | Block the most damaging infrastructure actions with low friction | Shell-aware analyzer, environment tiers, preflight (workspace, backend, stale state, lock file), plan gate (AWS first), observe mode, local log, Claude Code and Codex | Passes the scenario pack; false positives under 5% in an observe-mode trial on 5 real repositories; installs in under 5 minutes on macOS and Linux |
-| **v2** recovery and approval | Make destructive changes recoverable and approvals exact | Backup-isolation check, plan-hash approval with typed confirmation, more agents, CI mode as a GitHub Action | Blocks unrecoverable destroys in fixtures; approval refuses a changed plan |
-| **v3** receipts and attribution | Tie each cloud change to an agent session and an approved plan | Signed receipts, session capture, AWS session tagging, lookup from a CloudTrail event | A CloudTrail event resolves to its session, plan and approver |
+- the **hook** checks each call in the moment, on the laptop or runner where the agent works;
+- the **plan check** is the gate in the pipeline;
+- the **boundary report** says how far the setup is from the one above, and what to change.
 
-GCP, Azure, Kubernetes and Pulumi rules, platform integrations and hosted features come later, and only if v1 and v2 see real use.
+## What exists (v0.6)
 
-## Where v1 stands
+- **The hook:** shell-aware analysis, environment tiers, preflight checks and the plan gate, with AWS plan rules first ([policy.md](policy.md)). Claude Code and Codex are tested live. Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode and Cline have adapters written from each host's documentation and not yet run inside the host ([hosts.md](hosts.md)).
+- **The plan check in CI:** a GitHub Action with an optional comment on the pull request, a script for any runner, and a Terragrunt `before_hook` ([ci.md](ci.md)).
+- **The boundary report:** `applygate doctor --boundary` and the credential audit ([boundary.md](boundary.md), [credentials.md](credentials.md)), and the managed install that agents cannot remove ([managed.md](managed.md)).
+- **`applygate scan`:** what applygate would have decided on the calls your agents already made, with no hook installed ([scan.md](scan.md)).
+- **Rolling out:** observe mode, the decision log and `applygate suggest`, which proposes a config from the log.
+- **For a person at a terminal:** `applygate apply <planfile>`, and one-time approvals for agents that cannot ask (off by default).
+- **Releases:** signed, with provenance; each one's verification is in [project/release-log.md](project/release-log.md).
 
-Done:
-- the analyzer, tiers, preflight and plan gate;
-- Claude Code and Codex adapters, tested live;
-- adapters for Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode and Cline, written from each host's documentation and replayed against the pack in each format, not yet tested live ([hosts.md](hosts.md));
-- observe mode and the decision log;
-- signed releases with provenance (v0.1.0 to v0.1.4 as seatbelt, v0.2.0, v0.3.0, v0.3.1, v0.3.2, v0.4.0, v0.5.0, v0.6.0, v0.6.1 and v0.6.2 as applygate);
-- a static false-positive trial on 5 public repositories: 0.48% ([oss-corpus-trial.md](oss-corpus-trial.md)), then an agent-driven trial ([project/ACCEPTANCE.md](project/ACCEPTANCE.md));
-- a plan-gate false-positive study on 212 routine plans from public Terraform against LocalStack: standard tier 0%, protected 8.0% false positives with v0.3.0, all from two analyzer rules, and 0 with the fix in v0.3.2 ([project/ACCEPTANCE.md](project/ACCEPTANCE.md));
-- the plan gate in CI (GitHub Action, any runner) and as a Terragrunt `before_hook` ([ci.md](ci.md)), pulled forward from v2;
-- `applygate apply <planfile>`: the same verdict for a human at a terminal, with a typed confirmation on an ask;
-- one-time approvals (`applygate approve`): on agents that cannot ask, a person allows one asked call from a terminal, bound to the exact call, environment and plan SHA-256 (the plan-hash approval from v2, pulled forward);
-- `applygate suggest`: a proposed config from the observe-mode log, tiers guessed from names and nothing decided for a directory whose name says nothing.
-- opt-in telemetry ([telemetry.md](telemetry.md)): anonymous counts per version, agent, mode and verdict, off by default, the switch guarded against agents;
-- an install check on macOS (v0.3.0 on macOS 26.7.1, Intel: installer with signature verification in 7 s, selftest 133/133), recorded in [project/ACCEPTANCE.md](project/ACCEPTANCE.md).
+What applygate does not see or cover is in [limits.md](limits.md).
 
-Open:
-- an observe-mode trial with real teams;
-- npm and pip wrappers (the Homebrew tap and a Claude Code plugin that fetches its own binary are done).
+## Next
 
-[project/ACCEPTANCE.md](project/ACCEPTANCE.md) has the measured detail, and [project/spec-alignment.md](project/spec-alignment.md) maps each planned requirement to the code.
+In this order:
+
+1. **Fewer prompts on ordinary work** in Claude Code and Codex: one-line scripts, loops and commands a project declares as its own.
+2. **A path to the safer setup:** the boundary report shows the steps from one level to the next, with plan-only IAM and RBAC examples and a workflow for reviewed applies.
+3. **Review from outside:** an independent security review, and a public page of reported ways past the check.
+4. **An observe-mode trial with real teams.** The trials so far were run by the project on public repositories ([review/oss-corpus/trial.md](../review/oss-corpus/trial.md), [review/2026-10-28-v1-acceptance.md](../review/2026-10-28-v1-acceptance.md)).
+
+## On hold
+
+- Live tests of the adapters written from documentation, and new agent integrations, until prompts on Claude Code and Codex are down.
+- More work on the model judge.
+- npm and pip wrappers for installing.
+
+## Later, if the core sees real use
+
+- Plan rules for Google Cloud, Azure and Kubernetes resources, and Pulumi.
+- A check that backups are isolated from what a destroy can reach.
+- Receipts and attribution: tying a cloud change to the agent session and the approved plan behind it.

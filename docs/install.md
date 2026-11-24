@@ -62,4 +62,4 @@ The signature ties `checksums.txt` to this repository's release workflow for tha
 
 ## How releases are built
 
-`.github/workflows/release.yml` builds each release from a tag. Builds are reproducible. `checksums.txt` is signed keylessly with cosign (the Sigstore bundle is `checksums.txt.sigstore.json`), each archive has an SBOM and a build-provenance attestation, and tags of published releases are never moved. Each release's own check is recorded in [project/ACCEPTANCE.md](project/ACCEPTANCE.md).
+`.github/workflows/release.yml` builds each release from a tag. Builds are reproducible. `checksums.txt` is signed keylessly with cosign (the Sigstore bundle is `checksums.txt.sigstore.json`), each archive has an SBOM and a build-provenance attestation, and tags of published releases are never moved. Each release's own check is recorded in [project/release-log.md](project/release-log.md).

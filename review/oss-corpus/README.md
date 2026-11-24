@@ -1,6 +1,6 @@
 # Open-source corpus trial: data and tools
 
-Report: [docs/oss-corpus-trial.md](../../docs/oss-corpus-trial.md).
+Report: [trial.md](trial.md).
 
 - `repos.txt`: the five repositories, the exact commits used, and their licenses.
 - `configs/`: the `.applygate.yaml` written for each repository for the trial.

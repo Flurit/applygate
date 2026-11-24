@@ -67,7 +67,7 @@ Binary: applygate built from main at `965797a` (`applygate dev`). macOS 26.7.1. 
 
 On 2026-11-09 the hook never ran: Codex 0.166.0 runs a hook only after a person has reviewed it with `/hooks`, which records a `trusted_hash` per hook entry under `[hooks.state]` in `~/.codex/config.toml`, and an untrusted hook is skipped without a message in `codex exec`, at project scope and at user scope alike (finding 1). `--dangerously-bypass-hook-trust` was not used. On 2026-11-11 a person trusted the fixture's project hook with `/hooks` (fixture moved to `/private/tmp/ag-retest`), and the cases ran with `codex exec --sandbox workspace-write`. The hash Codex stored matches the one `applygate doctor` computes (a second known answer in `cmd/applygate/codextrust_test.go`).
 
-Codex does not report a command's directory, so applygate judges a command at the most protected tier it could be in under the root; an absolute `cd` sets the directory, a relative one does not ([limits.md](../docs/limits.md), "Codex working directory"). The fixture's root is `strict: true`.
+Codex does not report a command's directory, so applygate judges a command at the most protected tier it could be in under the root; an absolute `cd` sets the directory, a relative one does not ([limits.md](../docs/limits.md), "When the host does not report the command's directory"). The fixture's root is `strict: true`.
 
 | Case | Command | Hook verdict (enforced) | What Codex did | Result |
 |---|---|---|---|---|

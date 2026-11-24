@@ -10,7 +10,7 @@ applygate is small on purpose: a shell-aware analyzer, a classifier, preflight c
 - **No cloud credentials in tests or fixtures.** Plan fixtures are hand-built or generated from `terraform_data`-only configurations with a local backend.
 - **No model, telemetry or network by default.** The model judge, telemetry and the network checks (`live_identity`, `live_state`) are off until the user config or a person at the terminal turns them on, and stay that way.
 - **Rule lists are data.** Add resource types, protections and admin policies to `internal/plangate/rules/aws.json`, not to Go code.
-- **Document deviations.** Anything that differs from the [roadmap](docs/roadmap.md) goes in `docs/project/spec-alignment.md` and, if it changes a verdict, in `docs/policy.md`.
+- **Document what changes.** A change to a verdict or a rule goes in `docs/policy.md`; a new gap or cost goes in `docs/limits.md`, under its topic.
 
 ## Repository layout
 
@@ -32,9 +32,13 @@ internal/telemetry/   opt-in anonymous counts
 internal/suggest/     a proposed config from the observe log
 internal/reviewgap/   the review findings not fixed yet (tests of open findings are skipped)
 internal/decisionlog/ JSONL log with redaction, report
+internal/scan/        applygate scan: past agent sessions replayed through the hook's code
+internal/plancomment/ the pull-request comment of the plan check
+internal/gitx/        the hook's own calls to git
 harness/              scenario pack, fixtures, Go regression test, run.py replay runner
-docs/                 install, policy, config, limits, hosts (generated), threat model, roadmap; docs/project/ for project records
-review/               live-agent test write-ups, host research and the open-source corpus trial
+docs/                 install, policy, config, limits, hosts (generated), threat model, roadmap; docs/project/ for the release checklist and log
+review/               records: review reports, live-agent tests, host research, trials and the v1 acceptance report
+testdata/             test data shared by more than one package
 plugin/claude-code/   Claude Code plugin: hooks and a launcher that finds or fetches the pinned release
 site/                 project page, published to https://flurit.github.io/applygate/ by .github/workflows/pages.yml
 .goreleaser.yaml      release builds: reproducible archives, checksums, cosign signature, SBOMs

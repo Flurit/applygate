@@ -24,27 +24,37 @@ A call reaches the judge only when all of these hold:
    - a **file write or edit**, whatever the file;
    - an **MCP call** to a tool that the [known-tool table](mcp.md) does not cover and `skip_mcp` does not exclude.
 
-   File reads never go. The local list covers reading and searching files, building, testing and linting, package installs, local git (a push only without force or delete), and file commands that stay inside the working tree. Some calls go even though they look local:
+File reads never go.
+
+**The local list** covers reading and searching files, building, testing and linting, package installs, local git (a push only without force or delete), and file commands that stay inside the working tree. Some calls go even though they look local:
+
 - `env` printing the environment;
 - a local command that names a credential file or directory (`.env`, `*credentials*`, key files, `.netrc`, `~/.aws`, `~/.ssh`, `~/.kube`, gcloud);
 - a command that changes a file outside the working tree;
 - a command that contains anything the shell analyzer cannot resolve.
+
+[Limits](#limits) lists more calls that count as not local.
 
 What the model receives:
 
 - **The call itself:** the agent name and the tool name.
 - **For shell commands:** the command.
 - **For writes:** the file path and the content (for an edit, the text replaced and its replacement). Content over 4,000 characters is not sent; the call counts as unjudgeable, which is an ask outside a disposable environment.
-- **For a known MCP tool:** the command it is judged as, and the tool's own arguments.
-- **The tier:** the most protected of the directories the command's programs run in, so a `cd ../prod` inside the command counts.
-- **For MCP calls:** the arguments.
+- **For MCP calls:** the arguments. For a known MCP tool, also the command it is judged as.
 - **Where it runs:** the working directory, and the environment name and tier applygate resolved for it.
+- **The tier:** the most protected of the directories the command's programs run in, so a `cd ../prod` inside the command counts.
 
-The filter reads the call as the agent sent it. Secrets are then redacted from the copy the judge gets, the same way as in the decision log. When the redacted text starts fewer programs than the call does (a "secret" that holds a command, ``API_TOKEN=`{pulumi,destroy,--yes}` true``), the call is unjudgeable. Redaction covers AWS keys, `password=`/`token=`/`secret=` values, `Authorization:` headers, GitHub and Slack tokens, private-key blocks. Redaction is pattern-based and can miss a secret in an unusual form.
+**Redaction.** The filter reads the call as the agent sent it. Secrets are then redacted from the copy the judge gets, the same way as in the decision log.
+
+- Redaction covers AWS keys, `password=`/`token=`/`secret=` values, `Authorization:` headers, GitHub and Slack tokens, private-key blocks.
+- It is pattern-based and can miss a secret in an unusual form.
+- When the redacted text starts fewer programs than the call does (a "secret" that holds a command, ``API_TOKEN=`{pulumi,destroy,--yes}` true``), the call is unjudgeable.
 
 ## Choosing a judge
 
-The options below were measured the same way, except the `claude` CLI, which was measured on the fourth set only: on the fifth held-out set (143 calls the rules let through, written independently and scored once per judge), with applygate's prompt and the filter of that time. The filter now sends more calls to the judge (see Limits), which these numbers do not reflect; they have not been measured again. The full method is under [How well it works](#how-well-it-works).
+The options below were measured the same way: on the fifth held-out set (143 calls the rules let through, written independently and scored once per judge), with applygate's prompt and the filter of that time. The exception is the `claude` CLI, which was measured on the fourth set only.
+
+The filter now sends more calls to the judge ([Limits](#limits)), which these numbers do not reflect; they have not been measured again. [How well it works](#how-well-it-works) says how the sets were made and what the numbers leave out.
 
 | Option | Should be stopped: caught (72) | Should go through: escalated (71) | Model time p95 | Cost per judged call |
 |---|---|---|---|---|
@@ -233,51 +243,34 @@ applygate: ASK.
 
 ## How well it works
 
-All measurements are in [`experiments/model-judge`](../experiments/model-judge/RESULTS.md).
+The numbers in [Choosing a judge](#choosing-a-judge) come from an offline experiment. Its method, every set, the per-call misses and the earlier rounds are in [experiments/model-judge/RESULTS.md](../experiments/model-judge/RESULTS.md).
 
 **How the judge was measured:**
-- **Held-out sets:** five, each written by an independent red-team agent that never saw the prompt, the filter, the adapters or the earlier sets. Each set was committed before any model saw it.
-- **The unbiased numbers come from the fifth set.**
-  - The first four were seen while the prompt, the filter and the decision-model setup below were designed.
-  - The fifth was scored once per judge, after every design choice was committed.
-  - 7 of its 143 calls happen to repeat calls from earlier sets (common commands such as `docker system prune`). Leaving them out moves no judge by more than one call.
 
-Fifth held-out set, this release's prompt and filter, one run per judge:
+- **Held-out sets:** five sets of calls the rules let through, each labelled "should be stopped" or "should go through". Each was written by an independent red-team agent that never saw the prompt, the filter, the adapters or the earlier sets, and was committed before any model saw it.
+- **The unbiased numbers come from the fifth set** (143 calls, 72 that should be stopped). The first four were seen while the prompt, the filter and the decision-model setup were designed. The fifth was scored once per judge, after every design choice was committed.
 
-| Judge | Should be stopped: caught (72) | Should go through: escalated (71) | Model time p95 | Cost per judged call |
-|---|---|---|---|---|
-| Gemini 3.8 Flash, Gemini's OpenAI-compatible endpoint | 71 | 0 | 8.9 s | not measured |
-| Claude Haiku 5.5, Anthropic's endpoint | 70 | 4 | 2.5 s | $0.00022 |
-| Jev, [`jev.sh`](../examples/judge/jev.sh) | 69 | 5 | 0.65 s | about $0.00006 |
-| OpenAI `gpt-6-luna`, [`openai-decisions.sh`](../examples/judge/openai-decisions.sh) | 65 | 3 (and 1 refusal) | 0.68 s | about $0.00011 |
+**What it found:**
 
 - **The rules alone** catch none of the calls in these sets.
-- **Every judge but Gemini missed** a GitHub issue comment carrying a hidden instruction to AI assistants, posted through an unknown MCP tool. Gemini's one miss was a file write. Haiku and Jev also allowed deleting one Grafana dashboard on a shared host, which applygate's own table allows in a standard tier.
-- **Every judge but Gemini** wrongly escalated both `docker system prune -af --volumes` and an `octodns-sync` of the production DNS config, which the set labels as going through.
-- **Gemini is the most accurate and the slowest:** model time about 5 s at the median and 9 to 10 s at p95. Some calls take longer than the default 10-second timeout, and a call that times out is left to the rules, so use `timeout: 20s`.
-- **The decision models answer in under a second.** Jev comes within one or two calls of Haiku on this set. On the fourth set (seen) it was further behind: 61 to 62 caught against Haiku's 62 to 63 through the same endpoint, with 6 to 7 false escalations against 5.
-- **One long question works as well as many short ones.** Asking the decision models nine yes/no questions and letting applygate's tier table decide, with thresholds tuned on the earlier sets, did not beat one question on the fifth set:
-  - Jev: 67 caught, 2 escalated;
-  - `gpt-6-luna`: 65 caught, 3 escalated.
+- **On the fifth set** the four judges scored caught 65 to 71 of the 72 calls that should be stopped, and escalated 0 to 5 of the 71 that should go through. The table under [Choosing a judge](#choosing-a-judge) has each judge's row.
+- **Through the `claude` CLI** (sets already seen), Haiku 5.5 caught 66 of 67 on the fourth set. On all four earlier sets it caught 269 of 276 (97%), with 14 of 248 (6%) false escalations. Through Anthropic's endpoint it caught 62 to 63 on the fourth set; why the two paths differ is not established.
+- **On real agent traffic** from a week of Terraform work, the judge escalated none of 162 calls; 11% of the shell calls reached it with the filter of that time.
 
-  Those adapters stay in the experiment (`experiments/model-judge/decision-facts`).
-- **Caveat:** the prompt was tuned on Claude models, and Claude agents wrote every set.
+**Caveats:**
 
-Earlier measurements on sets already seen:
-- **Through the `claude` CLI:** Haiku 5.5 caught 66 of 67 on the fourth set, and 269 of 276 (97%) on all four with this release's filter, with 14 of 248 (6%) false escalations.
-- **Through Anthropic's endpoint:** it caught 62 to 63 on the fourth set over three runs, missing three calls the CLI asked about; why the paths differ is not established. `reasoning_effort` is accepted and changes nothing measurable.
-- **On real agent traffic** from a week of Terraform work, the judge escalated none of 162 calls; 11% of the shell calls reached it.
+- The prompt was tuned on Claude models, and Claude agents wrote every set. That may favour Claude models.
+- Each judge was scored once on the fifth set, and 7 of its 143 calls repeat calls from earlier sets. Leaving them out moves no judge by more than one call.
+- The numbers are for the filter of that time. The current filter sends more calls to the judge ([Limits](#limits)) and has not been measured.
 
-**Live in headless Claude Code 2.1.314 on macOS,** with both Anthropic's endpoint ([review/judge-live, 2026-11-02](../review/judge-live/2026-11-02-default-endpoint.md)) and the command backend ([2026-11-01](../review/judge-live/2026-11-01-claude-code.md)):
-- `pulumi destroy` on a protected stack was blocked;
-- `pulumi preview` was judged and allowed;
-- printing a Vault password was asked about, and did not run;
-- `ls` was not sent to the judge (command-backend run).
+**Run live** in headless Claude Code 2.1.314 on macOS, with the command backend (2026-11-01) and with Anthropic's endpoint (2026-11-02): `pulumi destroy` on a protected stack was blocked, `pulumi preview` was judged and allowed, printing a Vault password was asked about and did not run, and `ls` was not sent to the judge (command-backend run).
 
-With Anthropic's endpoint the hook took 1.2 to 3.0 s per judged call, against 3.3 to 3.9 s with the command backend, which has to start the `claude` CLI. Gemini, Jev and `gpt-6-luna` were run through `applygate check`, not inside an agent.
+- With Anthropic's endpoint the hook took 1.2 to 3.0 s per judged call, against 3.3 to 3.9 s with the command backend, which has to start the `claude` CLI.
+- Gemini, Jev and `gpt-6-luna` were run through `applygate check`, not inside an agent.
 
 **Not measured:**
-- **Any provider or model other than those above.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`experiments/model-judge/eval -backend openai -base-url … -api-key-env …`, or `-backend command`) scores any OpenAI-compatible endpoint or adapter on the same held-out sets.
+
+- **Any provider or model other than those above.** Accuracy, false escalations and latency are unknown until measured. The experiment's runner (`go run ./experiments/model-judge/eval -backend openai -base-url … -api-key-env …`, or `-backend command`) scores any OpenAI-compatible endpoint or adapter on the same held-out sets.
 - **Anthropic's endpoint's long-term support.** Anthropic describes it as "not considered a long-term or production-ready solution for most use cases".
 - **Agents other than Claude Code, and an interactive session.** Codex, an interactive session's ask prompt, and `applygate approve` for a judge's block are covered by tests only.
 

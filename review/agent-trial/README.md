@@ -1,7 +1,7 @@
 # Agent-driven observe-mode trial
 
 The roadmap's v1 gate asks for an observe-mode trial on 5 real repositories
-with false positives under 5%. [docs/oss-corpus-trial.md](../../docs/oss-corpus-trial.md)
+with false positives under 5%. [trial.md](../oss-corpus/trial.md)
 is a static stand-in: it replayed the commands five public Terraform
 repositories document, but no agent ran and no saved plan was applied, so the
 plan gate was never exercised.
@@ -15,7 +15,7 @@ cloud exposure.
 
 It is an **agent-driven trial, not a team trial**: the agents are driven by
 one person working a fixed task list, not by a team doing its own work. The
-wording to use in `docs/project/ACCEPTANCE.md` is:
+wording to use in `review/2026-10-28-v1-acceptance.md` is:
 
 > Agent-driven observe-mode trial on 5 public repositories (not a team
 > trial): Claude Code and Codex worked a fixed task list in clones of the
@@ -212,10 +212,10 @@ One exception, kept by hand: `results/2026-10-29/plangate/fixtures/` holds
 the `terraform show -json` output of the prod create and destroy plans from
 the first run. They are the only AWS-provider-generated plan JSON in the
 repository (the plan-gate tests use hand-written fixtures, which
-`docs/project/ACCEPTANCE.md` lists as an assumption), so they are worth
+`review/2026-10-28-v1-acceptance.md` lists as an assumption), so they are worth
 keeping as reference shapes.
 
-`docs/project/ACCEPTANCE.md` gets a section "Agent-driven observe-mode
+`review/2026-10-28-v1-acceptance.md` gets a section "Agent-driven observe-mode
 trial" that quotes the measured counts and rate per repository, names the
 agent versions, and states in the first sentence that this is an
 agent-driven trial, not a team trial. It must not claim numbers that were

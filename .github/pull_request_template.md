@@ -8,4 +8,4 @@
 
 ## Docs
 - [ ] Verdicts or rules changed: `docs/policy.md` updated
-- [ ] Deviates from the roadmap: `docs/project/spec-alignment.md` updated
+- [ ] A new gap or cost: `docs/limits.md` updated, under its topic

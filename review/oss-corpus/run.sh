@@ -1,5 +1,5 @@
 #!/bin/sh
-# Reproduce the open-source corpus trial (docs/oss-corpus-trial.md).
+# Reproduce the open-source corpus trial (review/oss-corpus/trial.md).
 #
 #   review/oss-corpus/run.sh APPLYGATE_BIN WORKDIR
 #

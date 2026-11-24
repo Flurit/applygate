@@ -155,7 +155,7 @@ this run; `plangate/decisions.jsonl` holds the 40 exercise entries.
 Codex receives `deny` for every ask (it cannot show a prompt), as documented.
 The hook ran the real `terraform show -json` on AWS-provider planfiles made by
 Terraform 1.16.1 against LocalStack 4.14.0; this was listed as untested in
-`docs/project/ACCEPTANCE.md`.
+`review/2026-10-28-v1-acceptance.md`.
 
 ### Findings
 

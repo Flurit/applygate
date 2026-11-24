@@ -1,10 +1,12 @@
 # Independent verification of seatbelt v1
 
+> This record is kept as it was at v0.6.2 and is no longer updated. Current gaps are in [docs/limits.md](../docs/limits.md), and each release's verification is in [docs/project/release-log.md](../docs/project/release-log.md).
+
 > The project was renamed from seatbelt to applygate on 2026-10-29; the records below predate the rename and keep the old name where they describe those builds.
 
 > The raw outputs this review cites (`review/results/*`, `review/results/fuzz.log`, `harness/pathological.py`) were removed from the tree to keep the repository small; they are in git history at commit `149ab67`, for example `git show 149ab67:review/results/adv_protected.md`.
 
-> "The spec" in this record is the project's internal planning document; its public summary is [docs/roadmap.md](../roadmap.md).
+> "The spec" in this record is the project's internal planning document; its public summary was `docs/roadmap.md` up to v0.6.2.
 
 Reviewer: independent session, 2026-10-28. Branch: `review/independent-tests`.
 Machine: Linux x86-64, Go 1.26.7, Terraform 1.16.1. No live agent, no real cloud
@@ -374,7 +376,7 @@ this section:
    08:33:45 UTC in `terragrunt-infrastructure-live-example` (`root.hcl` and
    `non-prod/us-east-1/qa/mysql-replica/terragrunt.hcl`). The analyzer now
    recognises a Python or Node body that cannot run anything (rules in
-   [docs/limits.md](../limits.md)) and allows it with a decision note; the same
+   [docs/limits.md](../docs/limits.md)) and allows it with a decision note; the same
    bodies plus `subprocess.run`, an `os.system` built with `getattr` and split
    literals (the F1 shape), a `boto3` import, or a `.seatbelt.yaml`/`.tfstate`
    target still ask or block (`internal/shell/interp_test.go`, pack B43–B46

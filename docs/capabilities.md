@@ -1,6 +1,6 @@
 # Capabilities
 
-What applygate does today, on main at `03926ef` (2026-11-09), and how much of each part has been seen working. This page is an inventory: the detailed rules are in [policy.md](policy.md), the hosts in [hosts.md](hosts.md), what it does not do in [limits.md](limits.md).
+What applygate does today, and how much of each part has been seen working. This page is an inventory: the detailed rules are in [policy.md](policy.md), the hosts in [hosts.md](hosts.md), what it does not do in [limits.md](limits.md). The terms it uses (tier, class, guard file, strict shapes) are defined in [policy.md](policy.md#terms).
 
 Each item carries one of these marks:
 
@@ -13,8 +13,8 @@ Each item carries one of these marks:
 
 | Area | What it covers | Status |
 |---|---|---|
-| Agent hosts | Claude Code and Codex fully; Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode and Cline through their hook APIs | Claude Code and Codex: live on v0.6.0 (Claude Code 2.1.314 and 2.1.322, Codex 0.166.0; review/T3_RESULTS.md). The other seven: docs |
-| Shell commands | Terraform, OpenTofu and Terragrunt by subcommand; aws, gcloud, az, gsutil, kubectl, helm, gh and HTTP clients by verb; tiers from paths, workspaces, backends, profiles, accounts, contexts, projects and subscriptions | tests (163-scenario replay, 918-scenario attack pack, 162-call agent trial) |
+| Agent hosts | Claude Code and Codex fully; Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode and Cline through their hook APIs | Claude Code and Codex: live on v0.6.0 (Claude Code 2.1.314 and 2.1.322, Codex 0.166.0). The other seven: docs |
+| Shell commands | Terraform, OpenTofu and Terragrunt by subcommand; aws, gcloud, az, gsutil, kubectl, helm, gh and HTTP clients by verb; tiers from paths, workspaces, backends, profiles, accounts, contexts, projects and subscriptions | tests (scenario replay, attack pack, agent trial; see [Test and measurement assets](#test-and-measurement-assets)) |
 | File edits and reads | Write/Edit/apply_patch to guard and state files; reads of credential files | tests; live in Claude Code and Codex on v0.5.0 |
 | Plan gate | Reads `terraform show -json` of a saved plan before apply: 14 rules, AWS resource data | tests; the GitHub Action on real AWS-provider plans in CI |
 | Self-protection | Hook settings of every host, applygate's own files, files that make trusted programs run code, PATH plants | tests; a guarantee only under `install --managed` (Claude Code) |
@@ -26,7 +26,7 @@ Each item carries one of these marks:
 
 ## Agent hosts
 
-`internal/hook/capabilities.go` is the source; `applygate hosts` prints it and [hosts.md](hosts.md) is generated from it.
+`applygate hosts` prints the full table, and [hosts.md](hosts.md) is generated from the same data.
 
 | Host | Install | Judged | Can ask | Command's directory | If the hook fails | Status |
 |---|---|---|---|---|---|---|
@@ -100,7 +100,7 @@ A command's verdict is the strictest of its actions. In observe mode every verdi
 
 ### Live verdict matrix
 
-Run with `applygate check --no-judge` on main `03926ef` in the scenario pack's fixture repository (`harness/pack/fixtures/repo`, a git repository with a trusted config: `envs/prod` protected, `envs/staging` standard, `envs/dev` disposable).
+Run with `applygate check --no-judge` in a copy of the scenario pack's fixture repository (`harness/pack/fixtures/repo`, made into a git repository with its config trusted: `envs/prod` protected, `envs/staging` standard, `envs/dev` disposable).
 
 | Group | Command | prod | staging | dev |
 |---|---|---|---|---|
@@ -121,7 +121,7 @@ Run with `applygate check --no-judge` on main `03926ef` in the scenario pack's f
 | Kubernetes | `helm uninstall web` | block | ask | ask |
 | Secrets | `cat ~/.aws/credentials` | ask (credential-access) | ask | ask |
 | Secrets | `vault kv metadata delete secret/x` | ask (complex-shape) | allow | allow |
-| Self-protection | `rm -rf ~/.claude` | block (guard-tampering) | block | block |
+| Self-protection | `rm -rf ~/.claude` (with a settings file under it) | block (guard-tampering) | block | block |
 | Self-protection | `cp evil.yaml ../../.applygate.yaml` | block | block | block |
 | Self-protection | `git checkout main` | ask (hook-rewrite) | ask | ask |
 | Self-protection | `git checkout main -- .claude/settings.json` | block (guard-tampering) | block | block |
@@ -136,7 +136,7 @@ A named production target (`--profile prod-admin`, `--context eks-blue`) makes a
 
 ## Plan gate and preflight
 
-`terraform apply PLANFILE` in a protected or standard directory runs `terraform show -json` on the plan (after checking `.terraform/providers` against the lock file at git HEAD, with `TF_CLI_CONFIG_FILE=/dev/null`) and applies these rules: plan too large, errored plan, destroy count over `max_destroy` (0 in protected), a stateful resource destroyed, a protected resource, protection removed, state infrastructure changed, out of scope, internet exposure, code execution, an unknown watched value, a stateful create without protection. A delete or replace makes the action a destroy. A missing plan asks; an unreadable, ambiguous or earlier-rewritten plan is critical. The resource data (40 stateful types, 14 protection rules, admin ports and policies) is **AWS only**. Preflight compares the declared and recorded backends, finds local state beside a remote backend, and (for applies and destroys) compares the lock file and `*.tf` with HEAD; live state lineage and STS identity checks are opt-in. Status: tests; the Action runs it on two real AWS-provider plans in CI.
+`terraform apply PLANFILE` in a protected or standard directory runs `terraform show -json` on the plan (after checking `.terraform/providers` against the lock file at git HEAD, with `TF_CLI_CONFIG_FILE=/dev/null`) and applies these rules: plan too large, errored plan, destroy count over `max_destroy` (0 in protected), a stateful resource destroyed, a protected resource, protection removed, state infrastructure changed, out of scope, internet exposure, code execution, an unknown watched value, a stateful create without protection, Terraform actions in the plan. A delete or replace makes the action a destroy. A missing plan asks; an unreadable, ambiguous or earlier-rewritten plan is critical. The resource data (42 stateful types, 14 protection rules, admin ports and policies) is **AWS only**. Preflight compares the declared and recorded backends, finds local state beside a remote backend, and (for applies and destroys) compares the lock file and `*.tf` with HEAD; live state lineage and STS identity checks are opt-in. Status: tests; the Action runs it on two real AWS-provider plans in CI.
 
 ## Self-protection and install modes
 
@@ -153,7 +153,7 @@ The plugin launcher pins the first binary it finds (by path and SHA-256), refuse
 
 ## MCP
 
-A call to a known infrastructure tool is judged as its equivalent command, with the strictest reading when several servers fit; a server that runs commands in its own directory is judged at the most protected tier under the session root. Known servers: awslabs `aws-api`, `terraform`, `cfn`/`ccapi`, `eks`, `ecs`, `serverless`; HashiCorp's Terraform server and two TFC servers; tfmcp; two Kubernetes servers; AKS; GKE; gcloud; and seven shell servers. Any other tool whose name or arguments look like a shell command is judged as one. Everything else is logged and allowed. Not covered: Pulumi, the Lambda tool server, SQL tools, workspace and kube-context retargeting. Status: docs (written from each server's source at a pinned commit, not run against the servers) and tests (15 replay and 31 attack scenarios).
+A call to a known infrastructure tool is judged as its equivalent command, with the strictest reading when several servers fit; a server that runs commands in its own directory is judged at the most protected tier under the session root. Known servers: awslabs `aws-api`, `terraform`, `cfn`/`ccapi`, `eks`, `ecs`, `serverless`; HashiCorp's Terraform server, a Terraform Cloud server and tfmcp; two Kubernetes servers; AKS; GKE; gcloud; and seven shell servers. Any other tool whose name or arguments look like a shell command is judged as one. Everything else is logged and allowed. Not covered: Pulumi, the Lambda tool server, SQL tools, workspace and kube-context retargeting. Status: docs (written from each server's source at a pinned commit, not run against the servers) and tests. The table is in [mcp.md](mcp.md).
 
 ## Model judge and approvals
 
@@ -174,17 +174,19 @@ A call to a known infrastructure tool is judged as its equivalent command, with 
 
 ## Logs and other commands
 
-The decision log is JSONL at `~/.local/state/applygate/decisions.jsonl` (mode 0600, rotated at 64 MiB, fields capped at 64 KiB), with regex redaction of keys, tokens and passwords; under a managed install it is still in the user's reach. Telemetry is off and has no default endpoint. `report` summarises the log; `suggest` proposes a config from an observe-mode log; `explain` prints the parse and decision trace; `selftest` runs the 163-scenario pack; `trust` and `approve` need a terminal.
+The decision log is JSONL at `~/.local/state/applygate/decisions.jsonl` (mode 0600, rotated at 64 MiB, fields capped at 64 KiB), with regex redaction of keys, tokens and passwords; under a managed install it is still in the user's reach. Telemetry is off and has no default endpoint. `report` summarises the log; `suggest` proposes a config from an observe-mode log; `explain` prints the parse and decision trace; `selftest` runs the scenario pack; `trust` and `approve` need a terminal.
 
 `scan` reads the session files Claude Code and Codex keep and judges every recorded tool call through the hook's own path, offline, with nothing run or written ([scan.md](scan.md)). Status: live on one machine's sessions (Claude Code 2.1.3xx, Codex 0.162 to 0.166, about 15,000 calls); the older Codex formats are tests only. Its opening section makes the checks of `doctor --boundary`; `scan --boundary` adds the credential audit (status in the table above). `scan --share` prints counts only: tests.
 
 ## Test and measurement assets
 
-| Asset | Size | Runs in CI |
+These are what the status **tests** rests on.
+
+| Asset | What it is | Runs in CI |
 |---|---|---|
-| Scenario pack (`harness/pack`) | 163: 108 dangerous, 55 benign; replayed in 9 host formats, never executed | yes, exact match required (claude and codex) |
-| Attack pack (`harness/pack_attack`) | 918: 771 dangerous, 147 benign controls, from every review round | yes |
-| Effects oracle | allowed commands run under bash, zsh, dash and sh against fake tools: 52 hand-written and 400 generated | yes, required |
+| Scenario pack (`harness/pack`) | dangerous and benign calls with the verdict each must get; replayed in 9 host formats, never executed | yes, exact match required (claude and codex) |
+| Attack pack (`harness/pack_attack`) | attempts to get a dangerous call past the rules, with benign controls, collected from security reviews | yes |
+| Effects oracle | allowed commands run under bash, zsh, dash and sh against fake tools, hand-written and generated | yes, required |
 | Agent trial | 162 shell calls from Claude Code and Codex on 5 public repositories, 2026-10-29 (v0.1.3, observe mode) | replayed by hand for each change |
 | OSS corpus | 1,334 commands from public repositories, static replay on v0.1.2 | no |
 | Latency | command decision p95 ≤ 50 ms | yes (normal build) |
@@ -192,13 +194,9 @@ The decision log is JSONL at `~/.local/state/applygate/decisions.jsonl` (mode 06
 
 ## Gaps this inventory found
 
-Capability:
-
 - `vault kv metadata delete` (and other vault writes) are not classified: they ask in a protected tier only because they are not on the allow-list, and are allowed in standard and disposable tiers.
 - pulumi, cdk, flux and argocd have no rules; `npx cdk deploy` asks only through strict shapes.
 - The plan gate's resource data is AWS only: a Google or Azure plan gets the generic rules (destroy count, replaces) but no stateful-type or exposure rules.
-- Seven of nine hosts, the managed install and every MCP translation have not been run against the real program. `doctor --creds` and `--boundary` have been run against one AWS IAM user only; the Kubernetes, Google Cloud and Azure audits have not.
-- Claude Code and Codex were tested live on v0.6.0 (review/T3_RESULTS.md); not tested live: the prompt in plan and acceptEdits modes, a Codex user-scope hook launched from a subdirectory, and the Codex planfile search.
+- Seven of nine hosts, the managed install and every MCP translation have not been run against the real program. `doctor --creds` and `--boundary` have been run against two AWS IAM users and one Google Cloud user account only; the Kubernetes and Azure audits have not.
+- Claude Code and Codex were tested live on v0.6.0; not tested live: the prompt in plan and acceptEdits modes, a Codex user-scope hook launched from a subdirectory, and the Codex planfile search.
 - [hosts.md](hosts.md) says MCP is "not inspected" for Copilot CLI, OpenCode and Cline. The code would treat an `mcp__` tool name from them as MCP; whether they send one is not known.
-
-Docs that disagreed with the code, corrected with this page: terraform's shape in [policy.md](policy.md) (a subcommand and option tree, not "any arguments"), the `plan-too-large` finding and the name-hint separators in [policy.md](policy.md), the lock-file check in [config.md](config.md) (`git cat-file`, not `git diff`), readable credential files at L2 in [boundary.md](boundary.md) (each is `not verified`, so L2 is not reached while one exists), and the attack-pack counts in `harness/README.md`.
