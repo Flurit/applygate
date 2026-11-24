@@ -12,7 +12,6 @@
 package reviewgap
 
 import (
-	"sort"
 	"testing"
 )
 
@@ -32,14 +31,4 @@ func Check(t testing.TB, id string, ok bool, format string, args ...any) {
 	case !ok:
 		t.Errorf("finding %s regressed: "+format, append([]any{id}, args...)...)
 	}
-}
-
-// IDs returns the open finding IDs, sorted.
-func IDs() []string {
-	var out []string
-	for id := range Open {
-		out = append(out, id)
-	}
-	sort.Strings(out)
-	return out
 }

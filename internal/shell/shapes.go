@@ -195,12 +195,6 @@ func positional(args []Word, n int, valued map[string]bool) []string {
 	return out
 }
 
-// subcommands accepts only the listed subcommands ("pr", "config get"):
-// plugins, aliases and extensions run programs of their own.
-func subcommands(subs ...string) shape {
-	return valuedSubcommands(nil, subs...)
-}
-
 func valuedSubcommands(valued map[string]bool, subs ...string) shape {
 	return func(args []Word, _ Invocation) string {
 		pos := positional(args, 2, valued)
@@ -214,18 +208,6 @@ func valuedSubcommands(valued map[string]bool, subs ...string) shape {
 			return ""
 		}
 		return "the subcommand " + strings.Join(pos, " ")
-	}
-}
-
-func denySub(subs ...string) shape {
-	return func(args []Word, _ Invocation) string {
-		pos := positional(args, 1, cloudValued)
-		for _, s := range subs {
-			if len(pos) == 1 && pos[0] == s {
-				return "the subcommand " + s
-			}
-		}
-		return ""
 	}
 }
 
@@ -709,36 +691,6 @@ func GitConfigOp(args []Word) (op GitConfig, why string) {
 	return op, ""
 }
 
-// GitRunsKey reports whether a git config key (lower case) with value v
-// makes git run a command, or brings in config or a transport that can.
-// v is "" for a key being set, which is judged by its name alone.
-func GitRunsKey(k, v string) bool {
-	v = strings.ToLower(strings.Trim(strings.TrimSpace(v), `"`))
-	boolean := v == "true" || v == "false" || v == "yes" || v == "no" || v == "on" || v == "off" || v == "1" || v == "0"
-	switch {
-	case k == "core.fsmonitor", strings.HasPrefix(k, "pager."):
-		return !boolean
-	case strings.HasPrefix(k, "alias."):
-		return v == "" || strings.HasPrefix(v, "!")
-	case strings.HasPrefix(k, "submodule.") && strings.HasSuffix(k, ".update"):
-		return v == "" || strings.HasPrefix(v, "!")
-	case strings.HasPrefix(k, "remote.") || strings.HasPrefix(k, "url."):
-		if strings.HasSuffix(k, ".uploadpack") || strings.HasSuffix(k, ".receivepack") || strings.HasSuffix(k, ".vcs") {
-			return true
-		}
-		if strings.HasSuffix(k, ".url") || strings.HasSuffix(k, ".pushurl") || strings.HasSuffix(k, ".insteadof") || strings.HasSuffix(k, ".pushinsteadof") {
-			return v == "" && strings.HasPrefix(k, "url.") || strings.HasPrefix(v, "ext::") || strings.HasPrefix(v, "fd::") ||
-				strings.HasPrefix(k, "url.ext::") || strings.HasPrefix(k, "url.fd::")
-		}
-		return false
-	case gitExecKey(k), k == "core.alternaterefscommand", k == "core.gitproxy", k == "include.path",
-		strings.HasPrefix(k, "includeif."), strings.HasPrefix(k, "protocol."), strings.HasSuffix(k, ".driver"),
-		strings.HasPrefix(k, "credential.") && strings.HasSuffix(k, ".helper"), strings.HasPrefix(k, "gpg.") && strings.HasSuffix(k, ".program"):
-		return true
-	}
-	return false
-}
-
 func readSmall(p string) ([]byte, error) {
 	fi, err := os.Stat(p)
 	if err != nil {
@@ -750,12 +702,7 @@ func readSmall(p string) ([]byte, error) {
 	return os.ReadFile(p)
 }
 
-// kubeValued and cloudValued are the global options of kubectl and helm,
-// and of the cloud CLIs, that take a value.
-var kubeValued = toSet("-n", "--namespace", "--context", "--cluster", "--user", "-s", "--server", "--as", "--as-group",
-	"--request-timeout", "--kube-context", "--token", "--certificate-authority", "--tls-server-name", "--kubeconfig",
-	"--kube-apiserver", "--kube-as-user", "--kube-as-group", "--kube-token", "--kube-ca-file")
-
+// cloudValued are the global options of the cloud CLIs that take a value.
 var cloudValued = toSet("--profile", "--region", "--output", "--endpoint-url", "--query", "--project", "--account",
 	"--configuration", "--subscription", "-o", "--format")
 

@@ -119,7 +119,7 @@ func TestPlainWritersHaveARule(t *testing.T) {
 		}
 	}
 	for _, n := range []string{"tar", "sed", "find", "aws", "git"} {
-		if !HasWriteRule(n) {
+		if !hasWriteRule(n) {
 			t.Errorf("%s has no write rule", n)
 		}
 	}
@@ -159,3 +159,6 @@ func TestRemovesIsOnlyWhatIsRemoved(t *testing.T) {
 		}
 	}
 }
+
+// hasWriteRule reports whether name has a write rule.
+func hasWriteRule(name string) bool { return writeRules[name] != nil || wordRules[name] != nil }

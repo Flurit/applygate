@@ -207,7 +207,7 @@ func longtailItems(repo, name string) []item {
 // repositories are not here, so they are judged with the default config
 // (strict: every directory protected), the strictest case for false positives.
 func trialItems() []item {
-	f, err := os.Open("review/agent-trial/results/2026-10-29-both/decisions.jsonl")
+	f, err := os.Open("testdata/agent-trial/decisions.jsonl")
 	check(err)
 	defer f.Close()
 	var out []item

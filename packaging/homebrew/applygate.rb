@@ -36,8 +36,6 @@ class Applygate < Formula
   end
 
   def install
-    # The archive also carries a `seatbelt` compatibility shim for the old
-    # name; new installs get only `applygate`.
     bin.install "applygate"
   end
 

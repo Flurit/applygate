@@ -14,7 +14,7 @@ import (
 
 // The agent-driven trial log: five public repositories under /work, Claude
 // Code and Codex in observe mode, 169 decisions.
-const trialLog = "../../review/agent-trial/results/2026-10-29-both/decisions.jsonl"
+const trialLog = "../../testdata/agent-trial/decisions.jsonl"
 
 func loadTrial(t *testing.T) []decisionlog.Entry {
 	t.Helper()

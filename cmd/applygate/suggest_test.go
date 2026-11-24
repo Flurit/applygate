@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const trialLog = "../../review/agent-trial/results/2026-10-29-both/decisions.jsonl"
+const trialLog = "../../testdata/agent-trial/decisions.jsonl"
 
 func TestSuggestPrintsAProposalForTheRoot(t *testing.T) {
 	var out, errb bytes.Buffer

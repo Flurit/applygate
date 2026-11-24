@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const telemetryTrialLog = "../../review/agent-trial/results/2026-10-29-both/decisions.jsonl"
+const telemetryTrialLog = "../../testdata/agent-trial/decisions.jsonl"
 
 func TestTelemetryCommandsAndTheGuardAgainstAgentsSwitchingIt(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())

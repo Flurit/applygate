@@ -16,7 +16,7 @@ import (
 	"github.com/Flurit/applygate/internal/decisionlog"
 )
 
-const trialLog = "../../review/agent-trial/results/2026-10-29-both/decisions.jsonl"
+const trialLog = "../../testdata/agent-trial/decisions.jsonl"
 
 func isolate(t *testing.T) {
 	t.Helper()

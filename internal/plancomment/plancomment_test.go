@@ -27,7 +27,7 @@ func judge(t *testing.T, planJSON []byte, tier config.Tier) Input {
 
 func realPlan(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile("../../review/real_plan/" + name)
+	b, err := os.ReadFile("../../testdata/real_plan/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}

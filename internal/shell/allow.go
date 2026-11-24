@@ -40,7 +40,6 @@ type prog struct {
 	family  string                            // programs whose entries share options: the conformance test runs a shared option once per family
 	with    []string                          // words the conformance test adds so that one option can be run alone (a message for commit)
 	outputs []string                          // options whose value is a file the program writes, listed or not: the classifier names the path (OutputOpts)
-	wr      func(c parsed) []written          // what a plain call writes, from the matcher's own reading (writes.go)
 }
 
 // allowProgs are the programs described by a prog, by name (the conformance

@@ -5,6 +5,8 @@ task list in `tasks.md` on clones of the five public repositories from
 `review/oss-corpus/repos.txt`, in observe mode, with LocalStack as the only AWS
 endpoint and no cloud credentials.
 
+The decision log of this run is `testdata/agent-trial/decisions.jsonl`: tests read it, so it is kept with the other test data.
+
 | Field | Value |
 |---|---|
 | Date | 2026-10-29-both |

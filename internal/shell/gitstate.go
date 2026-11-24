@@ -671,13 +671,6 @@ func networkURL(v string) bool {
 	return false
 }
 
-// resetConfigCache forgets the cached verdicts (tests).
-func resetConfigCache() {
-	configCache.Range(func(k, _ any) bool { configCache.Delete(k); return true })
-	askCache.Range(func(k, _ any) bool { askCache.Delete(k); return true })
-	lfsCache.Range(func(k, _ any) bool { lfsCache.Delete(k); return true })
-}
-
 // gitAsk asks the hook's own git where the git directory for dir is. It is
 // a variable so that tests can replace it. found is false outside a
 // repository; failed is set when git could not answer (no git, a timeout).

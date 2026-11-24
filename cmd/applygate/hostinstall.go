@@ -254,15 +254,6 @@ func isApplygateScript(b []byte) bool {
 	return strings.Contains(string(b), "applygate-bin\n")
 }
 
-// fileHasApplygate reports whether an agent's hook file holds an applygate
-// hook, whatever its kind.
-func fileHasApplygate(agent string, b []byte) bool {
-	if s, ok := specFor(agent); ok && s.kind != "json" {
-		return isApplygateScript(b)
-	}
-	return settingsHasApplygate(b)
-}
-
 // hookBinaries returns the applygate binaries an agent's hook file calls.
 func hookBinaries(agent string, b []byte) ([]string, bool) {
 	if s, ok := specFor(agent); ok && s.kind != "json" {

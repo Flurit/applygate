@@ -24,8 +24,8 @@ func TestMain(m *testing.M) {
 }
 
 const (
-	destroyPlan = "../../review/real_plan/delete_real_shape.show.json"
-	createPlan  = "../../review/real_plan/create.show.json"
+	destroyPlan = "../../testdata/real_plan/delete_real_shape.show.json"
+	createPlan  = "../../testdata/real_plan/create.show.json"
 )
 
 // The text plan-check printed before the comment format existed, for the plan

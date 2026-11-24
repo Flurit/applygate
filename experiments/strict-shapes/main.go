@@ -129,7 +129,7 @@ func main() {
 	flag.Parse()
 	var items []item
 	// Benign: the agent-driven trial (Bash calls only).
-	readJSONL("review/agent-trial/results/2026-10-29-both/decisions.jsonl", func(m map[string]any) {
+	readJSONL("testdata/agent-trial/decisions.jsonl", func(m map[string]any) {
 		if c, _ := m["command"].(string); c != "" && m["tool"] == "Bash" {
 			items = append(items, item{"agent trial", c, true})
 		}
