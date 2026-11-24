@@ -1,0 +1,65 @@
+name: action-v062-live-test
+
+# Throwaway, for one pull request that is never merged: runs the Action at the
+# v0.6.2 tag, which installs the v0.6.2 release, with comment: true and
+# pull-requests: write, so the comments are posted for real.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  released:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: a plan that deletes a database, protected tier
+        id: blocked
+        continue-on-error: true
+        uses: Flurit/applygate@v0.6.2
+        with:
+          plan: review/real_plan/delete_real_shape.show.json
+          tier: protected
+          comment: true
+      - name: a plan that only creates, standard tier, with a comment-key
+        id: created
+        continue-on-error: true
+        uses: Flurit/applygate@v0.6.2
+        with:
+          plan: review/real_plan/create.show.json
+          tier: standard
+          comment: true
+          comment-key: create plan (standard tier)
+      - name: what the Action installed
+        run: |
+          uname -sm
+          "$APPLYGATE_BIN" version
+          test "$("$APPLYGATE_BIN" version)" = "applygate 0.6.2"
+          "$APPLYGATE_BIN" selftest | tail -1
+      - name: outcomes are those of the check
+        env:
+          BLOCKED_OUTCOME: ${{ steps.blocked.outcome }}
+          BLOCKED_VERDICT: ${{ steps.blocked.outputs.verdict }}
+          BLOCKED_CODE: ${{ steps.blocked.outputs.exit-code }}
+          CREATED_OUTCOME: ${{ steps.created.outcome }}
+          CREATED_VERDICT: ${{ steps.created.outputs.verdict }}
+          CREATED_CODE: ${{ steps.created.outputs.exit-code }}
+        run: |
+          echo "blocked: $BLOCKED_OUTCOME $BLOCKED_VERDICT $BLOCKED_CODE"
+          echo "created: $CREATED_OUTCOME $CREATED_VERDICT $CREATED_CODE"
+          test "$BLOCKED_OUTCOME" = failure
+          test "$BLOCKED_VERDICT" = block
+          test "$BLOCKED_CODE" = 3
+          test "$CREATED_OUTCOME" = success
+          case "$CREATED_CODE" in 0|4) ;; *) exit 1 ;; esac
