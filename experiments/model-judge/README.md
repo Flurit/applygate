@@ -25,4 +25,4 @@ go run ./experiments/model-judge/eval -models claude-haiku-5-5,claude-sonnet-5-5
 
 Datasets: `pack`, `longtail`, `hard`, `heldout`, `heldout2`, `trial`. `-prefilter` judges only the calls that pass the filter (the mode we would ship) and costs about half as much.
 
-Results are cached in `results/cache.json` by model, effort, prompt version and input; `results/report-<model>.md` and `results/rows-<model>.json` hold the scores and every judged call. Nothing in the experiment runs the commands it judges.
+Results are cached in `results/cache.json` by model, effort, prompt version and input; `results/report-<model>.md` and `results/rows-<model>.json` hold the scores and every judged call. `results/` is generated and not committed: the outputs behind [RESULTS.md](RESULTS.md) are in the tree at the v0.6.2 tag. Nothing in the experiment runs the commands it judges.

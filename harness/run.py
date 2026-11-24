@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Replay the scenario pack against a guard's agent hook.
 
-Throwaway v0-style runner, kept for comparing applygate with other guards.
+Black-box runner: a CI and release gate for applygate, and the way to compare
+it with other guards.
 It builds synthetic hook events and pipes them to the guard's hook command.
 It NEVER executes the commands inside the scenarios, never uses a shell, and
 runs the guard with an empty PATH, a fake HOME and no cloud credentials.

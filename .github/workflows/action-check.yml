@@ -1,7 +1,7 @@
 name: action-check
 
 # Exercises action.yml against this commit's own binary with the two real
-# AWS-provider plans kept under review/real_plan, so a change to the action
+# AWS-provider plans kept under testdata/real_plan, so a change to the action
 # or to plan-check shows up here.
 #
 # Three steps ask for the pull-request comment (comment: true) while the job
@@ -33,7 +33,7 @@ jobs:
         id: blocked
         uses: ./
         with:
-          plan: review/real_plan/delete_real_shape.show.json
+          plan: testdata/real_plan/delete_real_shape.show.json
           tier: protected
           fail-on: never
           binary: bin/applygate
@@ -42,7 +42,7 @@ jobs:
         id: asked
         uses: ./
         with:
-          plan: review/real_plan/delete_real_shape.show.json
+          plan: testdata/real_plan/delete_real_shape.show.json
           tier: standard
           fail-on: never
           binary: bin/applygate
@@ -50,7 +50,7 @@ jobs:
         id: allowed
         uses: ./
         with:
-          plan: review/real_plan/create.show.json
+          plan: testdata/real_plan/create.show.json
           tier: standard
           fail-on: block
           binary: bin/applygate
@@ -70,7 +70,7 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
-          plan: review/real_plan/delete_real_shape.show.json
+          plan: testdata/real_plan/delete_real_shape.show.json
           tier: protected
           binary: bin/applygate
           comment: true
@@ -80,7 +80,7 @@ jobs:
         continue-on-error: true
         uses: ./
         with:
-          plan: review/real_plan/create.show.json
+          plan: testdata/real_plan/create.show.json
           tier: standard
           binary: bin/applygate
           comment: sometimes

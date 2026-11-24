@@ -22,7 +22,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -99,10 +98,6 @@ func Workspace(dir string, env map[string]string) string {
 	}
 	return "default"
 }
-
-// InitBackend reads the backend recorded by the last init in
-// .terraform/terraform.tfstate.
-func InitBackend(dir string) *Backend { return InitBackendEnv(dir, nil) }
 
 // DataDir is the directory Terraform keeps its working data in: TF_DATA_DIR
 // (relative to dir) when set, else .terraform.
@@ -376,18 +371,6 @@ func literal(e hcl.Expression) (string, bool) {
 	}
 	return v.AsString(), true
 }
-
-func clip(s string) string {
-	if len(s) > 60 {
-		return s[:60] + "…"
-	}
-	return s
-}
-
-var (
-	providerAWS = regexp.MustCompile(`(?s)\bprovider\s+"?aws"?\s*\{`)
-	roleARN     = regexp.MustCompile(`(?m)^\s*role_arn\s*=\s*"([^"]*)"`)
-)
 
 // Vars are the input variable values a command gives Terraform: -var
 // NAME=value pairs, -var-file files (absolute) and the environment

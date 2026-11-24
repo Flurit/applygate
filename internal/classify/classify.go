@@ -2559,27 +2559,6 @@ func globMatches(w shell.Word, dir, home string) []string {
 	return ms
 }
 
-// stateIn returns a state file held in directory d (or in its
-// terraform.tfstate.d), "" when d holds none or is not a directory.
-func stateIn(d string) string {
-	if filepath.Base(d) == ".terraform" {
-		return "" // the backend cache, not a state
-	}
-	ents, err := os.ReadDir(d)
-	if err != nil {
-		return ""
-	}
-	for _, e := range ents {
-		if !e.IsDir() && isStateFile(e.Name()) {
-			return filepath.Join(d, e.Name())
-		}
-		if e.IsDir() && e.Name() == "terraform.tfstate.d" {
-			return filepath.Join(d, e.Name(), "terraform.tfstate")
-		}
-	}
-	return ""
-}
-
 // overwrites reports whether writing p replaces a state in use: an
 // existing file, or the default local state file.
 func overwrites(p string) bool {

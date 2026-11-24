@@ -298,3 +298,12 @@ func TestUserScopeFollowsRelocatedDirs(t *testing.T) {
 		}
 	}
 }
+
+// fileHasApplygate reports whether an agent's hook file holds an applygate
+// hook, whatever its kind.
+func fileHasApplygate(agent string, b []byte) bool {
+	if s, ok := specFor(agent); ok && s.kind != "json" {
+		return isApplygateScript(b)
+	}
+	return settingsHasApplygate(b)
+}

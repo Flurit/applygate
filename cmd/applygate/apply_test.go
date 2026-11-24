@@ -55,8 +55,8 @@ func (f *fakeExec) run(bin string, args []string, dir string, _ io.Reader, _, _ 
 
 func TestApplyJudgesThePlanBeforeRunningTheEngine(t *testing.T) {
 	root := applyRepo(t)
-	destroy, _ := filepath.Abs("../../review/real_plan/delete_real_shape.show.json")
-	create, _ := filepath.Abs("../../review/real_plan/create.show.json")
+	destroy, _ := filepath.Abs("../../testdata/real_plan/delete_real_shape.show.json")
+	create, _ := filepath.Abs("../../testdata/real_plan/create.show.json")
 	fe := &fakeExec{code: 7}
 	oldExec, oldTTY := applyExec, isTerminal
 	applyExec, isTerminal = fe.run, func(io.Reader) bool { return false }
@@ -99,7 +99,7 @@ func TestApplyJudgesThePlanBeforeRunningTheEngine(t *testing.T) {
 
 func TestApplyTypedConfirmationAtTheTerminal(t *testing.T) {
 	root := applyRepo(t)
-	destroy, _ := filepath.Abs("../../review/real_plan/delete_real_shape.show.json")
+	destroy, _ := filepath.Abs("../../testdata/real_plan/delete_real_shape.show.json")
 	fe := &fakeExec{}
 	oldExec, oldTTY := applyExec, isTerminal
 	applyExec, isTerminal = fe.run, func(io.Reader) bool { return true }

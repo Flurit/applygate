@@ -286,12 +286,6 @@ func movesDir(ws []Word) bool {
 	return false
 }
 
-// isAbbrev reports whether t is long option opt or an abbreviation of it at
-// least min characters after the dashes, as getopt_long accepts.
-func isAbbrev(t, opt string, min int) bool {
-	return len(t) >= 2+min && strings.HasPrefix(opt, t)
-}
-
 // IsBackstopVia reports whether an invocation was reached through the
 // backstop for unrecognized wrappers.
 func IsBackstopVia(via []string) bool {

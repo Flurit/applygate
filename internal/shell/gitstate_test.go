@@ -203,3 +203,10 @@ func TestGitLFSKeys(t *testing.T) {
 		t.Error("checkout with LFS and a custom credential helper was plain")
 	}
 }
+
+// resetConfigCache forgets the cached verdicts.
+func resetConfigCache() {
+	configCache.Range(func(k, _ any) bool { configCache.Delete(k); return true })
+	askCache.Range(func(k, _ any) bool { askCache.Delete(k); return true })
+	lfsCache.Range(func(k, _ any) bool { lfsCache.Delete(k); return true })
+}

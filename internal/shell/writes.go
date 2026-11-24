@@ -112,9 +112,6 @@ func Removes(name string, args []Word) []Word {
 	return out
 }
 
-// HasWriteRule reports whether name has a write rule.
-func HasWriteRule(name string) bool { return writeRules[name] != nil || wordRules[name] != nil }
-
 // URLBase is the file name a download of u is saved under ("" when u is not
 // a URL or names no file).
 func URLBase(u string) string {
