@@ -19,7 +19,10 @@ and later refuse that mismatch themselves) and local state freshness, which
 are preflight checks in the hook path. Rules and tiers come from the
 repository's `.applygate.yaml` as everywhere else, and the tier from the same
 signals the hook reads: the path, the selected workspace and the backend. A
-replace is judged like a destroy, as in the hook. A runner has no trust store,
+replace is judged like a destroy, as in the hook, unless every replace in
+the plan is a routine one ([policy.md](policy.md), step 6): such a plan exits 0
+in a standard tier, where it exited 4 before, and still exits 3 in a protected
+one. A runner has no trust store,
 so the repository config is not read and every directory is judged protected,
 and `plan-check` says so; pass `--trust-config` (the Action's `trust-config:
 true`) to read the checked-out config. On pull requests from forks that config

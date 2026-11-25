@@ -66,6 +66,7 @@ A command's tier comes from the environments in `.applygate.yaml`: paths, Terraf
 | apply-saved-plan | plan gate | plan gate | allow |
 | unreviewed-apply | block | ask | allow |
 | destroy | block | ask | allow |
+| routine-replace | block | allow | allow |
 | state-surgery | block | ask | ask |
 | cloud-destructive | block | ask | ask |
 | guard-tampering | block | block | block |
@@ -196,7 +197,7 @@ These are what the status **tests** rests on.
 
 - `vault kv metadata delete` (and other vault writes) are not classified: they ask in a protected tier only because they are not on the allow-list, and are allowed in standard and disposable tiers.
 - pulumi, cdk, flux and argocd have no rules; `npx cdk deploy` asks only through strict shapes.
-- The plan gate's resource data is AWS only: a Google or Azure plan gets the generic rules (destroy count, replaces) but no stateful-type or exposure rules.
+- The plan gate's resource data is AWS only: a Google or Azure plan gets the generic rules (destroy count, replaces) but no stateful-type or exposure rules, and none of its types is a routine replace.
 - Seven of nine hosts, the managed install and every MCP translation have not been run against the real program. `doctor --creds` and `--boundary` have been run against two AWS IAM users and one Google Cloud user account only; the Kubernetes and Azure audits have not.
 - Claude Code and Codex were tested live on v0.6.0; not tested live: the prompt in plan and acceptEdits modes, a Codex user-scope hook launched from a subdirectory, and the Codex planfile search.
 - [hosts.md](hosts.md) says MCP is "not inspected" for Copilot CLI, OpenCode and Cline. The code would treat an `mcp__` tool name from them as MCP; whether they send one is not known.

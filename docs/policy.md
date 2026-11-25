@@ -307,6 +307,15 @@ The plan gate runs for `apply <planfile>`. It compares the planfile's workspace 
 
 **A plan that deletes or replaces any resource is reclassified as `destroy`.** A replace destroys the old instance, so it is judged like a delete.
 
+**One exception: a plan whose only deletes and replaces are routine replaces is a `routine-replace`,** which a standard tier allows and a protected tier still blocks. A replace is routine when all of these hold:
+
+- the resource is of a type that holds no data and that its provider replaces on routine change. The list is `aws_launch_template`, `aws_launch_configuration`, `aws_ecs_task_definition`, `aws_lambda_layer_version`, `aws_lambda_permission`, `aws_iam_role_policy_attachment`, `aws_iam_user_policy_attachment`, `aws_iam_group_policy_attachment`, `aws_security_group_rule`, `aws_vpc_security_group_ingress_rule`, `aws_vpc_security_group_egress_rule`, `terraform_data` and `null_resource` (`routine_replace_types` in `internal/plangate/rules/aws.json`). A type that is not on the list is not routine, whatever it is;
+- the plan deletes it and creates it, and nothing else;
+- it is not a stateful type and not listed in `protected_resources`;
+- no `exposure`, `unknown-watched` or `code-execution` finding names it. A rule replaced by one open to the internet, or a `null_resource` whose provisioner would run, is asked about as before.
+
+One delete, or one replace that is not routine, makes the whole plan a `destroy`. To have a routine replace asked about again, list the address under `protected_resources` ([config.md](config.md)).
+
 **Which tier the plan brings:**
 
 - **A plan file kept in another Terraform directory** was made against that directory's state, so that directory's tier joins the command's (`terraform apply ../prod/tfplan` from `dev` is a protected-tier action).
@@ -383,6 +392,7 @@ The model judge (`judge`) is off by default and can be turned on in the user con
 | apply-saved-plan | plan gate | plan gate | allow |
 | unreviewed-apply | block | ask | allow |
 | destroy | block | ask | allow |
+| routine-replace (a saved plan whose only replaces are routine, step 6) | block | allow | allow |
 | state-surgery | block | ask | ask |
 | cloud-destructive | block | ask | ask |
 | guard-tampering | block | block | block |

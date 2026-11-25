@@ -42,7 +42,8 @@ Every command is judged by the environment it targets. You map directories, work
 | Read-only: `plan`, `show`, `validate`, `state list` | allow | allow | allow |
 | Apply a saved plan: `terraform apply tfplan` | plan check | plan check | allow |
 | Apply without a saved plan: `apply -auto-approve` | block | ask | allow |
-| Destroy: `destroy`, `apply -destroy`, `-replace`, a plan that deletes | block | ask | allow |
+| Destroy: `destroy`, `apply -destroy`, `-replace`, a plan that deletes or replaces | block | ask | allow |
+| A plan that only replaces resources that hold no data, such as a launch template or a task definition | block | allow | allow |
 | State changes: `state rm/mv/push`, `force-unlock`, `taint` | block | ask | ask |
 | Cloud deletes: `aws … delete-*`, `s3 rb`, `kubectl delete`, `helm uninstall` | block | ask | ask |
 | Turning applygate off: skip-permission flags, editing hooks or applygate's files | block | block | block |
@@ -66,7 +67,7 @@ On 17 dangerous Terraform scenarios (our own set, so a demonstration, not a meas
 | A competent hand-written Rego/regex policy | 14 / 17 |
 | **applygate** (protected tier) | **17 / 17** |
 
-The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios are in [harness/](harness), and `applygate selftest` runs all 163 scenarios against your binary.
+The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios are in [harness/](harness), and `applygate selftest` runs all 169 scenarios against your binary.
 
 ## Supported agents
 

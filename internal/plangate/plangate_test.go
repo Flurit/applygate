@@ -528,6 +528,9 @@ func TestRoutineReplaces(t *testing.T) {
 		{"unknown action beside a create", rc{"aws_launch_template.app", "aws_launch_template", []string{"forget", "create"}, map[string]any{}, map[string]any{}}, nil, false},
 		{"three actions", rc{"aws_launch_template.app", "aws_launch_template", []string{"delete", "create", "update"}, map[string]any{}, map[string]any{}}, nil, false},
 		{"listed in protected_resources", rc{"aws_launch_template.app", "aws_launch_template", replace, map[string]any{}, map[string]any{}}, []string{"aws_launch_template.app"}, false},
+		{"protected_resources by type glob", rc{"aws_launch_template.app", "aws_launch_template", replace, map[string]any{}, map[string]any{}}, []string{"aws_launch_template.*"}, false},
+		{"protected_resources by type glob, in a module", rc{`module.svc["a"].aws_launch_configuration.lc[0]`, "aws_launch_configuration", replace, map[string]any{}, map[string]any{}}, []string{"*aws_launch_configuration.*"}, false},
+		{"a type glob without the star does not reach into a module", rc{"module.svc.aws_launch_configuration.lc", "aws_launch_configuration", replace, map[string]any{}, map[string]any{}}, []string{"aws_launch_configuration.*"}, true},
 		{"rule opened to the internet", rc{"aws_security_group_rule.r", "aws_security_group_rule", replace, sgOffice, sgOpen}, nil, false},
 		{"rule that was already open", rc{"aws_security_group_rule.r", "aws_security_group_rule", replace, sgOpen, sgOpen}, nil, false},
 	}

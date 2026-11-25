@@ -396,6 +396,11 @@ When the analysis cannot follow where a command runs, or stops, the command is j
   - an S3 lifecycle rule that expires objects, since it is often deliberate;
   - resource shapes the exposure rules do not know;
   - `deferred_changes` and `complete: false` in the plan.
+- **Routine replaces are allowed in a standard tier.** A saved plan whose only deletes and replaces are replaces of a listed type that holds no data is not asked about there ([policy.md](policy.md), step 6). A protected tier still blocks it.
+  - **What such a replace can still do.** A replaced permission, policy attachment or security group rule is gone for the seconds between the delete and the create. A replaced launch template loses its version history, and a scale-out in that gap can fail. A replaced Lambda layer version deletes the old artifact unless `skip_destroy` is set. None of these is asked about in a standard tier.
+  - **The list is a table, from what is known of the providers.** It was not checked against each provider's documentation, and it is AWS and Terraform's own types only. A listed type that turns out to lose data on replace is a false allow; say so in an issue. A type that is not listed keeps the ask.
+  - **How often this prompt fired is not measured.** The plan-gate study covered creates, no-ops and tag changes, not replaces.
+  - **To have one asked about again,** list its address under `protected_resources` ([config.md](config.md)).
 
 ## MCP tools and tools no table describes
 
