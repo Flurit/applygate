@@ -2,6 +2,16 @@
 
 What to do when you upgrade from an earlier release. Every change is in [CHANGELOG.md](../CHANGELOG.md).
 
+## To v0.8.0
+
+One default changes. Nothing needs doing unless you want the earlier rule in repositories that have no config. Hooks, configs and trust carry over as they are, and the plugin exception under v0.6.1 below holds here too.
+
+- **In a repository with no `.applygate.yaml`, a shell command that is not plain is asked about only when it names an infrastructure tool or a guard file.** Before, every such command was asked about there: a variable, a loop, the project's tests and scripts. A command applygate recognises (`terraform destroy`, `kubectl delete`) is judged as before, in a protected tier. [policy.md](policy.md) ("Strict shapes") has the words and the conditions, and [limits.md](limits.md#a-repository-with-no-config) says what the narrower rule lets through.
+- **To keep the rule of v0.7.0 everywhere,** set `strict_shapes: true` in the user config (`~/.config/applygate/config.yaml`).
+- **Nothing changes** in a repository that has a config, trusted or not, in a directory whose name says production, or under a managed install. `applygate doctor` says which rule applies in the current directory.
+- **On agents that cannot ask,** such as Codex, an ask is a block. In a repository with no config, fewer ordinary commands are blocked there than before.
+- **`applygate scan`** judges past calls with the new rule, so its share of asks in repositories with no config is lower than a scan from v0.7.0 showed.
+
 ## To v0.7.0
 
 One verdict changes. Nothing needs doing unless you relied on the prompt it removes. Hooks, configs and trust carry over as they are, and the plugin exception under v0.6.1 below holds here too.
