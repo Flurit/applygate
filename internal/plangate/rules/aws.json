@@ -14,6 +14,13 @@
     "aws_kinesis_stream", "aws_msk_cluster", "aws_timestreamwrite_table", "aws_keyspaces_table",
     "aws_qldb_ledger", "aws_cognito_user_pool", "aws_db_snapshot", "aws_db_cluster_snapshot"
   ],
+  "routine_replace_types": [
+    "aws_launch_template", "aws_launch_configuration", "aws_ecs_task_definition",
+    "aws_lambda_layer_version", "aws_lambda_permission",
+    "aws_iam_role_policy_attachment", "aws_iam_user_policy_attachment", "aws_iam_group_policy_attachment",
+    "aws_security_group_rule", "aws_vpc_security_group_ingress_rule", "aws_vpc_security_group_egress_rule",
+    "terraform_data", "null_resource"
+  ],
   "protection": [
     {"types": ["aws_db_instance", "aws_rds_cluster", "aws_docdb_cluster", "aws_neptune_cluster", "aws_rds_global_cluster"], "attr": "deletion_protection", "when": "change", "unsafe": false, "what": "deletion protection turned off"},
     {"types": ["aws_db_instance", "aws_rds_cluster", "aws_docdb_cluster", "aws_neptune_cluster", "aws_redshift_cluster"], "attr": "skip_final_snapshot", "when": "both", "unsafe": true, "what": "final snapshot skipped"},

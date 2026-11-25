@@ -23,11 +23,18 @@ var awsRules []byte
 
 // Rules are the data-driven resource lists.
 type Rules struct {
-	StatefulTypes []string     `json:"stateful_types"`
-	Protection    []Protection `json:"protection"`
-	AdminPorts    []int        `json:"admin_ports"`
-	AdminPolicies []string     `json:"admin_policies"`
-	stateful      map[string]bool
+	StatefulTypes []string `json:"stateful_types"`
+	// RoutineReplaceTypes are the types that hold no data and that a
+	// provider replaces on routine change (a launch configuration, a task
+	// definition, a policy attachment). Replacing one loses nothing and
+	// leaves at most a brief gap. A type that is not listed is not routine:
+	// the list says what is known, and an unknown type keeps the ask.
+	RoutineReplaceTypes []string     `json:"routine_replace_types"`
+	Protection          []Protection `json:"protection"`
+	AdminPorts          []int        `json:"admin_ports"`
+	AdminPolicies       []string     `json:"admin_policies"`
+	stateful            map[string]bool
+	routine             map[string]bool
 }
 
 // Protection is an attribute whose value disables a safeguard.
@@ -71,6 +78,10 @@ func DefaultRules() *Rules {
 	for _, t := range r.StatefulTypes {
 		r.stateful[t] = true
 	}
+	r.routine = map[string]bool{}
+	for _, t := range r.RoutineReplaceTypes {
+		r.routine[t] = true
+	}
 	return &r
 }
 
@@ -90,7 +101,14 @@ type Result struct {
 	Findings []preflight.Finding
 	Deletes  []string // pure deletes
 	Replaces []string
-	Changes  int
+	// RoutineReplaces are the entries of Replaces that are routine: a
+	// managed resource of a type in the rules' routine_replace_types, that
+	// the plan deletes and creates, that is not stateful or listed in
+	// protected_resources, and that no exposure, unknown-watched or
+	// code-execution finding names. A plan whose only deletes and replaces
+	// are these is not a destroy (policy.SavedPlanClass).
+	RoutineReplaces []string
+	Changes         int
 }
 
 // Evaluate parses and checks the plan.
@@ -131,6 +149,7 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 			Message: fmt.Sprintf("the plan invokes %d action(s), which run provider operations applygate cannot check", len(actions))})
 	}
 	var stateful, protection, exposure, stateInfra, outOfScope, unprotectedCreate, reducedCreate, protectedAddr, unknownAttrs []string
+	var routine []string // candidates for RoutineReplaces, before the code-execution check
 	var crit = func(list *[]string, s string) { *list = append(*list, s) }
 
 	for _, rc := range p.ResourceChanges {
@@ -208,7 +227,8 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 			}
 		}
 		if !del {
-			unknownAttrs = append(unknownAttrs, unknownWatched(rc, rules)...)
+			unknown := unknownWatched(rc, rules)
+			unknownAttrs = append(unknownAttrs, unknown...)
 			ev := exposed(rc, after, rules)
 			if acts.Update() {
 				// An update reports only the exposure it introduces; what
@@ -216,6 +236,10 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 				ev = without(ev, exposed(rc, before, rules))
 			}
 			exposure = append(exposure, ev...)
+			if repl && len(ev) == 0 && len(unknown) == 0 && rc.Mode == tfjson.ManagedResourceMode && rules.routine[rc.Type] &&
+				!rules.stateful[rc.Type] && deleteAndCreate(rc.Change.Actions) && !(len(in.Protected) > 0 && isProtected(rc.Address, in.Protected)) {
+				routine = append(routine, rc.Address)
+			}
 		}
 		if in.Backend != nil && in.Backend.Type == "s3" {
 			bucket, table := in.Backend.Config["bucket"], in.Backend.Config["dynamodb_table"]
@@ -246,7 +270,15 @@ func Evaluate(in Input, rules *Rules) (*Result, error) {
 	add("stateful-create-note", preflight.Info, "database created with reduced protection (allowed; recorded)", reducedCreate)
 	add("stateful-destroyed", preflight.Critical, "plan destroys or replaces stateful resources", stateful)
 	add("protected-resource", preflight.Critical, "plan destroys or replaces resources listed in protected_resources", protectedAddr)
-	add("code-execution", preflight.High, "applying this plan runs code outside Terraform's own providers (provisioners or external data sources)", codeExecution(&p))
+	runsCode := codeExecution(&p)
+	add("code-execution", preflight.High, "applying this plan runs code outside Terraform's own providers (provisioners or external data sources)", runsCode)
+	for _, addr := range routine {
+		// A replace runs the new instance's provisioners and the old one's
+		// destroy-time ones: that is not routine.
+		if !slices.ContainsFunc(runsCode, func(ev string) bool { return strings.HasPrefix(ev, addr+": ") }) {
+			res.RoutineReplaces = append(res.RoutineReplaces, addr)
+		}
+	}
 	add("protection-removed", preflight.Critical, "plan removes data protection", protection)
 	add("exposure", preflight.High, "plan exposes resources", exposure)
 	add("unknown-watched", preflight.High, "values the exposure and protection rules check are known only at apply time, so the plan cannot show they are safe", unknownAttrs)
@@ -488,6 +520,18 @@ func anyTrue(v any) bool {
 		}
 	}
 	return false
+}
+
+// deleteAndCreate reports whether the plan's own action list is a replace
+// as show -json writes one: exactly a delete and a create, in either order.
+// normalActions also reads an action applygate does not know, beside a
+// create, as a replace; that one is not known to be a replace at all.
+func deleteAndCreate(in tfjson.Actions) bool {
+	if len(in) != 2 {
+		return false
+	}
+	a, b := tfjson.Action(strings.ToLower(string(in[0]))), tfjson.Action(strings.ToLower(string(in[1])))
+	return a == tfjson.ActionDelete && b == tfjson.ActionCreate || a == tfjson.ActionCreate && b == tfjson.ActionDelete
 }
 
 // normalActions reads an action list as Terraform means it, whatever its
