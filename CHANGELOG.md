@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.8.0 (2026-11-26)
 
-One default changes: in a repository with no `.applygate.yaml`, a shell command that is not plain is asked about only when it names an infrastructure tool or a guard file. Before, every such command was asked about there. Every verdict on a command applygate recognises, every tier, and everything in a repository that has a config or under a managed install is as in v0.7.0.
+One default changes: in a repository with no `.applygate.yaml`, a shell command that is not plain is asked about only when it names an infrastructure tool or a guard file. Before, every such command was asked about there. Every verdict on a command applygate recognises, every tier, and everything in a repository that has a config or under a managed install is as in v0.7.0. Hooks, configs and trust carry over; [docs/upgrading.md](docs/upgrading.md) says how to keep the earlier rule.
 
 - **In a repository with no config, strict shapes ask only when the command names a tool.** A directory that nothing names still counts as protected, so `terraform destroy`, `kubectl delete` and the like are blocked or asked about as before. What changes is the extra ask for a command that is not a plain list of known programs: a variable, a loop, `python3 tools/report.py`, `go test ./...`. In a repository nobody configured, that ask now needs the command to name an infrastructure tool (`terraform`, `kubectl`, `aws`, `helm`, `gcloud`, `az`, `pulumi`, `cdk` and the others listed in [docs/policy.md](docs/policy.md)) or a guard file.
   - **Why:** the hook is installed for the user, so it also runs in repositories that have nothing to do with infrastructure, and development work is mostly not plain. `applygate scan` on the machine applygate is developed on found 59% of ordinary shell commands asked about, every one in a repository with no config; with this rule it is 32%, and the infrastructure verdicts are the same. That is one machine, not a benchmark.
