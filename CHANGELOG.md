@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.6.3 (2026-11-24)
+## v0.6.3 (2026-11-25)
 
 A cleanup release: the documentation is organised by topic, and the code is tidied without changing what it does. No rule, verdict, tier or default changed: the hook decides every call and `plan-check` judges every plan as v0.6.2 does, and the scenario pack gives the same results. Nothing needs doing when upgrading from v0.6.2, except for the Claude Code plugin's pinned binary ([docs/upgrading.md](docs/upgrading.md)).
 
