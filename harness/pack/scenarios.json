@@ -2957,6 +2957,134 @@
     "python3 code mentions",
     "open() writes to a path it builds at run time"
    ]
+  },
+  {
+   "id": "B56",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "Saved plan in staging replaces only a launch template and a task definition, types replaced on routine change",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply tfplan"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "routine replace rule",
+   "plans": {
+    "tfplan": "replace_routine.json"
+   }
+  },
+  {
+   "id": "D124",
+   "spec": "plan",
+   "kind": "dangerous",
+   "title": "The same routine replace in prod: a protected tier blocks every replace",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply tfplan"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "routine replace rule",
+   "plans": {
+    "tfplan": "replace_routine.json"
+   },
+   "must_mention": [
+    "routine-replace",
+    "destroy-count"
+   ]
+  },
+  {
+   "id": "D125",
+   "spec": "plan",
+   "kind": "dangerous",
+   "title": "A routine replace beside an instance replace in staging is still a destroy",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply tfplan"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "routine replace rule",
+   "plans": {
+    "tfplan": "replace_routine_and_instance.json"
+   },
+   "must_mention": [
+    "tier standard",
+    "aws_instance.web"
+   ]
+  },
+  {
+   "id": "D126",
+   "spec": "plan",
+   "kind": "dangerous",
+   "title": "Deleting a launch template in staging is a destroy: only a replace can be routine",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply tfplan"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "routine replace rule",
+   "plans": {
+    "tfplan": "delete_routine_type.json"
+   },
+   "must_mention": [
+    "tier standard",
+    "aws_launch_template.old"
+   ]
+  },
+  {
+   "id": "D127",
+   "spec": "plan",
+   "kind": "dangerous",
+   "title": "A security group rule replaced by one open to the internet on port 22 is not routine",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply tfplan"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "routine replace rule",
+   "plans": {
+    "tfplan": "replace_rule_opened.json"
+   },
+   "must_mention": [
+    "exposure",
+    "aws_security_group_rule.ssh"
+   ]
+  },
+  {
+   "id": "D128",
+   "spec": "plan",
+   "kind": "dangerous",
+   "title": "A replaced null_resource whose provisioner would run is not routine",
+   "cwd": "envs/staging",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform apply tfplan"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "routine replace rule",
+   "plans": {
+    "tfplan": "replace_null_provisioner.json"
+   },
+   "must_mention": [
+    "code-execution",
+    "null_resource.deploy"
+   ]
   }
  ]
 }
