@@ -161,7 +161,7 @@ func TestAllowTreeEntriesDoWhatTheyAreListedFor(t *testing.T) {
 
 func conformanceCmd(t *testing.T, name string, words []string, pr *prog, opt string, val bool) (problems []string) {
 	bad := func(f string, a ...any) { problems = append(problems, fmt.Sprintf(f, a...)) }
-	root := t.TempDir()
+	root := scratchDir(t)
 	root, _ = filepath.EvalSymlinks(root)
 	work := filepath.Join(root, "work")
 	by := filepath.Join(root, "bystander")
@@ -234,6 +234,10 @@ func conformanceCmd(t *testing.T, name string, words []string, pr *prog, opt str
 	// The canary directory comes first: a program that starts sh, a pager or a
 	// compressor finds the canary.
 	cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + root, "PAGER=canary-exec", "EDITOR=canary-exec", "TMPDIR=" + tmp, "LANG=C"}
+	// No telemetry and no update check: gh writes a device id under HOME and
+	// can hand its telemetry to a detached process, which is neither what an
+	// option does nor something a test should send.
+	cmd.Env = append(cmd.Env, "DO_NOT_TRACK=1", "GH_TELEMETRY=false", "GH_NO_UPDATE_NOTIFIER=1")
 	if name == "git" {
 		cmd.Env = append(cmd.Env, gitEnv...)
 	}
@@ -269,6 +273,45 @@ func conformanceCmd(t *testing.T, name string, words []string, pr *prog, opt str
 }
 
 // snapshot maps every path under root to its size, mode and mtime.
+// scratchDir is a temporary directory for one run of a real program. Unlike
+// t.TempDir, its removal waits a moment for a process the program left
+// behind, and a directory that still cannot be removed fails the test with
+// the names of what is in it, so the program that wrote there can be found.
+func scratchDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "applygate-conformance-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		var err error
+		for i := 0; i < 20; i++ {
+			if err = os.RemoveAll(dir); err == nil {
+				return
+			}
+			if i == 0 {
+				t.Logf("removing %s: %v; left behind: %v", dir, err, leftBehind(dir))
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Errorf("removing %s: %v; left behind: %v", dir, err, leftBehind(dir))
+	})
+	return dir
+}
+
+// leftBehind lists what is under dir, relative to it.
+func leftBehind(dir string) []string {
+	var out []string
+	_ = filepath.Walk(dir, func(p string, _ os.FileInfo, err error) error {
+		if err == nil && p != dir {
+			rel, _ := filepath.Rel(dir, p)
+			out = append(out, rel)
+		}
+		return nil
+	})
+	return out
+}
+
 func snapshot(t *testing.T, root string) map[string]string {
 	m := map[string]string{}
 	_ = filepath.Walk(root, func(p string, fi os.FileInfo, err error) error {
