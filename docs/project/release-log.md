@@ -2,6 +2,24 @@
 
 What was checked on each release after it was published, newest first. [RELEASE.md](RELEASE.md) says what to check; this file records that it was done and what was seen. Releases up to v0.1.4 were published under the project's old name, seatbelt.
 
+## v0.6.3
+
+**v0.6.3** ([release](https://github.com/Flurit/applygate/releases/tag/v0.6.3), run 45548170817, commit `c329fb7`; a cleanup release: the documentation organised by topic, `docs/limits.md` corrected against the code, the largest source files split by responsibility; no rule, verdict, tier or default changed) was verified on macOS 26.7.1 (Intel) with cosign v3.1.4 on 2026-11-25:
+
+- the install.md verify steps with the tag set to v0.6.3 against `release.yml@refs/tags/v0.6.3` (the v0.6.2 identity is rejected)
+- sha256 of all four archives and their SBOMs against the signed `checksums.txt`
+- the build-provenance attestation of all four archives with `gh attestation verify` 2.102.0 (signer `release.yml@refs/tags/v0.6.3` at `c329fb7`; a check of the darwin/amd64 archive against `refs/tags/v0.6.2` is rejected)
+- `applygate version` 0.6.3 and `selftest` 163/163 exact (108/108 dangerous) on the released darwin/amd64 binary
+- `plan-check` on that binary with the two real AWS plans in `testdata/real_plan`: the delete blocked in a protected tier (exit code 3), the create asked about in a protected tier (exit code 4) and allowed in a standard one
+- `applygate hosts` on that binary naming the acceptance report at its new path, the one output this release changed
+- the tag's `install.sh` (the same bytes as the tagged file) with `APPLYGATE_VERIFY_SIGNATURE=require` installing 0.6.3 in 231 s on a slow connection
+- `go install github.com/Flurit/applygate/cmd/applygate@v0.6.3` through the public proxy and checksum database (`h1:9G4K/oIM…`, origin `refs/tags/v0.6.3` at `c329fb7`) reporting 0.6.3
+- the Claude Code plugin re-pinned to v0.6.3 with `scripts/pin-plugin-release.sh`, and the four archive sha256 values in `packaging/homebrew/applygate.rb` taken from the signed `checksums.txt`
+
+The tag was pushed after both workflows had passed on the commit. **The approval gate held:** the test job passed and the release job waited about seven minutes for the `release` environment's approval, which is recorded under the owner's account; the session that pushed the tag did not enter it.
+
+Not run for this release: the plugin's launcher fetching the pinned release with no applygate on PATH, the Homebrew upgrade from the tap, the Action at the tag from a workflow, the hook on Linux, and any agent live.
+
 ## v0.6.2
 
 **v0.6.2** ([release](https://github.com/Flurit/applygate/releases/tag/v0.6.2), run 43907944846, commit `9c3ad4f`; ships the Action's pull-request comment with the plan check's verdict (opt-in), `plan-check --comment-file`, and an Action that installs the release it is tagged at; no rule, verdict, tier or default changed) was verified on macOS 26.7.1 (Intel) with cosign v3.1.4 on 2026-11-16: the install.md verify steps with the tag set to v0.6.2 against `release.yml@refs/tags/v0.6.2` (the v0.6.1 identity is rejected), sha256 of all four archives and their SBOMs against the signed `checksums.txt`, the build-provenance attestation of all four archives with `gh attestation verify` 2.102.0 (signer `release.yml@refs/tags/v0.6.2` at `9c3ad4f`; a check of the darwin/amd64 archive against `refs/tags/v0.6.1` is rejected), `applygate version` 0.6.2 and `selftest` 163/163 exact (108/108 dangerous) on the released darwin/amd64 binary;
