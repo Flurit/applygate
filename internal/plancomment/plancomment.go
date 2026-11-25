@@ -270,7 +270,19 @@ func reasons(in Input, res *plangate.Result) (drivers, others []reason, destroyS
 		}
 	}
 	n := len(res.Deletes) + len(res.Replaces)
-	if n > 0 && in.Verdict != policy.Allow && policy.Table[classify.Destroy][in.Tier] == in.Verdict {
+	// The class the plan has, not destroy: a plan whose replaces are all
+	// routine is not asked about for them, so an ask beside them has
+	// another reason and they are not it.
+	class := policy.SavedPlanClass(res)
+	drives := in.Verdict != policy.Allow && class != classify.ApplySavedPlan && policy.Table[class][in.Tier] == in.Verdict
+	if class == classify.RoutineReplace && !drives {
+		others = append(others, reason{
+			head:  fmt.Sprintf("%s replaced, of types that hold no data and are replaced on routine change (%s); a protected tier blocks these", plural(n, "resource"), code(string(class))),
+			below: res.Replaces,
+		})
+		destroyShown = true
+	}
+	if n > 0 && drives {
 		// The resources the reasons above already name are not repeated.
 		var rest []string
 		for _, a := range res.Deletes {

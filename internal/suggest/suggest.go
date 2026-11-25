@@ -461,7 +461,7 @@ func advice(f Flag) string {
 		parts = append(parts, "init -migrate-state, a bare init -reconfigure and state rm/mv/push move state; they ask outside protected tiers and block inside them")
 	case classify.ApplySavedPlan:
 		parts = append(parts, "the plan gate found something in the saved plan; the log entry lists the findings")
-	case classify.Destroy, classify.UnreviewedApply, classify.CloudDestructive:
+	case classify.Destroy, classify.RoutineReplace, classify.UnreviewedApply, classify.CloudDestructive:
 		parts = append(parts, "this is what the gate is for; expected")
 	case classify.Tampering:
 		parts = append(parts, "an edit to a hook, config or log file; always blocked")

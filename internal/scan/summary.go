@@ -35,7 +35,7 @@ const (
 
 var infraClasses = map[classify.Class]bool{
 	classify.ReadOnly: true, classify.Mutating: true, classify.CloudWrite: true, classify.ApplySavedPlan: true,
-	classify.UnreviewedApply: true, classify.Destroy: true, classify.StateSurgery: true, classify.CloudDestructive: true,
+	classify.UnreviewedApply: true, classify.Destroy: true, classify.RoutineReplace: true, classify.StateSurgery: true, classify.CloudDestructive: true,
 	classify.CredentialAccess: true, classify.UnknownWrapper: true,
 }
 
@@ -44,7 +44,7 @@ var guardClasses = map[classify.Class]bool{classify.Tampering: true, classify.Ho
 // changeClasses are the actions that change infrastructure when they run.
 var changeClasses = map[classify.Class]bool{
 	classify.Mutating: true, classify.CloudWrite: true, classify.ApplySavedPlan: true, classify.UnreviewedApply: true,
-	classify.Destroy: true, classify.StateSurgery: true, classify.CloudDestructive: true,
+	classify.Destroy: true, classify.RoutineReplace: true, classify.StateSurgery: true, classify.CloudDestructive: true,
 }
 
 // Row is one judged call, with secrets already redacted.

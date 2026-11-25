@@ -417,3 +417,58 @@ func TestMessageThatQuotesPlanTextIsEscaped(t *testing.T) {
 		}
 	}
 }
+
+// A plan whose replaces are all routine is allowed in a standard tier, and
+// the comment says what was replaced and why that is allowed; a protected
+// tier blocks it; and when something else asks, the replaces are not given
+// as the reason.
+func TestRoutineReplaceIsNotGivenAsTheReason(t *testing.T) {
+	routine := []change{
+		{"aws_launch_template.app", "aws_launch_template", []string{"delete", "create"}},
+		{"module.svc.aws_ecs_task_definition.app", "aws_ecs_task_definition", []string{"create", "delete"}},
+	}
+	body := Render(judge(t, plan(t, routine), config.Standard))
+	mustContain(t, body,
+		"### applygate plan check: ✅ allow",
+		"2 changes, 0 destroyed, 2 replaced",
+		"**Found, and allowed in this tier**",
+		"2 resources replaced, of types that hold no data and are replaced on routine change (`routine-replace`); a protected tier blocks these",
+		"- `aws_launch_template.app`",
+		"- `module.svc.aws_ecs_task_definition.app`",
+	)
+	for _, no := range []string{"**Why", "any destroy or replace", "Replaced (2)"} {
+		if strings.Contains(body, no) {
+			t.Errorf("an allowed routine replace has %q:\n%s", no, body)
+		}
+	}
+	if n := strings.Count(body, "`aws_launch_template.app`"); n != 1 {
+		t.Errorf("the replaced address is listed %d times:\n%s", n, body)
+	}
+
+	body = Render(judge(t, plan(t, routine), config.Protected))
+	mustContain(t, body, "⛔ block", "**Why block**", "A protected tier blocks any destroy or replace; this plan has 2")
+	if strings.Contains(body, "a protected tier blocks these") {
+		t.Errorf("the block repeats the routine note:\n%s", body)
+	}
+
+	// A routine replace beside a database whose deletion protection is turned
+	// off: the standard tier asks about the database, not about the replace.
+	b, err := json.Marshal(map[string]any{"format_version": "1.2", "planned_values": map[string]any{}, "resource_changes": []map[string]any{
+		{"address": "aws_launch_template.app", "mode": "managed", "type": "aws_launch_template", "name": "app",
+			"change": map[string]any{"actions": []string{"delete", "create"}, "before": map[string]any{}, "after": map[string]any{}}},
+		{"address": "aws_db_instance.main", "mode": "managed", "type": "aws_db_instance", "name": "main",
+			"change": map[string]any{"actions": []string{"update"}, "before": map[string]any{"deletion_protection": true}, "after": map[string]any{"deletion_protection": false}}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = Render(judge(t, b, config.Standard))
+	mustContain(t, body, "⚠️ ask", "**Why ask**", "(`protection-removed`)", "**Also found**", "1 resource replaced, of types that hold no data")
+	if strings.Contains(body, "any destroy or replace") {
+		t.Errorf("the ask is blamed on a replace the tier allows:\n%s", body)
+	}
+	why, also := strings.Index(body, "**Why ask**"), strings.Index(body, "**Also found**")
+	if i := strings.Index(body, "1 resource replaced"); i < also || also < why {
+		t.Errorf("the routine replace is not under \"Also found\":\n%s", body)
+	}
+}
