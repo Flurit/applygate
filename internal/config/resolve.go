@@ -73,6 +73,11 @@ type Resolution struct {
 	// protected one the command could be in under the session root, not
 	// the tier of a known directory.
 	DirUnknown bool
+	// ByDefault is set when the tier is only the default for a directory
+	// nothing names (protected under strict, default_tier otherwise): no
+	// environment, name hint or unknown signal matched, and under a root
+	// no environment could.
+	ByDefault bool
 }
 
 // Name hints: prod, production, prd or live as a whole word between the
@@ -322,13 +327,13 @@ func (c *Config) Resolve(s Signals) Resolution {
 	}
 	if best.Unknown {
 		if c.IsStrict() {
-			return Resolution{Tier: Protected, Env: "unknown", Unknown: true, Matched: []string{"no environment matched; strict mode treats it as protected"}}
+			return Resolution{Tier: Protected, Env: "unknown", Unknown: true, ByDefault: true, Matched: []string{"no environment matched; strict mode treats it as protected"}}
 		}
 		t := c.DefaultTier
 		if t == "" {
 			t = Standard
 		}
-		return Resolution{Tier: t, Env: "unknown", Unknown: true, Matched: []string{"no environment matched; using default_tier " + string(t)}}
+		return Resolution{Tier: t, Env: "unknown", Unknown: true, ByDefault: true, Matched: []string{"no environment matched; using default_tier " + string(t)}}
 	}
 	return best
 }
@@ -411,6 +416,7 @@ func (c *Config) ResolveUnknownDir(agent, root string, s Signals) Resolution {
 func (c *Config) ResolveUnder(root string, s Signals, why string) Resolution {
 	s.Dir = root
 	best := c.Resolve(s)
+	byDefault := best.ByDefault
 	consider := func(env string, t Tier, why string) {
 		if t.Rank() > best.Tier.Rank() {
 			best = Resolution{Tier: t, Env: env, Matched: []string{why}}
@@ -418,11 +424,19 @@ func (c *Config) ResolveUnder(root string, s Signals, why string) Resolution {
 			best.Matched = append(best.Matched, why)
 		}
 	}
+	// An environment that could match under the root at this tier or a
+	// stricter one means the tier is no longer only the default.
+	named := func(t Tier) {
+		if t.Rank() >= best.Tier.Rank() {
+			byDefault = false
+		}
+	}
 	covered := false
 	for _, e := range c.Environments {
 		m := e.Match
 		for _, p := range m.Paths {
 			if root != "" && globCouldMatchUnder(p, root) {
+				named(e.Tier)
 				consider(e.Name, e.Tier, "path "+p+" could match a directory under the root")
 				if globCoversSubtree(p, root) {
 					covered = true
@@ -430,6 +444,7 @@ func (c *Config) ResolveUnder(root string, s Signals, why string) Resolution {
 			}
 		}
 		if len(m.Workspaces)+len(m.Backends)+len(m.AWSProfiles)+len(m.AWSAccounts) > 0 {
+			named(e.Tier)
 			consider(e.Name, e.Tier, "environment "+e.Name+" matches by workspace, backend or profile, which a directory under the root could carry")
 		}
 	}
@@ -445,6 +460,7 @@ func (c *Config) ResolveUnder(root string, s Signals, why string) Resolution {
 		}
 	}
 	best.DirUnknown = true
+	best.ByDefault = byDefault && best.Env == "unknown"
 	best.Matched = append([]string{fmt.Sprintf("%s; judged at the most protected tier under %s (%s, tier %s)", why, root, best.Env, best.Tier)}, best.Matched...)
 	return best
 }

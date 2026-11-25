@@ -3,6 +3,7 @@ package shell
 import (
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -878,6 +879,27 @@ func Mentions(text string) []string {
 		s = strings.ToLower(strings.Join(strings.Fields(s), " "))
 		if !seen[s] {
 			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// infraNameRe are the infrastructure programs Mentions does not list:
+// those with rules of their own (docs/capabilities.md) and those the docs
+// name as not covered. A bare aws counts here; Mentions wants a service and
+// an operation after it.
+var infraNameRe = regexp.MustCompile(`(?i)\b(opentofu|aws|helm|oc|gcloud|gsutil|az|eksctl|pulumi|cdk|flux|argocd|ansible|vault|kustomize)\b`)
+
+// NamesInfra returns the infrastructure tools and guard files text names:
+// what Mentions finds, and the other infrastructure programs as whole
+// words. It is a word match on text as written, for the question "does
+// this command have anything to do with infrastructure"; it proves nothing
+// about a text that names none.
+func NamesInfra(text string) []string {
+	out := Mentions(text)
+	for _, s := range infraNameRe.FindAllString(text, 8) {
+		if s = strings.ToLower(s); !slices.Contains(out, s) {
 			out = append(out, s)
 		}
 	}

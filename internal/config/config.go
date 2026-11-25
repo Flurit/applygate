@@ -126,6 +126,11 @@ type Config struct {
 	// config, so a repository without .applygate.yaml still has its hook
 	// files guarded (GuardTargets).
 	GitRoot string `yaml:"-"`
+	// NoRepoConfig is set by Load when the directory it looked up has no
+	// repository config at all, trusted or not. Strict shapes then ask only
+	// about a command that names an infrastructure tool or a guard file
+	// (ShapesByWord).
+	NoRepoConfig bool `yaml:"-"`
 }
 
 // Wrapper declares a program that runs another command: the command
@@ -255,8 +260,19 @@ func (c *Config) IsStrict() bool { return on(c.Strict, true) }
 func (c *Config) UnknownDirMostProtected() bool {
 	return c.UnknownDir != UnknownDirSessionRoot
 }
-func (c *Config) UseNameHints() bool    { return on(c.NameHints, true) }
-func (c *Config) StrictShapesOn() bool  { return on(c.StrictShapes, true) }
+func (c *Config) UseNameHints() bool   { return on(c.NameHints, true) }
+func (c *Config) StrictShapesOn() bool { return on(c.StrictShapes, true) }
+
+// ShapesByWord reports whether strict shapes, in a directory that is
+// protected only because no environment names it, ask about a command that
+// is not plain only when it names an infrastructure tool or a guard file.
+// That is the default in a repository with no config: nobody chose
+// strictness there, and development work (tests, builds, one-line scripts)
+// is not plain. strict_shapes: true in any config, a repository config
+// (trusted or not) and a managed install keep the full rule.
+func (c *Config) ShapesByWord() bool {
+	return c.StrictShapes == nil && c.NoRepoConfig && !Managed()
+}
 func (c *Config) ApprovalsOn() bool     { return on(c.Approvals, false) }
 func (c *Config) Observe() bool         { return c.Mode == "observe" }
 func (c *Config) StaleStateCheck() bool { return on(c.Preflight.StaleState, true) }

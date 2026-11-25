@@ -376,10 +376,12 @@ func (s Summary) Render(w io.Writer, o RenderOptions) {
 		fmt.Fprintf(w, "  allowed      %s\n", num(shell-asked))
 	}
 	if asked > 0 {
-		fmt.Fprintln(w, "\n  These asks name no infrastructure tool. They are commands applygate does not follow in full")
-		fmt.Fprintln(w, "  (a loop, a script, a program it has no option list for), run where the directory counts as protected.")
+		fmt.Fprintln(w, "\n  These are commands applygate does not follow in full (a loop, a script, a program it has no")
+		fmt.Fprintln(w, "  option list for), run where the directory counts as protected.")
 		if noCfg > 0 {
 			fmt.Fprintf(w, "  %s of them ran where no trusted .applygate.yaml covers the directory, and an unknown directory counts as protected.\n", num(noCfg))
+			fmt.Fprintln(w, "  Where there is no config at all, such a command is asked about only when it names an infrastructure")
+			fmt.Fprintln(w, "  tool or a guard file, or runs a script or code applygate cannot read.")
 			fmt.Fprintln(w, "  A config that marks such a repository standard or disposable removes them (applygate init, docs/config.md).")
 		}
 		fmt.Fprintln(w, "\n  What kept them from being plain commands, most frequent first:")

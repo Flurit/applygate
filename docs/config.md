@@ -42,7 +42,7 @@ name_hints: true         # treat prod/production/prd/live as a whole word in nam
 unknown_dir: most_protected   # most_protected | session_root: how a command is judged when the host does not report its directory (Codex 0.165.0); a repository config may set most_protected but not session_root
 approvals: false         # user config only: on agents that cannot show an ask prompt, let a person allow one asked call with `applygate approve ID` (docs/policy.md step 9). Off by default: on one machine the agent can reach any terminal the person can, so turning this on trusts that no agent runs `applygate approve` in a way applygate does not recognise
 log_path: ~/.local/state/applygate/decisions.jsonl   # user config only
-strict_shapes: true      # in a protected environment, ask about a shell command that is not a plain list or pipeline of known programs in their exact shapes (docs/policy.md step 3); false only from the user config
+strict_shapes: true      # in a protected environment, ask about a shell command that is not a plain list or pipeline of known programs in their exact shapes (docs/policy.md step 3); false only from the user config. Not set: the same, except in a repository with no config (see the notes)
 aliases: {tf: terraform} # user config only
 
 environments:            # any matching signal applies; the most protected match wins
@@ -92,6 +92,14 @@ protected_resources: []         # address globs whose destroy/replace is critica
 ```
 
 ## Notes on keys
+
+**`strict_shapes`** has three states.
+
+- **Not set** (the default): strict shapes ask in every protected tier, except in a repository with no `.applygate.yaml`. There a directory is protected only because nothing names it, and a command that is not plain is asked about only when it names an infrastructure tool or a guard file ([policy.md](policy.md), "Strict shapes").
+- **`true`**: strict shapes ask about every command that is not plain, in a repository with no config too. Set it in the user config to keep the rule of v0.7.0 and earlier everywhere.
+- **`false`** (user config only): strict shapes are off.
+
+A repository config, trusted or not, and a managed install both bring the full rule back for that repository. `applygate doctor` says which state applies in the current directory.
 
 **Defaults.** Because the most protected matching environment wins, an environment that matches everything (`paths: ["**"]`) overrides every less protected one: `examples/**` → disposable plus `**` → standard makes the examples standard too. For a default, set `strict: false` and `default_tier` instead.
 

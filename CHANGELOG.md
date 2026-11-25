@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+One default changes: in a repository with no `.applygate.yaml`, a shell command that is not plain is asked about only when it names an infrastructure tool or a guard file. Before, every such command was asked about there. Every verdict on a command applygate recognises, every tier, and everything in a repository that has a config or under a managed install is as in v0.7.0.
+
+- **In a repository with no config, strict shapes ask only when the command names a tool.** A directory that nothing names still counts as protected, so `terraform destroy`, `kubectl delete` and the like are blocked or asked about as before. What changes is the extra ask for a command that is not a plain list of known programs: a variable, a loop, `python3 tools/report.py`, `go test ./...`. In a repository nobody configured, that ask now needs the command to name an infrastructure tool (`terraform`, `kubectl`, `aws`, `helm`, `gcloud`, `az`, `pulumi`, `cdk` and the others listed in [docs/policy.md](docs/policy.md)) or a guard file.
+  - **Why:** the hook is installed for the user, so it also runs in repositories that have nothing to do with infrastructure, and development work is mostly not plain. `applygate scan` on the machine applygate is developed on found 59% of ordinary shell commands asked about, every one in a repository with no config; with this rule it is 32%, and the infrastructure verdicts are the same. That is one machine, not a benchmark.
+  - **What it costs:** in such a repository, a command that is not plain and names none of those words runs without a prompt. Replayed there, 73 of the 765 dangerous reproductions of the attack pack are allowed, where 5 were. Most plant a file with one call and run it with a later, ordinary-looking one. [docs/limits.md](docs/limits.md#a-repository-with-no-config) lists the kinds, and a test pins the list.
+  - **Where nothing changes:** a directory that a config or a name hint (`prod`, `live`) makes protected; every directory of a repository that has a config, trusted or not; a managed install.
+  - **To keep the rule of v0.7.0 everywhere,** set `strict_shapes: true` in the user config.
+  - `applygate doctor` says which rule applies in the current directory, and a decision that the narrower rule allowed or kept says so.
+- **The scenario pack has 177 scenarios** (118 dangerous, 59 benign): eight are new, seven of them in a fixture repository with no config.
+
 ## v0.7.0 (2026-11-25)
 
 One verdict changes: a saved plan that only replaces resources that hold no data is allowed in a standard tier, where it was asked about. Every other rule, verdict, tier and default is as in v0.6.3, and a protected tier still blocks every replace. Hooks, configs and trust carry over; [docs/upgrading.md](docs/upgrading.md) says what to check if a CI job or a person relied on that prompt.

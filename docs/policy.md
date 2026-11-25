@@ -82,6 +82,13 @@ Strict shapes (`strict_shapes`, on by default; only the user config can turn it 
 
 The added action has class `complex-shape`. It is judged in each directory the command runs in: it asks in a protected environment and is allowed elsewhere (see the note under the [verdict table](#verdict-table)). It catches constructs that make the shell run code the analyzer does not follow, such as an exported function, arithmetic on a variable holding `$(…)`, `PS4` under tracing and `BASH_ENV=/dev/stdin`.
 
+**In a repository with no config the rule is narrower.** A directory that nothing names is protected only by default. There the `complex-shape` action asks only when the command names an infrastructure tool or a guard file; otherwise it is allowed, and the decision says so. Development work is mostly not plain (a variable, a loop, the project's tests and scripts), and in a repository nobody configured it would otherwise be asked about all day.
+
+- **Where it applies:** no `.applygate.yaml` covers the directory (trusted or not), there is no managed install, `strict_shapes` is not set, and neither an environment nor a name hint gives the directory its tier.
+- **Where the full rule stays:** a directory that a config or a name hint makes protected; every directory of a repository that has a config; a managed install; input typed into a shell that keeps running between calls; everywhere with `strict_shapes: true` in the user config. When the user config names a protected environment by workspace, backend or profile, a command that can run code the analysis does not follow also keeps the full rule, because that code could use it.
+- **What counts as naming one:** `terraform`, `tofu`, `terragrunt`, `kubectl`, `aws`, `helm`, `oc`, `gcloud`, `gsutil`, `az`, `eksctl`, `pulumi`, `cdk`, `flux`, `argocd`, `ansible`, `vault` and `kustomize` as whole words; the agents' hook settings, applygate's own files, `.aws/credentials` and state files; the AWS SDKs. They are looked for in the command as written, in the words, variables and input the analysis resolved, and in what it could not resolve.
+- **It is a word match, not a guarantee.** A command that is not plain and names none of these runs without a prompt there. [limits.md](limits.md#a-repository-with-no-config) says what that lets through.
+
 The measured cost of strict shapes on real agent calls is in [limits.md](limits.md).
 
 #### Exact shapes
@@ -404,7 +411,7 @@ The model judge (`judge`) is off by default and can be turned on in the user con
 | credential-access | ask | ask | ask |
 | complex-shape (strict shapes) | ask | allow* | allow* |
 
-\* A complex-shape command that can also run code the analysis does not follow (python3, perl, an unresolved program name, a nested agent) is judged a second time at the most protected tier under the repository root. So it asks in a standard or disposable directory when a protected environment is under the root ([limits.md](limits.md) lists the costs of this cross-directory rule).
+\* A complex-shape command that can also run code the analysis does not follow (python3, perl, an unresolved program name, a nested agent) is judged a second time at the most protected tier under the repository root. So it asks in a standard or disposable directory when a protected environment is under the root ([limits.md](limits.md) lists the costs of this cross-directory rule). In a repository with no config, a complex-shape command asks only when it names an infrastructure tool or a guard file ([Strict shapes](#strict-shapes)).
 
 **`init -reconfigure`** is state surgery only when it is bare or migrates state.
 

@@ -12,7 +12,7 @@ This page lists what applygate does not see, cover or guarantee, the harmless co
 - **Engine.** `terraform`, `tofu` or `terragrunt`.
 - **Repository root.** The directory of the outermost `.applygate.yaml`, else the session directory.
 - **Most protected tier under the root.** The most protected tier that any directory under the root could have. applygate uses it when it does not know where a command runs.
-- **Plain command, strict shapes.** A plain command is a list or pipeline of known programs, each called with subcommands and options that are known not to run another program. With `strict_shapes: true` (the default), a shell command that is not plain asks in a protected directory.
+- **Plain command, strict shapes.** A plain command is a list or pipeline of known programs, each called with subcommands and options that are known not to run another program. With `strict_shapes: true` (the default), a shell command that is not plain asks in a protected directory. In a repository with no config it asks only when it names an infrastructure tool or a guard file ([A repository with no config](#a-repository-with-no-config)).
 - **Unresolved.** A word, value or file that the analysis cannot work out without running the command.
 - **Code the analysis does not follow.** A program or construct whose effect the analysis cannot work out, such as an interpreter or an unresolved program name. A command that can run such code is also judged at the most protected tier under the root ([the cross-directory rule](#commands-that-can-run-code-the-analysis-does-not-follow)).
 - **Guard file, tampering.** A guard file controls the hook, the agent or a program the hook trusts: hook settings, applygate's config, and others. An agent's change to one is guard tampering, which is blocked in every tier.
@@ -217,6 +217,20 @@ When the analysis cannot follow where a command runs, or stops, the command is j
 - **The cost.** Run from a disposable directory under a root that holds a protected environment, these ask: a `python3` script, `make` with no Makefile or `make test`, `npm test`, `pytest`, `cargo test`, `go test`, `docker build`, `rsync`, `dd`, `git push`, `terragrunt plan`, a `PATH` set to an unresolved value, `init` followed by `plan`, `apply` or `destroy` in one command, terragrunt `run_cmd`, a nested `codex exec`, a bare `y` typed through `write_stdin`, and a `cd` into a directory that cannot be followed. A variable assignment that is not plain asks too: `export FOO=bar` and `FOO=bar ls`.
 - **It judges at the tier, not the target.** The rule cannot tell that a `python3` script only edits files. The judge, when on, can, and says so in the ask message. A reviewed allow list of scripts is not built.
 - **Where it does not apply:** a plain command, and a repository with no protected environment under its root (the most protected tier there is standard or disposable). Whether Claude Code's `Bash` tool and Codex's `write_stdin` keep a function or a `PATH` that one call sets for a later call in another repository has not been verified.
+
+### A repository with no config
+
+- **The rule.** Where no `.applygate.yaml` covers the directory, there is no managed install and `strict_shapes` is not set, a command that is not plain is asked about only when it names an infrastructure tool or a guard file ([policy.md](policy.md), "Strict shapes"). The directory still counts as protected: a command applygate recognises is blocked or asked about as anywhere else.
+- **What it lets through.** A command that is not plain, names none of those words, and still reaches infrastructure or a guard file. Replayed in a repository with no config, 73 of the 765 dangerous reproductions of the attack pack are allowed, from 25 review findings; with the full rule 5 are. The kinds:
+  - a file planted by an earlier call that a later, ordinary-looking call runs: a git hook, `core.fsmonitor` or `core.sshCommand` behind `git status`, `git commit` or `git push`; an archive unpacked over hook or git files (`tar xf`, `unzip -o`, `rsync -a`, `cp -R … .git/`);
+  - an option that makes a trusted program run another: `rg --pre sh`, `sort --compress-program=sh`, `go list -toolexec`, `curl -K`, `sed -f`, `tar -T`, `zip -TT`, `actionlint -shellcheck`, `podman --runtime`;
+  - a program applygate has no option list for: `./sort destroy -auto-approve`, `checkov`, `infracost`, `trivy`, `tflint --config`;
+  - a write through an option or a shell form the full rule does not accept: `curl -o`, `wget -o`, `tree -o`, `gzip -k`, `find -fprint`, `echo x >| out.tf`, `hash ls=./tail; ls`.
+- **The list is pinned.** `harness/testdata/no_config_allowed.txt` holds the 73 ids, and `TestAttackPackWithoutConfig` fails when a reproduction that is not on it becomes allowed. The replay renames `envs/prod` to `envs/main`, because a directory named `prod` is protected by its name and keeps the full rule. The figures are from the Claude Code event format on macOS.
+- **It is a word match.** The words are looked for in the command as written and in what the analysis resolved. A name assembled when the command runs, or one that is only in a file the command reads, is not seen. `aws`, `vault`, `oc` and the others match as whole words wherever they stand, so a path such as `tools/aws/report.sh` keeps the ask.
+- **What stays asked there whatever it names:** a script or sourced file that cannot be read, interpreter code that mentions infrastructure or cannot be analyzed, a program or file named by something that cannot be resolved, and a redirect or removal whose target cannot be resolved.
+- **To get the full rule:** `strict_shapes: true` in the user config, a repository config, or a managed install.
+- **Not measured:** how often the narrower rule matters to an agent that is trying to get around the check. Without a managed install that agent has other routes ([Self-protection](#self-protection)).
 
 ### Tier signals
 
@@ -511,7 +525,7 @@ What each host can do with the hook, as verified live, is the generated table in
 
 ## Asks and blocks you may not expect
 
-These are the costs of the rules: harmless commands that are asked about or blocked. Unless a line says otherwise, an ask here comes from strict shapes: it applies in a protected directory, and in a directory next to a protected one when the command can also run code the analysis does not follow. A command that changes something is still judged on its class (a destroy, a cloud write and so on); in a protected tier it also asks as not plain. Turn strict shapes off with `strict_shapes: false` in the user config if you accept the shell constructs it covers.
+These are the costs of the rules: harmless commands that are asked about or blocked. Unless a line says otherwise, an ask here comes from strict shapes: it applies in a protected directory, and in a directory next to a protected one when the command can also run code the analysis does not follow. A command that changes something is still judged on its class (a destroy, a cloud write and so on); in a protected tier it also asks as not plain. In a repository with no config these asks apply only to a command that names an infrastructure tool or a guard file ([A repository with no config](#a-repository-with-no-config)). Turn strict shapes off with `strict_shapes: false` in the user config if you accept the shell constructs it covers.
 
 Where a line says a program is plain "with listed options", the lists are in the source: `internal/shell/allow.go`, `allow_tools.go`, `allow_cli.go`, `allow_git.go` and `allow_scan.go`.
 
@@ -625,6 +639,7 @@ Lines on this page that say "open", "reported", "not covered" or "not known to b
 - **The "17 / 17" comparison** is a self-authored scenario set against self-chosen guards.
 - **The attack pack** consists of the reviewers' own finds. It shows that fixed findings stay fixed, not how much is covered.
 - **About a third of real agent calls ask in a protected directory.**
+- **Asks in repositories with no config, on one machine.** `applygate scan` on the machine applygate is developed on (2026-11-25, 192 sessions, about 12,300 ordinary shell commands, every repository without a config) found 59% of those commands asked about under the full rule and 32% under the rule for a repository with no config; the infrastructure verdicts were the same (212 blocks, 25 asks). Of the asks that remain, 43% are scripts the replay could not read, many of them deleted since. Under the full rule nine in ten of the strict-shapes asks were in the applygate checkout, where commands name `terraform` all day, so another machine will differ.
 
 ## Untested
 

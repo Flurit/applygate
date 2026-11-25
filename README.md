@@ -54,6 +54,7 @@ Every command is judged by the environment it targets. You map directories, work
 - **Plan check:** for `apply <planfile>` it reads the plan and rates what it finds as critical or high: destroyed or replaced stateful resources, removed deletion protection, internet exposure, IAM wildcards, state-backend changes. In a protected environment critical findings block and high ones ask; in a standard one critical findings ask. You can mark your own resources as critical ([policy](docs/policy.md)).
 - **Turning applygate off** is blocked in every tier, but only a managed install makes that a guarantee ([below](#what-it-does-not-protect-against)).
 - **Outside protected environments,** applygate still asks about a command that can run code it cannot follow if the same repository holds a protected environment.
+- **In a repository with no `.applygate.yaml`,** every directory counts as protected, but the last row applies only to a command that names an infrastructure tool or one of the agent's or applygate's own files. `strict_shapes: true` in your user config, or a managed install, applies it to every command ([policy](docs/policy.md)).
 
 ### Why not a pattern matcher?
 
@@ -67,7 +68,7 @@ On 17 dangerous Terraform scenarios (our own set, so a demonstration, not a meas
 | A competent hand-written Rego/regex policy | 14 / 17 |
 | **applygate** (protected tier) | **17 / 17** |
 
-The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios are in [harness/](harness), and `applygate selftest` runs all 169 scenarios against your binary.
+The hand-written policy also blocked harmless text like `git commit -m "never run terraform destroy"`. The scenarios are in [harness/](harness), and `applygate selftest` runs all 177 scenarios against your binary.
 
 ## Supported agents
 

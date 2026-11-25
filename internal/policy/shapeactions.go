@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/Flurit/applygate/internal/classify"
 	"github.com/Flurit/applygate/internal/preflight"
@@ -17,7 +18,62 @@ func isTerraform(engine string) bool {
 // plain: one per directory its programs are known to run in, each judged at
 // that directory's tier: ask in protected, allow elsewhere. A part the
 // analysis lost is judged by the command's own actions.
-func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action) []classify.Action {
+func shapeActions(ev Event, res *shell.Result, deps Deps, acts []classify.Action, copt classify.Options) []classify.Action {
+	out := shapeActionsOf(ev, res, deps, acts)
+	if len(out) == 0 {
+		return nil
+	}
+	named := namesInfra(ev, res, copt)
+	for i := range out {
+		out[i].Named, out[i].Unnamed = named, len(named) == 0
+	}
+	return out
+}
+
+// namesInfra returns the infrastructure tools and guard files a command
+// names: in its text as written, in the words, variables and input the
+// analysis resolved, and in what the analysis refused to resolve. In a
+// repository with no config, strict shapes ask only about a command that
+// names one (config.ShapesByWord).
+func namesInfra(ev Event, res *shell.Result, copt classify.Options) []string {
+	var b strings.Builder
+	b.WriteString(ev.Command)
+	word := func(w shell.Word) {
+		b.WriteByte('\n')
+		if w.Resolved {
+			b.WriteString(w.Text)
+		} else {
+			b.WriteString(w.Prefix)
+		}
+	}
+	for _, inv := range res.Invocations {
+		for _, w := range inv.Args {
+			word(w)
+		}
+		for _, r := range inv.Redirs {
+			word(r.Target)
+		}
+		for k, v := range inv.Env {
+			b.WriteString("\n" + k + "=" + v)
+		}
+		b.WriteString("\n" + inv.Stdin)
+	}
+	for _, p := range res.Problems {
+		b.WriteString("\n" + p.Text)
+	}
+	text := b.String()
+	names := shell.NamesInfra(text)
+	low := strings.ToLower(text)
+	for _, n := range copt.Guard.Needles(copt.Home) {
+		if strings.Contains(low, strings.ToLower(n)) {
+			names = append(names, "the guard file "+n)
+			break
+		}
+	}
+	return names
+}
+
+func shapeActionsOf(ev Event, res *shell.Result, deps Deps, acts []classify.Action) []classify.Action {
 	ok, why, unseen := shell.PlainShapeUnseen(ev.Command, res)
 	if ok {
 		// The provider, lock-file and data-source checks read the disk

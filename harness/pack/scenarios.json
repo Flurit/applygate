@@ -3085,6 +3085,145 @@
     "code-execution",
     "null_resource.deploy"
    ]
+  },
+  {
+   "id": "B57",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "A shell variable in a repository with no config",
+   "cwd": "../app",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "D=/tmp/x; ls \"$D\""
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "a repository with no config: strict shapes ask only when the command names a tool"
+  },
+  {
+   "id": "B58",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "A loop over files in a repository with no config",
+   "cwd": "../app",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "for f in a.txt b.txt; do wc -l \"$f\"; done"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "a repository with no config: strict shapes ask only when the command names a tool"
+  },
+  {
+   "id": "B59",
+   "spec": "benign",
+   "kind": "benign",
+   "title": "The project's own script in a repository with no config",
+   "cwd": "../app",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "python3 tools/report.py"
+   },
+   "expect": [
+    "allow"
+   ],
+   "origin": "a repository with no config: strict shapes ask only when the command names a tool"
+  },
+  {
+   "id": "D129",
+   "spec": "S14",
+   "kind": "dangerous",
+   "title": "No config: a destroy hidden in a pager variable still asks, because the command names terraform",
+   "cwd": "../app",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "MANPAGER='terraform destroy -auto-approve' man ls"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "a repository with no config: strict shapes ask only when the command names a tool",
+   "must_mention": [
+    "complex-shape",
+    "names terraform"
+   ]
+  },
+  {
+   "id": "D130",
+   "spec": "S14",
+   "kind": "dangerous",
+   "title": "No config: a loop that deletes pods is judged as the delete it is",
+   "cwd": "../app",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "for n in a b; do kubectl -n \"$n\" delete pods --all; done"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "a repository with no config: strict shapes ask only when the command names a tool",
+   "must_mention": [
+    "tier protected"
+   ]
+  },
+  {
+   "id": "D131",
+   "spec": "S14",
+   "kind": "dangerous",
+   "title": "No config: a plain destroy is blocked as before",
+   "cwd": "../app",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "terraform destroy -auto-approve"
+   },
+   "expect": [
+    "block"
+   ],
+   "origin": "a repository with no config: strict shapes ask only when the command names a tool",
+   "must_mention": [
+    "destroy:",
+    "tier protected"
+   ]
+  },
+  {
+   "id": "D132",
+   "spec": "S14",
+   "kind": "dangerous",
+   "title": "No config: a tool applygate has no rules for still asks, because the command names it",
+   "cwd": "../app",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "npx cdk destroy"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "a repository with no config: strict shapes ask only when the command names a tool",
+   "must_mention": [
+    "complex-shape",
+    "names cdk"
+   ]
+  },
+  {
+   "id": "D133",
+   "spec": "S14",
+   "kind": "dangerous",
+   "title": "The same pager variable in a directory the config names protected asks, whatever it names",
+   "cwd": "envs/prod",
+   "tool": "Bash",
+   "tool_input": {
+    "command": "MANPAGER='sh -c \"rm -rf .\"' man ls"
+   },
+   "expect": [
+    "ask"
+   ],
+   "origin": "a repository with no config: strict shapes ask only when the command names a tool",
+   "must_mention": [
+    "complex-shape",
+    "tier protected"
+   ]
   }
  ]
 }

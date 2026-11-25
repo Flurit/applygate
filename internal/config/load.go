@@ -207,6 +207,7 @@ func Load(userPath, dir string) (*Config, error) {
 		if len(repoConfigs) > 0 {
 			cfg.GuardRoot = filepath.Dir(repoConfigs[0])
 		}
+		cfg.NoRepoConfig = len(repoConfigs) == 0
 		cfg.GitRoot = gitRoot(dir)
 		for _, p := range repoConfigs {
 			// Trust is for the file read, so only a regular file counts: a

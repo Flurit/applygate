@@ -145,6 +145,12 @@ type Action struct {
 	// AnyDirWhy says why, when the reason is not one of the analysis
 	// losing the directory.
 	AnyDirWhy string
+	// Unnamed is set on a strict-shapes action whose command names no
+	// infrastructure tool and no guard file; Named holds the names when it
+	// does. In a repository with no config only a command that names one
+	// is asked about (config.ShapesByWord).
+	Unnamed bool     `json:"-"`
+	Named   []string `json:"-"`
 	// Subtree is set when the command runs in every unit under Dir
 	// (terragrunt run --all, run-all, destroy-all): it is judged at the most
 	// protected tier under Dir.
