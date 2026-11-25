@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **A saved plan that only replaces resources that hold no data is no longer asked about in a standard tier.** Before, any replace made the plan a `destroy`: block in a protected tier, ask in a standard one. Now a plan whose only deletes and replaces are routine replaces has the class `routine-replace`: a standard tier allows it, and a protected tier blocks it as before.
+  - **Which replaces are routine:** a replace of `aws_launch_template`, `aws_launch_configuration`, `aws_ecs_task_definition`, `aws_lambda_layer_version`, `aws_lambda_permission`, an IAM role, user or group policy attachment, a security group rule (`aws_security_group_rule` and the two `aws_vpc_security_group_*_rule` types), `terraform_data` or `null_resource`. A type that is not on the list keeps the ask, as does a stateful type, an address in `protected_resources`, and a replace that an `exposure`, `unknown-watched` or `code-execution` finding names (a rule replaced by one open to the internet, a `null_resource` whose provisioner would run). One delete, or one replace that is not routine, makes the whole plan a destroy.
+  - **What changes for you:** in a standard tier, `terraform apply tfplan` through the hook, `applygate apply` and `applygate plan-check` allow such a plan. `plan-check` exits 0 for it where it exited 4, so a CI job with `fail-on: ask` that judges a standard tier passes where it failed. A runner without `--trust-config` judges every directory as protected and is not affected.
+  - **To get the prompt back,** list the addresses under `protected_resources` ([docs/config.md](docs/config.md)).
+  - **What is not known:** how often this prompt fired (the plan-gate study had no replaces), and the list rests on what is known of the providers, not on a check of each provider's documentation. [docs/limits.md](docs/limits.md) says what a routine replace can still do.
+  - The pull-request comment names a destroy or replace as the reason only when it is what decided the verdict, and lists routine replaces under what was found.
+
 ## v0.6.3 (2026-11-25)
 
 A cleanup release: the documentation is organised by topic, and the code is tidied without changing what it does. No rule, verdict, tier or default changed: the hook decides every call and `plan-check` judges every plan as v0.6.2 does, and the scenario pack gives the same results. Nothing needs doing when upgrading from v0.6.2, except for the Claude Code plugin's pinned binary ([docs/upgrading.md](docs/upgrading.md)).

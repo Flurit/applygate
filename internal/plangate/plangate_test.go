@@ -501,3 +501,103 @@ func TestUnknownWatchedTypes(t *testing.T) {
 		}
 	}
 }
+
+// A replace is routine only for a listed type that the plan deletes and
+// creates, with nothing else said about it.
+func TestRoutineReplaces(t *testing.T) {
+	R := DefaultRules()
+	replace := []string{"delete", "create"}
+	sgOpen := map[string]any{"type": "ingress", "cidr_blocks": []any{"0.0.0.0/0"}, "from_port": 22.0, "to_port": 22.0, "protocol": "tcp"}
+	sgOffice := map[string]any{"type": "ingress", "cidr_blocks": []any{"203.0.113.0/24"}, "from_port": 22.0, "to_port": 22.0, "protocol": "tcp"}
+	cases := []struct {
+		name      string
+		rc        rc
+		protected []string
+		routine   bool
+	}{
+		{"launch template", rc{"aws_launch_template.app", "aws_launch_template", replace, map[string]any{}, map[string]any{}}, nil, true},
+		{"create before destroy", rc{"aws_ecs_task_definition.app", "aws_ecs_task_definition", []string{"create", "delete"}, map[string]any{}, map[string]any{}}, nil, true},
+		{"in a module", rc{`module.svc["a"].aws_launch_configuration.lc[0]`, "aws_launch_configuration", replace, map[string]any{}, map[string]any{}}, nil, true},
+		{"rule to an office range", rc{"aws_security_group_rule.r", "aws_security_group_rule", replace, sgOffice, sgOffice}, nil, true},
+		{"instance: not listed", rc{"aws_instance.web", "aws_instance", replace, map[string]any{}, map[string]any{}}, nil, false},
+		{"autoscaling group: not listed", rc{"aws_autoscaling_group.g", "aws_autoscaling_group", replace, map[string]any{}, map[string]any{}}, nil, false},
+		{"unknown type", rc{"google_compute_instance_template.t", "google_compute_instance_template", replace, map[string]any{}, map[string]any{}}, nil, false},
+		{"database", rc{"aws_db_instance.db", "aws_db_instance", replace, map[string]any{}, map[string]any{}}, nil, false},
+		{"delete of a listed type", rc{"aws_launch_template.app", "aws_launch_template", []string{"delete"}, map[string]any{}, nil}, nil, false},
+		{"update of a listed type", rc{"aws_launch_template.app", "aws_launch_template", []string{"update"}, map[string]any{}, map[string]any{}}, nil, false},
+		{"unknown action beside a create", rc{"aws_launch_template.app", "aws_launch_template", []string{"forget", "create"}, map[string]any{}, map[string]any{}}, nil, false},
+		{"three actions", rc{"aws_launch_template.app", "aws_launch_template", []string{"delete", "create", "update"}, map[string]any{}, map[string]any{}}, nil, false},
+		{"listed in protected_resources", rc{"aws_launch_template.app", "aws_launch_template", replace, map[string]any{}, map[string]any{}}, []string{"aws_launch_template.app"}, false},
+		{"protected_resources by type glob", rc{"aws_launch_template.app", "aws_launch_template", replace, map[string]any{}, map[string]any{}}, []string{"aws_launch_template.*"}, false},
+		{"protected_resources by type glob, in a module", rc{`module.svc["a"].aws_launch_configuration.lc[0]`, "aws_launch_configuration", replace, map[string]any{}, map[string]any{}}, []string{"*aws_launch_configuration.*"}, false},
+		{"a type glob without the star does not reach into a module", rc{"module.svc.aws_launch_configuration.lc", "aws_launch_configuration", replace, map[string]any{}, map[string]any{}}, []string{"aws_launch_configuration.*"}, true},
+		{"rule opened to the internet", rc{"aws_security_group_rule.r", "aws_security_group_rule", replace, sgOffice, sgOpen}, nil, false},
+		{"rule that was already open", rc{"aws_security_group_rule.r", "aws_security_group_rule", replace, sgOpen, sgOpen}, nil, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r, err := Evaluate(Input{PlanJSON: planJSON(c.rc), MaxDestroy: -1, Protected: c.protected}, R)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := len(r.RoutineReplaces) == 1; got != c.routine {
+				t.Fatalf("routine %v, want %v: replaces %v, routine %v, findings %+v", got, c.routine, r.Replaces, r.RoutineReplaces, r.Findings)
+			}
+			// What is routine is still counted as a replace.
+			if c.routine && (len(r.Replaces) != 1 || r.Replaces[0] != r.RoutineReplaces[0]) {
+				t.Fatalf("replaces %v, routine %v", r.Replaces, r.RoutineReplaces)
+			}
+		})
+	}
+}
+
+// A replaced resource whose provisioner would run is not routine, and one
+// in data mode never is.
+func TestRoutineReplaceRunsNoCode(t *testing.T) {
+	change := func(addr, mode, typ, name string) map[string]any {
+		return map[string]any{"address": addr, "mode": mode, "type": typ, "name": name,
+			"change": map[string]any{"actions": []string{"delete", "create"}, "before": map[string]any{}, "after": map[string]any{}}}
+	}
+	plan := map[string]any{
+		"format_version": "1.2",
+		"resource_changes": []any{
+			change("null_resource.deploy", "managed", "null_resource", "deploy"),
+			change("null_resource.marker", "managed", "null_resource", "marker"),
+			change("data.null_resource.odd", "data", "null_resource", "odd"),
+		},
+		"configuration": map[string]any{"root_module": map[string]any{"resources": []any{
+			map[string]any{"address": "null_resource.deploy", "mode": "managed", "type": "null_resource", "name": "deploy", "provisioners": []any{map[string]any{"type": "local-exec"}}},
+			map[string]any{"address": "null_resource.marker", "mode": "managed", "type": "null_resource", "name": "marker"},
+		}}},
+	}
+	b, _ := json.Marshal(plan)
+	r, err := Evaluate(Input{PlanJSON: b, MaxDestroy: -1}, DefaultRules())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.RoutineReplaces) != 1 || r.RoutineReplaces[0] != "null_resource.marker" {
+		t.Fatalf("routine %v, want only null_resource.marker; findings %+v", r.RoutineReplaces, r.Findings)
+	}
+	if _, ok := rules(t, r)["code-execution"]; !ok {
+		t.Fatalf("no code-execution finding: %+v", r.Findings)
+	}
+}
+
+// The routine list says what is known to hold no data: it shares nothing
+// with the stateful list, and the types left off on purpose stay off.
+func TestRoutineReplaceTypesData(t *testing.T) {
+	R := DefaultRules()
+	if len(R.RoutineReplaceTypes) == 0 {
+		t.Fatal("no routine_replace_types in the rules")
+	}
+	for _, typ := range R.RoutineReplaceTypes {
+		if R.stateful[typ] {
+			t.Errorf("%s is on both the stateful and the routine list", typ)
+		}
+	}
+	for _, typ := range []string{"aws_instance", "aws_autoscaling_group", "aws_api_gateway_deployment", "aws_lb_target_group_attachment", "aws_autoscaling_attachment", "aws_iam_policy_attachment"} {
+		if R.routine[typ] {
+			t.Errorf("%s is on the routine list: replacing it can cause an outage, or detaches a policy from everything it was attached to", typ)
+		}
+	}
+}

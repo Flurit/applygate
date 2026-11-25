@@ -26,6 +26,8 @@ func nextStep(c classify.Class, engine string) string {
 		return fmt.Sprintf("Run `%s plan -out=tfplan`, show the plan to the user, then apply the saved plan with `%s apply tfplan`.", tf, tf)
 	case classify.Destroy:
 		return "Do not retry or rephrase this. Destroying resources here needs a human: tell the user what you intended and let them run it outside the agent."
+	case classify.RoutineReplace:
+		return "Do not retry or rephrase this. Replacing resources in a protected environment needs a human, whatever their type: tell the user what you intended and let them run it outside the agent."
 	case classify.StateSurgery:
 		return "State surgery must be done by a human. Tell the user what you intended and why."
 	case classify.CloudDestructive:

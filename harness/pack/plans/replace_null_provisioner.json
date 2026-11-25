@@ -1,0 +1,56 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "null_resource.deploy",
+   "mode": "managed",
+   "type": "null_resource",
+   "name": "deploy",
+   "provider_name": "registry.terraform.io/hashicorp/null",
+   "change": {
+    "actions": [
+     "delete",
+     "create"
+    ],
+    "before": {
+     "triggers": {
+      "release": "41"
+     }
+    },
+    "after": {
+     "triggers": {
+      "release": "42"
+     }
+    },
+    "after_unknown": {}
+   }
+  }
+ ],
+ "configuration": {
+  "root_module": {
+   "resources": [
+    {
+     "address": "null_resource.deploy",
+     "mode": "managed",
+     "type": "null_resource",
+     "name": "deploy",
+     "provider_config_key": "null",
+     "provisioners": [
+      {
+       "type": "local-exec",
+       "expressions": {
+        "command": {
+         "constant_value": "./deploy.sh"
+        }
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}

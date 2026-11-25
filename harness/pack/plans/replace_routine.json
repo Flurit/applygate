@@ -1,0 +1,59 @@
+{
+ "format_version": "1.2",
+ "terraform_version": "1.16.1",
+ "resource_changes": [
+  {
+   "address": "aws_launch_template.app",
+   "mode": "managed",
+   "type": "aws_launch_template",
+   "name": "app",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "delete",
+     "create"
+    ],
+    "before": {
+     "name": "app-v1",
+     "image_id": "ami-old",
+     "instance_type": "t3.small"
+    },
+    "after": {
+     "name": "app-v2",
+     "image_id": "ami-new",
+     "instance_type": "t3.small"
+    },
+    "after_unknown": {}
+   }
+  },
+  {
+   "address": "module.service.aws_ecs_task_definition.app",
+   "module_address": "module.service",
+   "mode": "managed",
+   "type": "aws_ecs_task_definition",
+   "name": "app",
+   "provider_name": "registry.terraform.io/hashicorp/aws",
+   "change": {
+    "actions": [
+     "create",
+     "delete"
+    ],
+    "before": {
+     "family": "app",
+     "revision": 41,
+     "cpu": "256",
+     "memory": "512"
+    },
+    "after": {
+     "family": "app",
+     "cpu": "256",
+     "memory": "512"
+    },
+    "after_unknown": {}
+   }
+  }
+ ],
+ "applyable": true,
+ "complete": true,
+ "errored": false
+}
