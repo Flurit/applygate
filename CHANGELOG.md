@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.7.0 (2026-11-25)
+
+One verdict changes: a saved plan that only replaces resources that hold no data is allowed in a standard tier, where it was asked about. Every other rule, verdict, tier and default is as in v0.6.3, and a protected tier still blocks every replace. Hooks, configs and trust carry over; [docs/upgrading.md](docs/upgrading.md) says what to check if a CI job or a person relied on that prompt.
 
 - **A saved plan that only replaces resources that hold no data is no longer asked about in a standard tier.** Before, any replace made the plan a `destroy`: block in a protected tier, ask in a standard one. Now a plan whose only deletes and replaces are routine replaces has the class `routine-replace`: a standard tier allows it, and a protected tier blocks it as before.
   - **Which replaces are routine:** a replace of `aws_launch_template`, `aws_launch_configuration`, `aws_ecs_task_definition`, `aws_lambda_layer_version`, `aws_lambda_permission`, an IAM role, user or group policy attachment, a security group rule (`aws_security_group_rule` and the two `aws_vpc_security_group_*_rule` types), `terraform_data` or `null_resource`. A type that is not on the list keeps the ask, as does a stateful type, an address in `protected_resources`, and a replace that an `exposure`, `unknown-watched` or `code-execution` finding names (a rule replaced by one open to the internet, a `null_resource` whose provisioner would run). One delete, or one replace that is not routine, makes the whole plan a destroy.
