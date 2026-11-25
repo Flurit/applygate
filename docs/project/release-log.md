@@ -15,10 +15,11 @@ What was checked on each release after it was published, newest first. [RELEASE.
 - the tag's `install.sh` (the same bytes as the tagged file) with `APPLYGATE_VERIFY_SIGNATURE=require` installing 0.6.3 in 231 s on a slow connection
 - `go install github.com/Flurit/applygate/cmd/applygate@v0.6.3` through the public proxy and checksum database (`h1:9G4K/oIM…`, origin `refs/tags/v0.6.3` at `c329fb7`) reporting 0.6.3
 - the Claude Code plugin re-pinned to v0.6.3 with `scripts/pin-plugin-release.sh`, and the four archive sha256 values in `packaging/homebrew/applygate.rb` taken from the signed `checksums.txt`
+- the Homebrew upgrade, the same day: `Flurit/homebrew-tap` at `d502e8a` carries this repository's formula with the tap's source note, and after `brew update && brew upgrade Flurit/tap/applygate` (Homebrew 7.0.16) the machine has 0.6.3 from the tap. The installed binary has the sha256 of the one in the verified darwin/amd64 archive, reports 0.6.3 and passes `selftest` 163/163
 
 The tag was pushed after both workflows had passed on the commit. **The approval gate held:** the test job passed and the release job waited about seven minutes for the `release` environment's approval, which is recorded under the owner's account; the session that pushed the tag did not enter it.
 
-Not run for this release: the plugin's launcher fetching the pinned release with no applygate on PATH, the Homebrew upgrade from the tap, the Action at the tag from a workflow, the hook on Linux, and any agent live.
+Not run for this release: the plugin's launcher fetching the pinned release with no applygate on PATH, the Action at the tag from a workflow, the hook on Linux, and any agent live.
 
 ## v0.6.2
 
