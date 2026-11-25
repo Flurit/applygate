@@ -14,12 +14,16 @@ import (
 type Class string
 
 const (
-	ReadOnly         Class = "read-only"
-	Mutating         Class = "mutating"    // import, refresh, test: changes state, not in the spec table
-	CloudWrite       Class = "cloud-write" // cloud create/update calls: not in the spec table
-	ApplySavedPlan   Class = "apply-saved-plan"
-	UnreviewedApply  Class = "unreviewed-apply"
-	Destroy          Class = "destroy"
+	ReadOnly        Class = "read-only"
+	Mutating        Class = "mutating"    // import, refresh, test: changes state, not in the spec table
+	CloudWrite      Class = "cloud-write" // cloud create/update calls: not in the spec table
+	ApplySavedPlan  Class = "apply-saved-plan"
+	UnreviewedApply Class = "unreviewed-apply"
+	Destroy         Class = "destroy"
+	// RoutineReplace is a saved plan whose only deletes and replaces are
+	// replaces the plan gate found routine (plangate.Result.RoutineReplaces):
+	// allowed outside a protected tier, where every replace needs a person.
+	RoutineReplace   Class = "routine-replace"
 	StateSurgery     Class = "state-surgery"
 	CloudDestructive Class = "cloud-destructive"
 	CredentialAccess Class = "credential-access" // not in the spec table

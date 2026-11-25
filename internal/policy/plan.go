@@ -17,15 +17,24 @@ import (
 	"github.com/Flurit/applygate/internal/shell"
 )
 
-// SavedPlanVerdict is the verdict applying a saved plan with this plan-gate
-// result gets in tier t, as planGate and the decision table judge it: a
-// replace counts as a destroy.
-func SavedPlanVerdict(res *plangate.Result, t config.Tier) Verdict {
-	class := classify.ApplySavedPlan
-	if len(res.Deletes)+len(res.Replaces) > 0 {
-		class = classify.Destroy
+// SavedPlanClass is the class of applying a saved plan with this plan-gate
+// result. A delete is a destroy, and so is a replace, which destroys the old
+// instance, unless every replace is one the plan gate found routine and
+// nothing is deleted: that is a routine replace.
+func SavedPlanClass(res *plangate.Result) classify.Class {
+	switch {
+	case len(res.Deletes) > 0 || len(res.Replaces) > len(res.RoutineReplaces):
+		return classify.Destroy
+	case len(res.Replaces) > 0:
+		return classify.RoutineReplace
 	}
-	v := Table[class][t]
+	return classify.ApplySavedPlan
+}
+
+// SavedPlanVerdict is the verdict applying a saved plan with this plan-gate
+// result gets in tier t, as planGate and the decision table judge it.
+func SavedPlanVerdict(res *plangate.Result, t config.Tier) Verdict {
+	v := Table[SavedPlanClass(res)][t]
 	for _, f := range res.Findings {
 		v = Max(v, FindingVerdict(f.Severity, t))
 	}
@@ -179,8 +188,12 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 	}
 	r.Findings = append(r.Findings, gres.Findings...)
 	// Replacing a resource destroys it first (or after its successor is
-	// created): it is judged like deleting it.
-	if gone := append(append([]string(nil), gres.Deletes...), gres.Replaces...); len(gone) > 0 {
+	// created): it is judged like deleting it, unless every replace in the
+	// plan is a routine one.
+	class := SavedPlanClass(gres)
+	switch class {
+	case classify.Destroy:
+		gone := append(append([]string(nil), gres.Deletes...), gres.Replaces...)
 		verb := "destroys"
 		switch {
 		case len(gres.Deletes) == 0:
@@ -189,10 +202,12 @@ func planGate(r *ActionResult, a classify.Action, cfg *config.Config, deps Deps,
 			verb = "destroys or replaces"
 		}
 		r.Why = fmt.Sprintf("applies saved plan %s, which %s %d resource(s): %s", a.PlanFile, verb, len(gone), strings.Join(first(gone, 5), ", "))
-		return classify.Destroy
+	case classify.RoutineReplace:
+		r.Why = fmt.Sprintf("applies saved plan %s, which replaces %d resource(s) of types that hold no data and are replaced on routine change: %s", a.PlanFile, len(gres.Replaces), strings.Join(first(gres.Replaces, 5), ", "))
+	default:
+		r.Why = fmt.Sprintf("applies saved plan %s (%d change(s))", a.PlanFile, gres.Changes)
 	}
-	r.Why = fmt.Sprintf("applies saved plan %s (%d change(s))", a.PlanFile, gres.Changes)
-	return classify.ApplySavedPlan
+	return class
 }
 
 func orHost(agent string) string {

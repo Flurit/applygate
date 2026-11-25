@@ -57,6 +57,7 @@ var Table = map[classify.Class]map[config.Tier]Verdict{
 	classify.ApplySavedPlan:   {config.Protected: Allow, config.Standard: Allow, config.Disposable: Allow},
 	classify.UnreviewedApply:  {config.Protected: Block, config.Standard: Ask, config.Disposable: Allow},
 	classify.Destroy:          {config.Protected: Block, config.Standard: Ask, config.Disposable: Allow},
+	classify.RoutineReplace:   {config.Protected: Block, config.Standard: Allow, config.Disposable: Allow},
 	classify.StateSurgery:     {config.Protected: Block, config.Standard: Ask, config.Disposable: Ask},
 	classify.CloudDestructive: {config.Protected: Block, config.Standard: Ask, config.Disposable: Ask},
 	classify.Tampering:        {config.Protected: Block, config.Standard: Block, config.Disposable: Block},
@@ -659,7 +660,9 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	r.Verdict = v
 	if v != Allow {
 		r.NextStep = nextStep(class, a.Engine)
-		if class == classify.ApplySavedPlan || class == classify.ReadOnly || class == classify.Mutating {
+		if class == classify.ApplySavedPlan || class == classify.ReadOnly || class == classify.Mutating ||
+			class == classify.RoutineReplace && Table[class][r.Tier] == Allow {
+			// What stopped this is a finding, not the class.
 			r.NextStep = "Show the findings above to the user. A human should review the plan and apply it outside the agent, or change the configuration so the plan no longer triggers them."
 		}
 	}
