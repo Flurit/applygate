@@ -52,7 +52,9 @@ func scanHome(t *testing.T) (home, repo string) {
 	claude := use("t1", prod, "Bash", cmd("terraform destroy -auto-approve")) +
 		use("t2", prod, "Bash", cmd("terraform destroy -auto-approve")) +
 		use("t3", repo, "Bash", cmd("git status")) +
-		use("t4", repo, "Bash", cmd("for f in a b; do echo $f; done")) +
+		// The repository has no config, so a loop is asked about only
+		// because it names a tool.
+		use("t4", repo, "Bash", cmd("for f in a b; do echo terraform $f; done")) +
 		use("t5", prod, "Bash", cmd("terraform apply tfplan")) +
 		use("t6", filepath.Join(home, "gone"), "Bash", cmd("terraform destroy")) +
 		use("t7", repo, "TodoWrite", map[string]any{"todos": []string{}}) +

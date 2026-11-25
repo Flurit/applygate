@@ -196,7 +196,7 @@ These are what the status **tests** rests on.
 ## Gaps this inventory found
 
 - `vault kv metadata delete` (and other vault writes) are not classified: they ask in a protected tier only because they are not on the allow-list, and are allowed in standard and disposable tiers.
-- pulumi, cdk, flux and argocd have no rules; `npx cdk deploy` asks only through strict shapes.
+- pulumi, cdk, flux and argocd have no rules; `npx cdk deploy` asks only through strict shapes: in a protected directory as a command that is not plain, and in a repository with no config because it names `cdk`.
 - The plan gate's resource data is AWS only: a Google or Azure plan gets the generic rules (destroy count, replaces) but no stateful-type or exposure rules, and none of its types is a routine replace.
 - Seven of nine hosts, the managed install and every MCP translation have not been run against the real program. `doctor --creds` and `--boundary` have been run against two AWS IAM users and one Google Cloud user account only; the Kubernetes and Azure audits have not.
 - Claude Code and Codex were tested live on v0.6.0; not tested live: the prompt in plan and acceptEdits modes, a Codex user-scope hook launched from a subdirectory, and the Codex planfile search.

@@ -1,6 +1,6 @@
 # Managed install
 
-Without a managed install, applygate's files belong to the user the agent runs as. The hook blocks the routes it sees, but an agent with that user's shell can, in the end, change anything that user can change: that self-protection is best-effort. A managed install moves the guard out of the agent's reach: root owns every part of it, so the agent's user cannot change it at all. It is the only setup whose self-protection applygate documents as a guarantee ([threat-model.md](threat-model.md#self-protection)).
+Without a managed install, applygate's files belong to the user the agent runs as. The hook blocks the routes it sees, but an agent with that user's shell can, in the end, change anything that user can change: that self-protection is best-effort. A managed install moves the guard out of the agent's reach: root owns every part of it, so the agent's user cannot change it at all. It is the only setup whose self-protection applygate documents as a guarantee ([threat-model.md](threat-model.md#self-protection)). It also keeps strict shapes in full in every repository: without it, in a repository with no config, a command that is not plain is asked about only when it names an infrastructure tool or a guard file ([policy.md](policy.md), "Strict shapes").
 
 ```sh
 # Install from a release you verified (docs/install.md), by its full path:

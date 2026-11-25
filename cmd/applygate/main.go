@@ -651,7 +651,7 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 		agents = append(agents, a)
 	}
 	if *scope == "user" && len(agents) > 0 {
-		fmt.Fprintln(stdout, "installing the hooks at user scope (~/.claude/settings.json, ~/.codex/hooks.json): a project-scope hook is loaded only when the agent is launched from this directory, a user-scope hook fires from any directory of any repository. Repositories without a .applygate.yaml are judged by the user config or the defaults (enforce, strict). Use --scope project for a hook that lives in this repository only.")
+		fmt.Fprintln(stdout, "installing the hooks at user scope (~/.claude/settings.json, ~/.codex/hooks.json): a project-scope hook is loaded only when the agent is launched from this directory, a user-scope hook fires from any directory of any repository. Repositories without a .applygate.yaml are judged by the user config or the defaults (enforce, strict); there, a command that is not plain is asked about only when it names an infrastructure tool or a guard file. Use --scope project for a hook that lives in this repository only.")
 	}
 	rc := 0
 	for _, a := range agents {
@@ -1022,6 +1022,7 @@ func cmdDoctor(stdout, stderr io.Writer) int {
 			}
 			return config.DefaultLogPath()
 		}())
+		fmt.Fprintf(stdout, "     strict shapes: %s\n", strictShapesState(cfg))
 	}
 	if cfg != nil {
 		doctorJudge(cfg, say, stdout)
@@ -1141,4 +1142,16 @@ func inAgentSession(env map[string]string) bool {
 		}
 	}
 	return false
+}
+
+// strictShapesState says, for doctor, which commands strict shapes ask about
+// in the directory the config was loaded for.
+func strictShapesState(cfg *config.Config) string {
+	switch {
+	case !cfg.StrictShapesOn():
+		return "off (strict_shapes: false)"
+	case cfg.ShapesByWord():
+		return "no repository config covers this directory, so a command that is not plain is asked about only when it names an infrastructure tool or a guard file; strict_shapes: true in the user config, a repository config or a managed install asks about every such command where the tier is protected (docs/policy.md)"
+	}
+	return "in a protected tier, every command that is not a plain list or pipeline of known programs is asked about (docs/policy.md)"
 }

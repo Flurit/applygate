@@ -32,7 +32,7 @@ The section ends with how many commands that change infrastructure (an apply, a 
 
 - **Infrastructure commands:** how many it would block, ask about and allow, with the latest of each listed: the date, the agent, the directory, the command and the reason. The same command in the same directory is one entry with a count.
 - **Changes to agent settings and applygate's own files:** calls that write a guard file, such as `.claude/settings.json` or `.applygate.yaml`.
-- **Other shell commands:** the share it would ask about although they name no infrastructure tool, and what kept them from being plain commands (a loop, a script, a program it has no option list for). These asks come from directories that count as protected; the report says how many ran where no trusted `.applygate.yaml` covers the directory.
+- **Other shell commands:** the share it would ask about, and what kept them from being plain commands (a loop, a script, a program it has no option list for). These asks come from directories that count as protected; the report says how many ran where no trusted `.applygate.yaml` covers the directory. Where there is no config at all, such a command is asked about only when it names an infrastructure tool or a guard file, or runs a script or code applygate cannot read.
 - **By repository:** calls, blocks, asks and whether a trusted config covers the repository, so you can see where a config would change the most.
 
 ## How a call is judged

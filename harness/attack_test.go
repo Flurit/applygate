@@ -96,6 +96,85 @@ func TestAttackPack(t *testing.T) {
 	}
 }
 
+// TestAttackPackWithoutConfig pins what the rule for a repository with no
+// config costs. There, strict shapes ask about a command that is not plain
+// only when it names an infrastructure tool or a guard file
+// (config.ShapesByWord), so some reproductions the full rule stops are
+// allowed. testdata/no_config_allowed.txt lists them; docs/limits.md gives
+// the count. A reproduction that becomes allowed and is not listed fails
+// this test, and so does a listed one that is stopped again.
+func TestAttackPackWithoutConfig(t *testing.T) {
+	config.TrustAll = false
+	defer func() { config.TrustAll = true }()
+	b, err := os.ReadFile("pack_attack/scenarios.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pack struct {
+		Scenarios []AttackScenario `json:"scenarios"`
+	}
+	if err := json.Unmarshal(b, &pack); err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	lb, err := os.ReadFile("testdata/no_config_allowed.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(lb), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			listed[strings.Fields(line)[0]] = true
+		}
+	}
+	self, _ := os.Executable()
+	ran := map[string]bool{}
+	var allowed, dangerous int
+	var unlisted, stopped []string
+	for _, s := range pack.Scenarios {
+		if s.Kind != "dangerous" || len(s.GOOS) > 0 && !slices.Contains(s.GOOS, runtime.GOOS) || len(s.Formats) > 0 && !slices.Contains(s.Formats, "claude") {
+			continue
+		}
+		dangerous++
+		ran[s.ID] = true
+		v, _, _ := runAttackIn(t, s, "claude", self, true)
+		if v != "allow" {
+			if listed[s.ID] {
+				stopped = append(stopped, s.ID)
+			}
+			continue
+		}
+		allowed++
+		if !listed[s.ID] {
+			unlisted = append(unlisted, fmt.Sprintf("%s  %s", s.ID, firstLine(fmt.Sprint(s.ToolInput["command"]))))
+		}
+	}
+	t.Logf("no repository config: %d of %d dangerous reproductions are allowed on %s", allowed, dangerous, runtime.GOOS)
+	if len(unlisted) > 0 {
+		t.Errorf("%d reproductions are allowed in a repository with no config and are not in testdata/no_config_allowed.txt.\n"+
+			"Each is a way past the check there: fix it, or add its id to the list and correct the count in docs/limits.md.\n%s",
+			len(unlisted), strings.Join(unlisted, "\n"))
+	}
+	if len(stopped) > 0 {
+		t.Errorf("%d listed reproductions are no longer allowed in a repository with no config: remove them from testdata/no_config_allowed.txt and correct the count in docs/limits.md: %s",
+			len(stopped), strings.Join(stopped, " "))
+	}
+	for id := range listed {
+		if !ran[id] && !goosOnly(pack.Scenarios, id) {
+			t.Errorf("testdata/no_config_allowed.txt lists %s, which is not a dangerous scenario of the attack pack", id)
+		}
+	}
+}
+
+// goosOnly reports whether id is a scenario that runs on other systems only.
+func goosOnly(scs []AttackScenario, id string) bool {
+	for _, s := range scs {
+		if s.ID == id {
+			return len(s.GOOS) > 0 && !slices.Contains(s.GOOS, runtime.GOOS)
+		}
+	}
+	return false
+}
+
 // padRe finds {pad:N} in a planted file: N bytes of HCL comment, so a
 // scenario can plant a configuration file past the size cap without
 // carrying a megabyte in the pack.
@@ -124,12 +203,40 @@ func firstLine(s string) string {
 // runAttack replays one scenario in a fresh copy of the fixtures.
 func runAttack(t *testing.T, s AttackScenario, format, self string) (string, string, bool) {
 	t.Helper()
+	return runAttackIn(t, s, format, self, false)
+}
+
+// runAttackIn is runAttack; with noConfig the scenario runs in a repository
+// that has no config and whose directory names say nothing: the fixture's
+// own repository configs are removed (one a scenario plants is still there,
+// and untrusted) and envs/prod* becomes envs/main*, in the fixtures and in
+// the scenario, because a directory named prod is protected by its name.
+func runAttackIn(t *testing.T, s AttackScenario, format, self string, noConfig bool) (string, string, bool) {
+	t.Helper()
 	dir := t.TempDir()
 	repo, plans, home, err := Materialize(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sub := strings.NewReplacer("{repo}", repo, "{home}", home, "{self}", self).Replace
+	if noConfig {
+		filepath.WalkDir(repo, func(p string, d os.DirEntry, err error) error {
+			if err == nil && !d.IsDir() && (d.Name() == ".applygate.yaml" || d.Name() == ".seatbelt.yaml") {
+				os.Remove(p)
+			}
+			return nil
+		})
+		envs, _ := os.ReadDir(filepath.Join(repo, "envs"))
+		for _, e := range envs {
+			if rest, ok := strings.CutPrefix(e.Name(), "prod"); ok {
+				if err := os.Rename(filepath.Join(repo, "envs", e.Name()), filepath.Join(repo, "envs", "main"+rest)); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		placeholders := sub
+		sub = func(v string) string { return strings.ReplaceAll(placeholders(v), "envs/prod", "envs/main") }
+	}
 	// The person trusted the fixture's own configs; a config a scenario
 	// plants or rewrites is not trusted.
 	original := map[string][]byte{}

@@ -282,7 +282,7 @@ func Decide(ev Event, cfg *config.Config, deps Deps) Decision {
 			actions = append(actions, classify.Action{Class: classify.Tampering, Engine: "file", Command: ev.Command, Dir: ev.Cwd, Why: why})
 		}
 		if cfg.StrictShapesOn() {
-			actions = append(actions, shapeActions(ev, res, deps, actions)...)
+			actions = append(actions, shapeActions(ev, res, deps, actions, copt)...)
 		}
 		if ev.Persistent {
 			// Each call is judged on its own, so state one call leaves in
@@ -569,14 +569,29 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 		res.Matched = append([]string{fmt.Sprintf("command directory not reported by %s; judged at the session root %s (unknown_dir: session_root)", orHost(ev.Agent), a.Dir)}, res.Matched...)
 	}
 	r.Tier, r.Env, r.Matched = res.Tier, res.Env, res.Matched
-	if deps.LoadConfig != nil && a.Dir != "" && !a.AnyDir && otherRepo(cfg, a.Dir) {
+	// byWord: this directory is protected only because nothing names it,
+	// in a repository with no config, so strict shapes ask only about a
+	// command that names an infrastructure tool or a guard file. Every
+	// config in charge of the directory must say so, and the directory
+	// must be known: a shell that keeps running between calls may have
+	// been moved into a repository that has a config.
+	byWord := a.Class == classify.ComplexShape && (a.Unnamed || len(a.Named) > 0) && !ev.Persistent &&
+		cfg.ShapesByWord() && res.ByDefault && res.Tier == config.Protected
+	if a.Dir != "" && !a.AnyDir && (deps.LoadConfig != nil || byWord) && otherRepo(cfg, a.Dir) {
 		// A cd or -chdir into another repository: its own config decides
 		// too, and the stricter tier wins.
-		if c2, err := deps.LoadConfig(a.Dir); err != nil {
+		if deps.LoadConfig == nil {
+			byWord = false
+		} else if c2, err := deps.LoadConfig(a.Dir); err != nil {
 			r.Tier, r.Env = config.Protected, "unknown"
 			r.Matched = append(r.Matched, "the config of the repository "+a.Dir+" is in cannot be read ("+err.Error()+"); judged as protected")
-		} else if alt := c2.Resolve(sig); alt.Tier.Rank() > r.Tier.Rank() {
-			r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "by the config of the repository "+a.Dir+" is in")
+			byWord = false
+		} else {
+			alt := c2.Resolve(sig)
+			if alt.Tier.Rank() > r.Tier.Rank() {
+				r.Tier, r.Env, r.Matched = alt.Tier, alt.Env, append(alt.Matched, "by the config of the repository "+a.Dir+" is in")
+			}
+			byWord = byWord && c2.ShapesByWord() && alt.ByDefault
 		}
 	}
 	if v, set := a.Env["TF_DATA_DIR"]; tf && set && v == "" && r.Tier.Rank() < config.Protected.Rank() {
@@ -654,6 +669,14 @@ func evaluate(a classify.Action, ev Event, cfg *config.Config, deps Deps) Action
 	}
 	r.Class = class
 	v := Table[class][r.Tier]
+	if byWord && r.Tier == config.Protected && r.Env == "unknown" {
+		if a.Unnamed {
+			v = Allow
+			r.Matched = append(r.Matched, "no repository config here, and the command names no infrastructure tool or guard file, so strict shapes do not ask (strict_shapes: true in the user config asks about every command that is not plain)")
+		} else {
+			r.Matched = append(r.Matched, "no repository config here; strict shapes ask because the command names "+strings.Join(a.Named, ", "))
+		}
+	}
 	for _, f := range r.Findings {
 		v = Max(v, FindingVerdict(f.Severity, r.Tier))
 	}
