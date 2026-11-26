@@ -44,7 +44,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
       - run: terraform init -input=false && terraform plan -input=false -out=tfplan
         working-directory: envs/prod
-      - uses: Flurit/applygate@v0.7.0
+      - uses: Flurit/applygate@v0.8.0
         id: gate
         with:
           plan: tfplan
@@ -66,7 +66,7 @@ error, missing binary) always fails the job: the gate fails closed.
 
 Inputs: `plan` (required), `tier`, `fail-on`, `working-directory`, `comment` and `comment-key` ([below](#a-comment-on-the-pull-request)),
 `terraform` (`tofu` for OpenTofu), `trust-config` (read the repository's
-`.applygate.yaml`, default false), `version` (a release tag such as v0.7.0;
+`.applygate.yaml`, default false), `version` (a release tag such as v0.8.0;
 anything else is an error), and `binary` to skip the download and
 use a binary already on the runner. The release is installed with the
 `install.sh` that comes with the action, at the ref your workflow pins, and its
@@ -123,7 +123,7 @@ jobs:
       # checkout, setup-terraform and terraform plan as above
       # comment needs v0.6.2 or later: the action at an earlier tag has no
       # such input and would run the check without commenting.
-      - uses: Flurit/applygate@v0.7.0
+      - uses: Flurit/applygate@v0.8.0
         with:
           plan: tfplan
           working-directory: envs/prod

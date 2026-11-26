@@ -2,6 +2,24 @@
 
 What was checked on each release after it was published, newest first. [RELEASE.md](RELEASE.md) says what to check; this file records that it was done and what was seen. Releases up to v0.1.4 were published under the project's old name, seatbelt.
 
+## v0.8.0
+
+**v0.8.0** ([release](https://github.com/Flurit/applygate/releases/tag/v0.8.0), run 45692476270, commit `c6ee8a0`; one default changes: in a repository with no config and no managed install, strict shapes ask only when the command names an infrastructure tool or a guard file; `strict_shapes: true` in the user config keeps the earlier rule, and no infrastructure verdict, tier or other rule changed) was verified on macOS 26.7.1 (Intel) with cosign v3.1.4 on 2026-11-26:
+
+- the install.md verify steps with the tag set to v0.8.0 against `release.yml@refs/tags/v0.8.0` (the v0.7.0 identity is rejected)
+- sha256 of all four archives and their SBOMs against the signed `checksums.txt`
+- the build-provenance attestation of all four archives with `gh attestation verify` 2.102.0 (signer `release.yml@refs/tags/v0.8.0` at `c6ee8a0`; a check of the darwin/amd64 archive against `refs/tags/v0.7.0` is rejected)
+- `applygate version` 0.8.0 and `selftest` 177/177 exact (118/118 dangerous) on the released darwin/amd64 binary
+- the default this release changes, with `explain` on that binary in a scratch git repository with no config and a home directory with no user config: `D=/tmp/x; ls "$D"` and a `for` loop over two files are allowed (exit code 0, where the v0.7.0 binary asks about the first, exit code 4), and the decision says why; `MANPAGER='terraform destroy -auto-approve' man ls` is asked about and the reason names `terraform`; `npx cdk destroy` is asked about; `terraform destroy -auto-approve` is blocked (exit code 3). With `strict_shapes: true` in a scratch user config the first command is asked about again (exit code 4)
+- `plan-check` on that binary with the two real AWS plans in `testdata/real_plan`, as before: the delete blocked in a protected tier (exit code 3), the create asked about in a protected tier (exit code 4) and allowed in a standard one
+- the tag's `install.sh` (the same bytes as the tagged file) with `APPLYGATE_VERIFY_SIGNATURE=require` installing 0.8.0 in 5 s; the installed binary has the sha256 of the one in the verified archive
+- `go install github.com/Flurit/applygate/cmd/applygate@v0.8.0` through the public proxy and checksum database (`h1:ImFkzc5d…`, origin `refs/tags/v0.8.0` at `c6ee8a0`) reporting 0.8.0
+- the Claude Code plugin re-pinned to v0.8.0 with `scripts/pin-plugin-release.sh`, and the four archive sha256 values in `packaging/homebrew/applygate.rb` taken from the signed `checksums.txt`
+
+The tag was pushed after both workflows had passed on the commit, at 20:11 UTC on 2026-11-25, and the release was published at 04:06 UTC on 2026-11-26, the day the changelog section is dated. **The approval gate held:** the test job passed and the release job waited seven hours and fifty-one minutes for the `release` environment's approval, which is recorded under the owner's account; the session that pushed the tag did not enter it.
+
+Not run for this release: the new default through a live agent's hook (it was judged with `explain` and in the scenario pack only), the plugin's launcher fetching the pinned release with no applygate on PATH, the Action at the tag from a workflow, the hook on Linux, and the Homebrew upgrade, which waits for the tap.
+
 ## v0.7.0
 
 **v0.7.0** ([release](https://github.com/Flurit/applygate/releases/tag/v0.7.0), run 45625902819, commit `0e463e8`; one verdict changes: a saved plan whose only deletes and replaces are routine replaces is allowed in a standard tier, with the new class `routine-replace`; a protected tier blocks every replace as before, and no other rule, verdict, tier or default changed) was verified on macOS 26.7.1 (Intel) with cosign v3.1.4 on 2026-11-25:
