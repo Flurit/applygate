@@ -23,6 +23,11 @@ type Exposure struct {
 	// expired sign-in, a missing permission), and those that can make
 	// destructive changes in an environment the config does not name.
 	CredsOK, CredsFail, CredsUnchecked, CredsUnplaced int
+	// Steps is what a person does to reach the level asked for (nil when
+	// there is nothing to say). They are printed in the full report and
+	// never in the summary that is sent to someone else, since they name
+	// credentials.
+	Steps *Steps
 	// Error is why the checks could not be made at all.
 	Error string
 }
@@ -133,6 +138,11 @@ func (s Summary) renderExposure(w io.Writer, o RenderOptions, sessions int) {
 		if x.CredsOK+x.CredsUnchecked+x.CredsUnplaced == 0 {
 			fmt.Fprintln(w, "  No credential was found to audit.")
 		}
+	}
+
+	if x.Steps != nil && x.Steps.Header != "" {
+		fmt.Fprintln(w)
+		x.Steps.Render(w, "  ", o.Home)
 	}
 
 	if sessions > 0 {

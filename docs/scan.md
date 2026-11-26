@@ -26,6 +26,8 @@ With `--boundary` it also runs the credential audit of `doctor --creds` ([creden
 
 Every audited credential is listed, the harmless ones too, with the identity the cloud returned for it.
 
+Below the level you ask for, the report then lists the steps to the next one, from the checks that are not met: what to change for each credential that can change production, what to grant where the audit could not look, and which files keep L2 out of reach ([boundary.md](boundary.md), "Steps between levels"). Without `--boundary` the step for L2 is to run the audit. The steps name credentials, so the summary of `--share` has none.
+
 The section ends with how many commands that change infrastructure (an apply, a destroy, a state change, a cloud write) the agents issued in the sessions read, and how many of those aimed at an environment that is protected or that no config names. Issued is what the session records; whether a command succeeded is not known.
 
 ## What it would have decided

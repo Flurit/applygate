@@ -26,7 +26,7 @@ The command takes each AWS profile (`aws configure list-profiles`, plus the envi
 - **Google Cloud:** see [below](#google-cloud-and-azure). It asks Resource Manager which of 17 destructive permissions each account holds on each project.
 - **Azure:** see [below](#google-cloud-and-azure). It lists each subscription's role assignments for the signed-in principal and reports the roles that can delete or grant access.
 
-A missing `kubectl`, `gcloud` or `az` means nothing to audit for it, not a warning.
+A missing `kubectl`, `gcloud` or `az` means nothing to audit for it, not a warning. A missing `aws` is a warning: the audit cannot tell a machine with no AWS credentials from one it could not look at.
 
 How each credential is reported:
 

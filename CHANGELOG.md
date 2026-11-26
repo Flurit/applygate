@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **The boundary report says what to do next.** `applygate doctor --boundary` and `applygate scan --boundary` now print, below the level, the steps to the level you require (L2 when none is set): install the managed copy, give the agent a read-only role, bind a Kubernetes identity to `view`, grant the audit what it needs, name your environments, keep your own sessions out of the agent's reach, and decide who applies production changes. The steps come from the checks that are not met and name the credentials they are about; the advice follows [docs/credentials.md](docs/credentials.md) and is not yet checked against each provider's documentation. Exit codes, levels and checks are as before, and `scan --share` carries no step. [docs/boundary.md](docs/boundary.md) lists the steps.
+  - **Said plainly because the checks make it true:** a readable credential file keeps L2 out of reach until the agent's user cannot read it; a machine with nothing to audit does not reach L2; and a missing `aws` CLI is reported as not checked, where a missing `kubectl`, `gcloud` or `az` is nothing to audit, so L2 is not reached on a machine without `aws`.
+
 ## v0.8.0 (2026-11-26)
 
 One default changes: in a repository with no `.applygate.yaml`, a shell command that is not plain is asked about only when it names an infrastructure tool or a guard file. Before, every such command was asked about there. Every verdict on a command applygate recognises, every tier, and everything in a repository that has a config or under a managed install is as in v0.7.0. Hooks, configs and trust carry over; [docs/upgrading.md](docs/upgrading.md) says how to keep the earlier rule.

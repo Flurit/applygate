@@ -191,6 +191,10 @@ func TestScanOpensWithWhatAgentsCanReachAndAsksNoCloud(t *testing.T) {
 		"L1 not verified no managed install",
 		"L2 not verified credentials not audited",
 		"L2 not verified ~/.aws/credentials is readable by this user",
+		// The steps ask for the audit, name the readable file, and do not ask about who applies.
+		"  Steps to L2\n",
+		"L2  Ask the cloud what the credentials here can do",
+		"L2  Keep your own sessions out of the agent's reach: ~/.aws/credentials\n",
 		// Three destroys, the Codex delete and the plan apply.
 		"your agents issued 5 commands that change infrastructure",
 		"Nothing was run, written, or sent to a model or a cloud account.",
@@ -232,6 +236,10 @@ func TestScanBoundaryAuditsTheCredentials(t *testing.T) {
 		"L2 ok           az subscription Acme Readers",
 		"A wrong verdict, or a call the hook never sees, reaches whatever these credentials allow.",
 		"The credential audit asked AWS,",
+		"Steps to L2",
+		"L2  Give the agent a read-only AWS role in place of these identities: aws profile prod-admin\n",
+		"L2  Narrow the agent's Google Cloud access: gcloud account admin@acme.com on project acme-prod\n",
+		"L2  Decide who applies production changes",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %q in:\n%s", want, got)
@@ -264,7 +272,7 @@ func TestScanShareHoldsCountsOnly(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", want, got)
 		}
 	}
-	for _, leak := range []string{home, "/infra", "terraform", "kubectl", "payments", "envs", "~/", ".aws"} {
+	for _, leak := range []string{home, "/infra", "terraform", "kubectl", "payments", "envs", "~/", ".aws", "Steps to", "read-only AWS role"} {
 		if strings.Contains(got, leak) {
 			t.Errorf("the summary to share holds %q:\n%s", leak, got)
 		}
