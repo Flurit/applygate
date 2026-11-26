@@ -38,6 +38,45 @@ applygate doctor --boundary --require L2   # exit 1 below L2, for a script or CI
 - **L3**'s sandbox check reads Claude Code's managed settings for `sandbox.enabled` and `allowUnsandboxedCommands: false`. Those keys have not been tested live. Codex sandbox modes are not checked. A sandbox set in a file your user can change counts as not verified.
 - **Not covered at any level:** a swap between the hook's verdict and the execution, Codex failing open when the hook does not start, MCP servers with their own credentials, and anything that never passes through the hook.
 
+## Steps between levels
+
+Below the level you ask for, `applygate doctor --boundary` and `applygate scan --boundary` print what a person does next, after the level and the checks. The level asked for is `boundary.require` in the user config, `--require` on `doctor`, and L2 when neither is set. Nothing is run or changed by printing them.
+
+```text
+Steps to L2
+  L1  Install a managed, exclusive copy of applygate (there is no managed install)
+  L2  Give the agent a read-only AWS role in place of these identities: aws profile prod-admin
+  L2  Keep your own sessions out of the agent's reach: ~/.kube/config
+  L2  Decide who applies production changes
+  The credential steps do not depend on L1 and can be done first.
+```
+
+Each step comes from the checks that are not met, not from the level number. A check that is not `ok` or `attested` names the step that closes it, and a step several checks name is printed once, with the credentials or files it is about (the first five, then a count). The steps are:
+
+- **L1:** install the managed, exclusive copy; repair a managed install the checks found wrong; install `claude` or `codex` root-owned.
+- **L2, by what the audit found:**
+  - AWS: a read-only role in place of an identity that can change production without MFA.
+  - AWS, when AWS refused the simulator call: the grant that lets the audit see the identity.
+  - Kubernetes: bind the identity to `view`.
+  - Google Cloud: `roles/viewer`, applies by impersonation only a person may use.
+  - Azure: `Reader`, `Contributor` or `Owner` only through PIM.
+  - A credential that could not be checked: sign in again, grant what the line names or make the CLI available.
+  - A credential that can make destructive changes in an environment no config names: name the environments.
+  - A credential file the agent's user can read: keep the person's sessions out of the agent's reach.
+  - Nothing could be audited: said plainly, below.
+  - Once the credentials have been audited and L2 is still not reached: decide who applies production changes, a person with MFA or a pipeline whose apply role the agent cannot assume.
+- **L3**, only when L3 is asked for: the sandbox in managed settings, and the two attestations. When L2 is reached and L3 is not asked for, one pointer to what L3 adds.
+
+The setup advice follows [credentials.md](credentials.md). That advice has not been checked against each provider's documentation or a real account; [limits.md](limits.md) says what has been.
+
+Three things the steps say because the checks make them true:
+
+- **A readable credential file clears only when the agent's user cannot read it.** `~/.aws/credentials`, `~/.kube/config`, gcloud's application default credentials and `~/.azure/accessTokens.json` each keep L2 out of reach while they are readable: a separate OS user, a runner or a CI job, or no such file. `~/.kube/config` exists on most Kubernetes users' machines.
+- **A machine with nothing to audit does not reach L2.** applygate cannot show that the agent holds no credential, so L2 stays `not verified` when no AWS profile, kube context, gcloud account or Azure subscription was audited as having no destructive path.
+- **A missing `aws` is reported as not checked,** where a missing `kubectl`, `gcloud` or `az` is "nothing to audit". L2 is therefore not reached on a machine without `aws`, whether or not the agent holds AWS credentials.
+
+A block of steps ends with a fixed line: a person runs them and an agent should not, the audit covers the credentials on this machine only and from a sample, and it does not show that production is out of reach. `applygate scan --share` carries no step, since a step names credentials. `doctor --boundary` and `scan --boundary` print the same steps from the same checks.
+
 ## Requiring a level
 
 `boundary.require` makes `applygate doctor --boundary` exit 1 below the level, and `applygate doctor` reminds you of it. It does not change decisions at run time: the hook never contacts the cloud. To make a protected tier depend on a boundary, run the check in your setup or CI and treat the exit code as the gate.

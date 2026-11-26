@@ -363,3 +363,66 @@ func TestRenderShareHoldsCountsOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderPrintsStepsAfterTheVerdict(t *testing.T) {
+	steps := &Steps{Header: "Steps to L2", Note: "The credential steps do not depend on L1 and can be done first.", Items: []Step{
+		{Level: 1, Title: "Install a managed, exclusive copy of applygate", Lines: []string{"/usr/bin/sudo /path/to/verified/applygate install --managed --exclusive"}},
+		{Level: 2, Title: "Give the agent a read-only AWS role in place of these identities", Subjects: []string{"aws profile a", "aws profile b", "aws profile c", "aws profile d", "aws profile e", "aws profile f", "aws profile g"}, Lines: []string{"x"}},
+		{Level: 2, Title: "Keep your own sessions out of the agent's reach", Subjects: []string{"/home/u/.aws/credentials"}, Lines: []string{"readable"}},
+	}}
+	checks := []Check{{2, "FAIL", "aws profile a: allowed without MFA: ec2:TerminateInstances"}}
+	render := func(x *Exposure) string {
+		var b bytes.Buffer
+		Summary{Stats: Stats{Sessions: map[string]int{"claude": 1}, Calls: 0}, Exposure: x}.Render(&b, RenderOptions{Version: "0.9.0", Days: 30, Home: "/home/u"})
+		return b.String()
+	}
+	out := render(&Exposure{Audited: true, CredsFail: 1, Checks: checks, Steps: steps})
+	for _, want := range []string{
+		"  Steps to L2\n",
+		"    L1  Install a managed, exclusive copy of applygate\n         /usr/bin/sudo /path/to/verified/applygate install --managed --exclusive\n",
+		"aws profile a, aws profile b, aws profile c, aws profile d, aws profile e and 2 more\n",
+		"Keep your own sessions out of the agent's reach: ~/.aws/credentials\n",
+		"  The credential steps do not depend on L1 and can be done first.\n",
+		"    A person runs these; an agent should not. applygate checks the credentials on this machine only,\n",
+		"    follows docs/credentials.md, which is not yet checked against each provider's documentation\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "aws profile f") {
+		t.Errorf("more than five credentials named:\n%s", out)
+	}
+	if i, j := strings.Index(out, "A wrong verdict, or a call the hook never sees"), strings.Index(out, "Steps to L2"); i < 0 || j < i {
+		t.Errorf("the steps do not follow the verdict:\n%s", out)
+	}
+	// Without steps, or with none to give, the report prints none.
+	for _, x := range []*Exposure{{Audited: true, Checks: checks}, {Audited: true, Checks: checks, Steps: &Steps{}}} {
+		if out := render(x); strings.Contains(out, "Steps to") || strings.Contains(out, "A person runs these") {
+			t.Errorf("steps printed with none given:\n%s", out)
+		}
+	}
+	// Reached: a header and no list, so no closing line about running them.
+	out = render(&Exposure{Audited: true, Level: 3, CredsOK: 1, Steps: &Steps{Header: "Reached L3, the top level."}})
+	if !strings.Contains(out, "  Reached L3, the top level.\n") || strings.Contains(out, "A person runs these") {
+		t.Errorf("reached:\n%s", out)
+	}
+}
+
+// The summary a person sends to someone else holds counts only: no step, and
+// so no profile, context, project, subscription or file name.
+func TestShareCarriesNoSteps(t *testing.T) {
+	x := &Exposure{Audited: true, CredsFail: 1, Checks: []Check{{2, "FAIL", "aws profile acme-prod-admin: allowed without MFA"}},
+		Steps: &Steps{Header: "Steps to L2", Items: []Step{{Level: 2, Title: "Give the agent a read-only AWS role in place of these identities", Subjects: []string{"aws profile acme-prod-admin"}, Lines: []string{"x"}}}}}
+	var b bytes.Buffer
+	Summary{Stats: Stats{Sessions: map[string]int{"claude": 1}}, Exposure: x}.RenderShare(&b, RenderOptions{Version: "0.9.0", Days: 30})
+	out := b.String()
+	for _, bad := range []string{"acme-prod-admin", "Steps to", "read-only AWS role", "A person runs these"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("the shared summary holds %q:\n%s", bad, out)
+		}
+	}
+	if !strings.Contains(out, "boundary           L0 of L3") {
+		t.Errorf("the shared summary lost the level:\n%s", out)
+	}
+}

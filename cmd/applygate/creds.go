@@ -76,6 +76,9 @@ var kubeVerbs = [][]string{{"delete", "namespaces"}, {"delete", "deployments"}, 
 type credsFinding struct {
 	level string // "ok", "WARN", "FAIL"
 	text  string
+	// step names what a person does to close the finding (boundary_steps.go),
+	// and subject the credential it is about. Both are empty for "ok".
+	step, subject string
 }
 
 // unchecked reports whether a finding is a credential the audit could not
@@ -133,7 +136,7 @@ func tierOf(cfg *config.Config, sig config.Signals) (config.Tier, string, bool) 
 func auditAWS(cfg *config.Config) []credsFinding {
 	bin, err := cfg.EngineBinary("aws")
 	if err != nil {
-		return []credsFinding{{"WARN", "aws: not audited (" + err.Error() + ")"}}
+		return []credsFinding{{"WARN", "aws: not audited (" + err.Error() + ")", stepAWSCLI, ""}}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), credsTimeout)
 	out, err := runCLI(ctx, bin, "configure", "list-profiles")
@@ -149,7 +152,7 @@ func auditAWS(cfg *config.Config) []credsFinding {
 	sort.Strings(profiles)
 	var res []credsFinding
 	if len(profiles) > maxAudited {
-		res = append(res, credsFinding{"WARN", fmt.Sprintf("aws: %d profiles listed, only the first %d are audited; the rest are not checked", len(profiles), maxAudited)})
+		res = append(res, credsFinding{"WARN", fmt.Sprintf("aws: %d profiles listed, only the first %d are audited; the rest are not checked", len(profiles), maxAudited), stepNotChecked, ""})
 		profiles = profiles[:maxAudited]
 	}
 	// The environment's own credentials (AWS_ACCESS_KEY_ID, AWS_PROFILE)
@@ -183,11 +186,11 @@ func auditProfile(cfg *config.Config, bin, profile string) credsFinding {
 	defer cancel()
 	out, err := runCLI(ctx, bin, awsArgs(profile, "sts", "get-caller-identity")...)
 	if err != nil {
-		return credsFinding{"WARN", name + ": not checked, sts get-caller-identity failed (" + err.Error() + ")"}
+		return credsFinding{"WARN", name + ": not checked, sts get-caller-identity failed (" + err.Error() + ")", stepNotChecked, name}
 	}
 	var id struct{ Account, Arn string }
 	if json.Unmarshal(out, &id) != nil || id.Arn == "" {
-		return credsFinding{"WARN", name + ": not checked, sts get-caller-identity gave no identity"}
+		return credsFinding{"WARN", name + ": not checked, sts get-caller-identity gave no identity", stepNotChecked, name}
 	}
 	tier, env, matched := tierOf(cfg, config.Signals{AWSProfile: profile, AWSAccount: id.Account})
 	where := "matches no environment"
@@ -197,18 +200,18 @@ func auditProfile(cfg *config.Config, bin, profile string) credsFinding {
 	prod := matched && tier == config.Protected
 	who := fmt.Sprintf("%s: %s (account %s, %s)", name, id.Arn, id.Account, where)
 	if strings.HasSuffix(id.Arn, ":root") {
-		return credsFinding{levelFor(prod, matched), who + ": the account's root user can do anything"}
+		return destructiveFinding(stepAWSReadOnly, name, who+": the account's root user can do anything", prod, matched)
 	}
 	src, err := principalARN(ctx, bin, profile, id.Arn)
 	if err != nil {
-		return credsFinding{"WARN", who + ": not checked, " + err.Error()}
+		return credsFinding{"WARN", who + ": not checked, " + err.Error(), stepForRoleErr(err), name}
 	}
 	args := awsArgs(profile, "iam", "simulate-principal-policy", "--policy-source-arn", src, "--action-names")
 	args = append(args, destructiveActions...)
 	args = append(args, "--context-entries", "ContextKeyName=aws:MultiFactorAuthPresent,ContextKeyValues=false,ContextKeyType=boolean")
 	out, err = runCLI(ctx, bin, args...)
 	if err != nil {
-		return credsFinding{"WARN", who + ": not checked, iam simulate-principal-policy failed (" + err.Error() + "); grant the profile iam:SimulatePrincipalPolicy on itself, or check it by hand (docs/credentials.md)"}
+		return credsFinding{"WARN", who + ": not checked, iam simulate-principal-policy failed (" + err.Error() + "); grant the profile iam:SimulatePrincipalPolicy on itself, or check it by hand (docs/credentials.md)", stepAWSSimulatorGrant, name}
 	}
 	var sim struct {
 		EvaluationResults []struct {
@@ -217,7 +220,7 @@ func auditProfile(cfg *config.Config, bin, profile string) credsFinding {
 		}
 	}
 	if json.Unmarshal(out, &sim) != nil {
-		return credsFinding{"WARN", who + ": not checked, the simulator's answer could not be read"}
+		return credsFinding{"WARN", who + ": not checked, the simulator's answer could not be read", stepNotChecked, name}
 	}
 	var allowed []string
 	for _, r := range sim.EvaluationResults {
@@ -226,25 +229,36 @@ func auditProfile(cfg *config.Config, bin, profile string) credsFinding {
 		}
 	}
 	if len(sim.EvaluationResults) == 0 {
-		return credsFinding{"WARN", who + ": not checked, the simulator returned no results"}
+		return credsFinding{"WARN", who + ": not checked, the simulator returned no results", stepNotChecked, name}
 	}
 	if len(allowed) == 0 {
-		return credsFinding{"ok", who + ": none of " + fmt.Sprint(len(destructiveActions)) + " destructive actions allowed without MFA"}
+		return credsFinding{level: "ok", text: who + ": none of " + fmt.Sprint(len(destructiveActions)) + " destructive actions allowed without MFA"}
 	}
-	return credsFinding{levelFor(prod, matched), who + ": allowed without MFA: " + strings.Join(allowed, ", ")}
+	return destructiveFinding(stepAWSReadOnly, name, who+": allowed without MFA: "+strings.Join(allowed, ", "), prod, matched)
 }
 
-// levelFor is how a credential that can make destructive changes is
-// reported: a failure in production, a warning where the config does not
-// say which environment it belongs to, fine elsewhere.
-func levelFor(prod, matched bool) string {
+// destructiveFinding is how a credential that can make destructive changes
+// is reported: a failure in production, with the step that narrows it; a
+// warning where the config does not say which environment it belongs to,
+// with the step that names the environments; fine elsewhere.
+func destructiveFinding(step, subject, text string, prod, matched bool) credsFinding {
 	switch {
 	case prod:
-		return "FAIL"
+		return credsFinding{"FAIL", text, step, subject}
 	case !matched:
-		return "WARN"
+		return credsFinding{"WARN", text, stepNameEnvs, subject}
 	}
-	return "ok"
+	return credsFinding{level: "ok", text: text}
+}
+
+// stepForRoleErr is the step for a failure to find the role an assumed-role
+// identity runs as: a refused iam:GetRole is closed by a grant, anything else
+// by whatever the line names.
+func stepForRoleErr(err error) string {
+	if strings.HasPrefix(err.Error(), "iam get-role") {
+		return stepAWSSimulatorGrant
+	}
+	return stepNotChecked
 }
 
 // principalARN is the ARN the policy simulator takes for a caller: a user's
@@ -283,7 +297,7 @@ func auditKube(cfg *config.Config) []credsFinding {
 	out, err := runCLI(ctx, bin, "config", "get-contexts", "-o", "name")
 	cancel()
 	if err != nil {
-		return []credsFinding{{"WARN", "kubectl: contexts not listed (" + err.Error() + ")"}}
+		return []credsFinding{{"WARN", "kubectl: contexts not listed (" + err.Error() + ")", stepNotChecked, ""}}
 	}
 	var res []credsFinding
 	n := 0
@@ -292,7 +306,7 @@ func auditKube(cfg *config.Config) []credsFinding {
 			continue
 		}
 		if n++; n > maxAudited {
-			res = append(res, credsFinding{"WARN", fmt.Sprintf("kube: more than %d contexts, the rest are not audited", maxAudited)})
+			res = append(res, credsFinding{"WARN", fmt.Sprintf("kube: more than %d contexts, the rest are not audited", maxAudited), stepNotChecked, ""})
 			break
 		}
 		tier, env, matched := tierOf(cfg, config.Signals{KubeContext: c})
@@ -313,7 +327,7 @@ func auditKube(cfg *config.Config) []credsFinding {
 				can = append(can, v[0]+" "+v[1])
 			case a == "no":
 			case err != nil:
-				res = append(res, credsFinding{"WARN", fmt.Sprintf("kube context %s (%s): not checked (%v)", c, where, err)})
+				res = append(res, credsFinding{"WARN", fmt.Sprintf("kube context %s (%s): not checked (%v)", c, where, err), stepNotChecked, "kube context " + c})
 				checked = false
 			}
 			if !checked {
@@ -324,9 +338,9 @@ func auditKube(cfg *config.Config) []credsFinding {
 			continue
 		}
 		if len(can) == 0 {
-			res = append(res, credsFinding{"ok", fmt.Sprintf("kube context %s (%s): none of %d destructive verbs allowed", c, where, len(kubeVerbs))})
+			res = append(res, credsFinding{level: "ok", text: fmt.Sprintf("kube context %s (%s): none of %d destructive verbs allowed", c, where, len(kubeVerbs))})
 		} else {
-			res = append(res, credsFinding{levelFor(prod, matched), fmt.Sprintf("kube context %s (%s): allowed: %s", c, where, strings.Join(can, ", "))})
+			res = append(res, destructiveFinding(stepKubeView, "kube context "+c, fmt.Sprintf("kube context %s (%s): allowed: %s", c, where, strings.Join(can, ", ")), prod, matched))
 		}
 	}
 	return res
@@ -412,11 +426,11 @@ func auditGCloud(cfg *config.Config) []credsFinding {
 	}
 	out, err := call("auth", "list", "--format=json")
 	if err != nil {
-		return []credsFinding{{"WARN", "gcloud: accounts not listed (" + err.Error() + ")"}}
+		return []credsFinding{{"WARN", "gcloud: accounts not listed (" + err.Error() + ")", stepNotChecked, ""}}
 	}
 	var accts []struct{ Account, Status string }
 	if json.Unmarshal(out, &accts) != nil {
-		return []credsFinding{{"WARN", "gcloud: the account list could not be read"}}
+		return []credsFinding{{"WARN", "gcloud: the account list could not be read", stepNotChecked, ""}}
 	}
 	if len(accts) == 0 {
 		return nil // no credentialed account: nothing the agent can use
@@ -475,7 +489,7 @@ func auditGCloud(cfg *config.Config) []credsFinding {
 		case active.Core.Project != "":
 			add(a.Account, active.Core.Project)
 		default:
-			res = append(res, credsFinding{"WARN", "gcloud account " + a.Account + ": not checked (no configuration names a project for it)"})
+			res = append(res, credsFinding{"WARN", "gcloud account " + a.Account + ": not checked (no configuration names a project for it)", stepNotChecked, "gcloud account " + a.Account})
 		}
 	}
 	sort.Slice(pairs, func(i, j int) bool {
@@ -485,7 +499,7 @@ func auditGCloud(cfg *config.Config) []credsFinding {
 		return pairs[i].project < pairs[j].project
 	})
 	if len(pairs) > maxAudited {
-		res = append(res, credsFinding{"WARN", fmt.Sprintf("gcloud: %d account and project pairs, only the first %d are audited; the rest are not checked", len(pairs), maxAudited)})
+		res = append(res, credsFinding{"WARN", fmt.Sprintf("gcloud: %d account and project pairs, only the first %d are audited; the rest are not checked", len(pairs), maxAudited), stepNotChecked, ""})
 		pairs = pairs[:maxAudited]
 	}
 	tokens := map[string]string{}
@@ -508,22 +522,22 @@ func auditGCloud(cfg *config.Config) []credsFinding {
 			}
 		}
 		if err := tokenErr[p.account]; err != nil {
-			res = append(res, credsFinding{"WARN", who + ": not checked (gcloud auth print-access-token failed: " + err.Error() + ")"})
+			res = append(res, credsFinding{"WARN", who + ": not checked (gcloud auth print-access-token failed: " + err.Error() + ")", stepNotChecked, "gcloud account " + p.account + " on project " + p.project})
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), credsTimeout)
 		held, err := gcpTestPermissions(ctx, tok, p.project, gcpDestructivePermissions)
 		cancel()
 		if err != nil {
-			res = append(res, credsFinding{"WARN", who + ": not checked (" + redact(err.Error(), tok) + ")"})
+			res = append(res, credsFinding{"WARN", who + ": not checked (" + redact(err.Error(), tok) + ")", stepNotChecked, "gcloud account " + p.account + " on project " + p.project})
 			continue
 		}
 		if len(held) == 0 {
-			res = append(res, credsFinding{"ok", fmt.Sprintf("%s: none of %d destructive permissions", who, len(gcpDestructivePermissions))})
+			res = append(res, credsFinding{level: "ok", text: fmt.Sprintf("%s: none of %d destructive permissions", who, len(gcpDestructivePermissions))})
 			continue
 		}
 		sort.Strings(held)
-		res = append(res, credsFinding{levelFor(prod, matched), who + ": holds: " + strings.Join(held, ", ")})
+		res = append(res, destructiveFinding(stepGCPViewer, "gcloud account "+p.account+" on project "+p.project, who+": holds: "+strings.Join(held, ", "), prod, matched))
 	}
 	return res
 }
@@ -609,7 +623,7 @@ func auditAz(cfg *config.Config) []credsFinding {
 	}
 	out, err := call("account", "list", "--all", "--output", "json")
 	if err != nil {
-		return []credsFinding{{"WARN", "az: subscriptions not listed (" + err.Error() + ")"}}
+		return []credsFinding{{"WARN", "az: subscriptions not listed (" + err.Error() + ")", stepNotChecked, ""}}
 	}
 	var subs []struct {
 		ID, Name  string
@@ -617,7 +631,7 @@ func auditAz(cfg *config.Config) []credsFinding {
 		User      struct{ Name, Type string }
 	}
 	if json.Unmarshal(out, &subs) != nil {
-		return []credsFinding{{"WARN", "az: the subscription list could not be read"}}
+		return []credsFinding{{"WARN", "az: the subscription list could not be read", stepNotChecked, ""}}
 	}
 	// AZURE_SUBSCRIPTION_ID is the subscription a call with no
 	// --subscription uses.
@@ -634,7 +648,7 @@ func auditAz(cfg *config.Config) []credsFinding {
 	})
 	var res []credsFinding
 	if len(subs) > maxAudited {
-		res = append(res, credsFinding{"WARN", fmt.Sprintf("az: %d subscriptions listed, only the first %d are audited; the rest are not checked", len(subs), maxAudited)})
+		res = append(res, credsFinding{"WARN", fmt.Sprintf("az: %d subscriptions listed, only the first %d are audited; the rest are not checked", len(subs), maxAudited), stepNotChecked, ""})
 		subs = subs[:maxAudited]
 	}
 	for _, s := range subs {
@@ -646,17 +660,17 @@ func auditAz(cfg *config.Config) []credsFinding {
 		}
 		who := fmt.Sprintf("az subscription %s (%s) as %s (%s)", s.Name, id, s.User.Name, where(tier, env, matched))
 		if s.User.Name == "" {
-			res = append(res, credsFinding{"WARN", who + ": not checked (the subscription names no signed-in principal)"})
+			res = append(res, credsFinding{"WARN", who + ": not checked (the subscription names no signed-in principal)", stepNotChecked, "az subscription " + s.Name})
 			continue
 		}
 		out, err := call("role", "assignment", "list", "--assignee", s.User.Name, "--all", "--include-inherited", "--include-groups", "--subscription", s.ID, "--output", "json")
 		if err != nil {
-			res = append(res, credsFinding{"WARN", who + ": not checked, az role assignment list failed (" + err.Error() + ")"})
+			res = append(res, credsFinding{"WARN", who + ": not checked, az role assignment list failed (" + err.Error() + ")", stepNotChecked, "az subscription " + s.Name})
 			continue
 		}
 		var assigns []struct{ RoleDefinitionName, Scope string }
 		if json.Unmarshal(out, &assigns) != nil {
-			res = append(res, credsFinding{"WARN", who + ": not checked, the role assignments could not be read"})
+			res = append(res, credsFinding{"WARN", who + ": not checked, the role assignments could not be read", stepNotChecked, "az subscription " + s.Name})
 			continue
 		}
 		var bad, unread []string
@@ -688,11 +702,11 @@ func auditAz(cfg *config.Config) []credsFinding {
 			if len(unread) > 0 {
 				text += "; definitions not read: " + strings.Join(unread, "; ")
 			}
-			res = append(res, credsFinding{levelFor(prod, matched), text})
+			res = append(res, destructiveFinding(stepAzReader, "az subscription "+s.Name, text, prod, matched))
 		case len(unread) > 0:
-			res = append(res, credsFinding{"WARN", who + ": not checked, role definitions not read: " + strings.Join(unread, "; ")})
+			res = append(res, credsFinding{"WARN", who + ": not checked, role definitions not read: " + strings.Join(unread, "; "), stepNotChecked, "az subscription " + s.Name})
 		default:
-			res = append(res, credsFinding{"ok", who + ": no role with a destructive action"})
+			res = append(res, credsFinding{level: "ok", text: who + ": no role with a destructive action"})
 		}
 	}
 	return res

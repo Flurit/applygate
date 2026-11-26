@@ -11,10 +11,10 @@
 | `/usr/bin/sudo /path/to/applygate install --managed --exclusive` | Root-owned install the agent's user cannot change ([managed.md](managed.md)) |
 | `applygate approve [ID]` | Allow once a call an agent was stopped on because it could not ask you; without ID, list pending requests |
 | `applygate plan-check plan.json` | Judge `terraform show -json` output; `--comment-file FILE` also writes the verdict as the Markdown of a pull-request comment ([ci.md](ci.md#a-comment-on-the-pull-request)) |
-| `applygate scan [--days N] [--dir DIR] [--boundary] [--share]` | What your agents can reach (the boundary checks; `--boundary` adds the credential audit), and what applygate would decide on the calls Claude Code and Codex already made, read from their session files; no hook needed, nothing is run. `--share` prints counts only ([scan.md](scan.md)) |
+| `applygate scan [--days N] [--dir DIR] [--boundary] [--share]` | What your agents can reach (the boundary checks; `--boundary` adds the credential audit and the steps to the next level), and what applygate would decide on the calls Claude Code and Codex already made, read from their session files; no hook needed, nothing is run. `--share` prints counts only ([scan.md](scan.md)) |
 | `applygate report` / `suggest` | Summarize the decision log / propose a config from it |
 | `applygate doctor` | Check config, hooks and versions |
-| `applygate doctor --boundary [--require L2]` | The assurance level this machine reaches (managed install, audited credentials, host sandbox), exit 1 below the level you require ([boundary.md](boundary.md)) |
+| `applygate doctor --boundary [--require L2]` | The assurance level this machine reaches (managed install, audited credentials, host sandbox) and the steps to the next, exit 1 below the level you require ([boundary.md](boundary.md)) |
 | `applygate doctor --creds` | Ask AWS, Google Cloud, Azure and the clusters whether the credentials here can change production without a person ([credentials.md](credentials.md)) |
 | `applygate hook install\|remove --agent NAME` | Manage one agent's hook |
 | `applygate hosts` | What each agent supports |

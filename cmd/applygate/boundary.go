@@ -43,6 +43,10 @@ type boundaryCheck struct {
 	level  int    // the level this check is part of
 	status string // "ok", "FAIL", "attested", "not verified"
 	text   string
+	// step is the id of what a person does to close the check, and subject
+	// the credential or file it is about (boundary_steps.go). Both are empty
+	// for a check that holds.
+	step, subject string
 }
 
 // boundaryResult is every check and the level reached: the highest level
@@ -61,7 +65,12 @@ type boundaryResult struct {
 }
 
 func (r *boundaryResult) add(level int, status, format string, a ...any) {
-	r.checks = append(r.checks, boundaryCheck{level, status, fmt.Sprintf(format, a...)})
+	r.checks = append(r.checks, boundaryCheck{level: level, status: status, text: fmt.Sprintf(format, a...)})
+}
+
+// addStep adds a check that is not met, with the step that closes it.
+func (r *boundaryResult) addStep(level int, status, step, subject, format string, a ...any) {
+	r.checks = append(r.checks, boundaryCheck{level, status, fmt.Sprintf(format, a...), step, subject})
 }
 
 func evalBoundary(cfg *config.Config) *boundaryResult { return evalBoundaryWith(cfg, true) }
@@ -74,13 +83,18 @@ func evalBoundaryWith(cfg *config.Config, audit bool) *boundaryResult {
 
 	// L1: managed and exclusive.
 	if !config.Managed() {
-		r.add(1, "not verified", "no managed install: the agent's user can change the hook, the config and the binary (sudo applygate install --managed --exclusive, docs/managed.md)")
+		r.addStep(1, "not verified", stepManagedInstall, "", "no managed install: the agent's user can change the hook, the config and the binary (sudo applygate install --managed --exclusive, docs/managed.md)")
 	} else {
 		bad := 0
 		doctorManaged(func(ok bool, f string, a ...any) {
 			if !ok {
 				bad++
-				r.add(1, "FAIL", f, a...)
+				// f is one of doctorManaged's own format strings.
+				if strings.Contains(f, "can be replaced by your user") {
+					r.addStep(1, "FAIL", stepAgentCLI, fmt.Sprint(a[0]), f, a...)
+				} else {
+					r.addStep(1, "FAIL", stepManagedFix, "", f, a...)
+				}
 			}
 		})
 		if bad == 0 {
@@ -99,26 +113,26 @@ func evalBoundaryWith(cfg *config.Config, audit bool) *boundaryResult {
 				r.add(2, "ok", "%s", f.text)
 			case "FAIL":
 				r.credsFail++
-				r.add(2, "FAIL", "%s", f.text)
+				r.addStep(2, "FAIL", f.step, f.subject, "%s", f.text)
 			default:
 				if f.unchecked() {
 					r.credsUnchecked++
 				} else {
 					r.credsUnplaced++
 				}
-				r.add(2, "not verified", "%s", f.text)
+				r.addStep(2, "not verified", f.step, f.subject, "%s", f.text)
 			}
 		}
 		if r.credsOK == 0 {
-			r.add(2, "not verified", "no AWS profile, kube context, gcloud account or Azure subscription could be audited, so nothing shows the agent's credentials cannot change production")
+			r.addStep(2, "not verified", stepNothingAudited, "", "no AWS profile, kube context, gcloud account or Azure subscription could be audited, so nothing shows the agent's credentials cannot change production")
 		}
 		for _, p := range credentialFiles() {
-			r.add(2, "not verified", "%s is readable by this user, so is any agent that runs as you; the audit above covers what it can do, not who can read it", p)
+			r.addStep(2, "not verified", stepCredentialFile, p, "%s is readable by this user, so is any agent that runs as you; the audit above covers what it can do, not who can read it", p)
 		}
 	} else {
-		r.add(2, "not verified", "credentials not audited: nothing was asked of AWS, Google Cloud, Azure or the clusters")
+		r.addStep(2, "not verified", stepRunAudit, "", "credentials not audited: nothing was asked of AWS, Google Cloud, Azure or the clusters")
 		for _, p := range credentialFiles() {
-			r.add(2, "not verified", "%s is readable by this user, so is any agent that runs as you", p)
+			r.addStep(2, "not verified", stepCredentialFile, p, "%s is readable by this user, so is any agent that runs as you", p)
 		}
 	}
 
@@ -127,7 +141,7 @@ func evalBoundaryWith(cfg *config.Config, audit bool) *boundaryResult {
 	case "managed":
 		r.add(3, "ok", "%s", why)
 	default:
-		r.add(3, "not verified", "%s", why)
+		r.addStep(3, "not verified", stepSandbox, "", "%s", why)
 	}
 	attested := map[string]bool{}
 	for _, a := range cfg.Boundary.Attest {
@@ -139,7 +153,7 @@ func evalBoundaryWith(cfg *config.Config, audit bool) *boundaryResult {
 			known = known || strings.EqualFold(a, k)
 		}
 		if !known {
-			r.add(3, "FAIL", "boundary.attest names %q, which is not one of %s", a, strings.Join(attestable, ", "))
+			r.addStep(3, "FAIL", stepAttestName, a, "boundary.attest names %q, which is not one of %s", a, strings.Join(attestable, ", "))
 		}
 	}
 	for _, k := range attestable {
@@ -148,7 +162,7 @@ func evalBoundaryWith(cfg *config.Config, audit bool) *boundaryResult {
 		case attested[k]:
 			r.add(3, "attested", "%s (vouched for in the user config, not checked)", k)
 		case need:
-			r.add(3, "not verified", "%s is not attested: set boundary.attest in the user config once it is true", k)
+			r.addStep(3, "not verified", stepAttest, k, "%s is not attested: set boundary.attest in the user config once it is true", k)
 		default:
 			r.add(0, "not verified", "%s is not attested (optional)", k)
 		}
@@ -284,6 +298,11 @@ func cmdDoctorBoundary(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "\nAssurance level reached: L%d\n", r.reached)
 	fmt.Fprintln(stdout, "L0 hook only, L1 managed and exclusive install, L2 audited credentials, L3 host sandbox plus attested CI apply and state guards. Above L0 the guarantee comes from the controls, not from the hook (docs/boundary.md).")
+	if s := nextSteps(r, stepTarget(require)); s != nil {
+		home, _ := os.UserHomeDir()
+		fmt.Fprintln(stdout)
+		s.Render(stdout, "", home)
+	}
 	if require != "" && r.reached < levelNum(require) {
 		fmt.Fprintf(stdout, "\nRequired level %s not reached.\n", strings.ToUpper(require))
 		return 1

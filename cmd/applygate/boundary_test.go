@@ -11,19 +11,19 @@ import (
 )
 
 func TestReachedLevel(t *testing.T) {
-	ok := func(l int) boundaryCheck { return boundaryCheck{l, "ok", ""} }
+	ok := func(l int) boundaryCheck { return boundaryCheck{level: l, status: "ok"} }
 	for _, c := range []struct {
 		name   string
 		checks []boundaryCheck
 		want   int
 	}{
 		{"nothing is L0", nil, 0},
-		{"L1 only", []boundaryCheck{ok(1), {2, "not verified", ""}}, 1},
-		{"a failed L1 check stops everything above", []boundaryCheck{{1, "FAIL", ""}, ok(2), ok(3)}, 0},
-		{"L3 without L2 is L1", []boundaryCheck{ok(1), {2, "FAIL", ""}, ok(3)}, 1},
-		{"attested counts", []boundaryCheck{ok(1), ok(2), {3, "attested", ""}}, 3},
-		{"not verified does not count", []boundaryCheck{ok(1), ok(2), {3, "not verified", ""}}, 2},
-		{"optional checks (level 0) never count", []boundaryCheck{ok(1), {0, "not verified", ""}}, 1},
+		{"L1 only", []boundaryCheck{ok(1), {level: 2, status: "not verified"}}, 1},
+		{"a failed L1 check stops everything above", []boundaryCheck{{level: 1, status: "FAIL"}, ok(2), ok(3)}, 0},
+		{"L3 without L2 is L1", []boundaryCheck{ok(1), {level: 2, status: "FAIL"}, ok(3)}, 1},
+		{"attested counts", []boundaryCheck{ok(1), ok(2), {level: 3, status: "attested"}}, 3},
+		{"not verified does not count", []boundaryCheck{ok(1), ok(2), {level: 3, status: "not verified"}}, 2},
+		{"optional checks (level 0) never count", []boundaryCheck{ok(1), {level: 0, status: "not verified"}}, 1},
 		{"a level with no checks is not reached", []boundaryCheck{ok(1), ok(3)}, 1},
 	} {
 		if got := reachedLevel(c.checks); got != c.want {

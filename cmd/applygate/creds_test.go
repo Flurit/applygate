@@ -340,7 +340,7 @@ func TestUncheckedFindingsAreToldFromUnplacedOnes(t *testing.T) {
 			t.Errorf("%s (%s %s): unchecked %v, want %v", name, f.level, f.text, f.unchecked(), want)
 		}
 	}
-	if (credsFinding{"WARN", "az: not audited (not installed)"}).unchecked() != true {
+	if (credsFinding{level: "WARN", text: "az: not audited (not installed)"}).unchecked() != true {
 		t.Error("a CLI that is not installed is a credential not checked")
 	}
 }
