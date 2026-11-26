@@ -510,6 +510,21 @@ What each host can do with the hook, as verified live, is the generated table in
 - **Reads of credential files.** The hook asks about a read of the three AWS credential paths and Terraform's credentials file by `cat`, `less`, `more`, `head`, `tail`, `grep`, `rg`, `awk`, `base64`, `xxd`, `od`, `strings`, `bat`, `nl`, `cp`, `scp` and `curl`. Not covered: `sed`, `cut`, `sort`, `jq`, a redirect, a path named by a glob (`cat ~/.aws/cred*`), and the kube, gcloud, Azure, ssh and Docker files ([credentials.md](credentials.md)).
 - **Credentials files that run a program.** A credentials file that a command names through `AWS_CONFIG_FILE`, `KUBECONFIG` or the like, and that holds a `credential_process` or an `exec` plugin, asks. So does one written earlier in the same command.
 
+### The boundary examples
+
+[examples/boundary](../examples/boundary) holds the policies and commands the steps in the report point to. Each is a starting point to read and adapt, and the table says how far it has been checked. "Test" is a Go test of the file's content (no wildcard allows a destructive action the audit asks about, the MFA condition and the pin are present, the scripts parse and print before they run); it does not show that a provider accepts or enforces the file. "Documentation" is what the provider's own page said when it was read on 2026-11-26, with a subagent's summary where a page was long, so a point marked "summary" has not been read verbatim by a person. "Real service" is a run against the provider. A file with nothing under "Real service" has not been run.
+
+| File | Test | Documentation (read 2026-11-26) | Real service |
+|---|---|---|---|
+| `examples/boundary/aws-agent-readonly.json` | passes | Terraform's S3 backend page: reading state needs `s3:ListBucket` and `s3:GetObject`; locking needs write rights. `iam:SimulatePrincipalPolicy` takes a role, user or group ARN. A summary of the `ReadOnlyAccess` page says it allows `s3:Get*` on every resource, so with it the role reads every object in the account, state included. | not run |
+| `examples/boundary/aws-apply-mfa-trust.json` | passes | The IAM condition-keys page: the MFA keys exist only for temporary credentials, and not for federated identities. Whether naming one user makes an identity policy unnecessary was not settled by the pages read. | not run |
+| `examples/boundary/aws-apply-oidc-trust.json` | passes | GitHub's page for AWS: the `aud`, `sub` and principal forms and the environment `sub` (`repo:ORG/REPO:environment:NAME`). The page also gives another `sub` form for repositories created after 2026-07-15 or set to immutable subject claims, with numeric ids in it: check the `sub` your repository sends. | not run |
+| `examples/boundary/k8s-agent-view.yaml` | passes | Kubernetes's RBAC page (summary): `view` allows reading most namespaced objects and not Secrets, roles or role bindings. | not run |
+| `examples/boundary/gcp-agent-viewer.sh` | passes, with a dry run | gcloud's reference: the three binding commands exist with `--member`, `--role` and `--condition=None`. Not settled: what `roles/viewer` contains (whether it reads objects), and what a Terraform GCS lock writes. | not run |
+| `examples/boundary/azure-agent-reader.sh` | passes, with a dry run | Microsoft Learn: `Reader` is `*/read` with no NotActions, which the audit counts as read-only. `--assignee` takes an object id, sign-in name or service principal name. Not settled: how a PIM role is activated from a command line. | not run |
+
+Not checked for any of them: Identity Center permission sets, permissions boundaries, resource policies, and what the provider does with the file in an account that has other policies. Whether each file makes the audit report the credential as `ok` has not been run against any real account.
+
 ## Scan
 
 `applygate scan` judges past calls with today's files and reads only Claude Code and Codex sessions. [scan.md](scan.md) lists what that leaves out. It has been run on the real session files of one machine (Claude Code 2.1.3xx, Codex 0.162 to 0.166). `scan --boundary` runs the credential audit of `doctor --boundary`, with the limits above.
