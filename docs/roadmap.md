@@ -22,9 +22,11 @@ The setup to aim for is one where agents hold no credentials that can change pro
 - the **plan check** is the gate in the pipeline;
 - the **boundary report** says how far the setup is from the one above, and what to change.
 
-## What exists (v0.6)
+## What exists (v0.8)
 
 - **The hook:** shell-aware analysis, environment tiers, preflight checks and the plan gate, with AWS plan rules first ([policy.md](policy.md)). Claude Code and Codex are tested live. Cursor, Copilot CLI, Gemini CLI, Windsurf, Devin, OpenCode and Cline have adapters written from each host's documentation and not yet run inside the host ([hosts.md](hosts.md)).
+- **Fewer prompts where nobody asked for strictness:** in a repository with no config, a command that is not plain is asked about only when it names an infrastructure tool or a guard file (v0.8.0). A repository config, a managed install or `strict_shapes: true` keeps the full rule. What this gives up is in [limits.md](limits.md#a-repository-with-no-config).
+- **Routine replaces:** in a standard tier, a saved plan whose only replaces are of listed types that hold no data is allowed without a prompt (v0.7.0, [policy.md](policy.md)). A protected tier blocks every replace as before.
 - **The plan check in CI:** a GitHub Action with an optional comment on the pull request, a script for any runner, and a Terragrunt `before_hook` ([ci.md](ci.md)).
 - **The boundary report:** `applygate doctor --boundary` and the credential audit ([boundary.md](boundary.md), [credentials.md](credentials.md)), and the managed install that agents cannot remove ([managed.md](managed.md)).
 - **`applygate scan`:** what applygate would have decided on the calls your agents already made, with no hook installed ([scan.md](scan.md)).
@@ -36,16 +38,17 @@ What applygate does not see or cover is in [limits.md](limits.md).
 
 ## Next
 
-In this order:
+In this order. The order changed on 2026-11-25: hearing from teams that use agents near real infrastructure now comes before more features, because every figure for how often applygate asks is still from the project's own machine and trials.
 
-1. **Fewer prompts on ordinary work** in Claude Code and Codex: one-line scripts, loops and commands a project declares as its own.
+1. **Real teams.** Ask teams whose agents hold real credentials to run `applygate scan` on the sessions they already have, then an observe-mode trial with those who agree. The trials so far were run by the project on public repositories ([review/oss-corpus/trial.md](../review/oss-corpus/trial.md), [review/2026-10-28-v1-acceptance.md](../review/2026-10-28-v1-acceptance.md)).
 2. **A path to the safer setup:** the boundary report shows the steps from one level to the next, with plan-only IAM and RBAC examples and a workflow for reviewed applies.
-3. **Review from outside:** an independent security review, and a public page of reported ways past the check.
-4. **An observe-mode trial with real teams.** The trials so far were run by the project on public repositories ([review/oss-corpus/trial.md](../review/oss-corpus/trial.md), [review/2026-10-28-v1-acceptance.md](../review/2026-10-28-v1-acceptance.md)).
+3. **Review from outside:** a public page of reported ways past the check first, then an independent security review.
+4. **Fewer prompts where a config asks for strictness:** one-line scripts, loops and commands a project declares as its own, in protected directories. This was first on the list; since v0.8.0 it matters only where a config or a managed install keeps the full rule.
+5. **A live test of the Cursor adapter,** the first of the adapters written from documentation.
 
 ## On hold
 
-- Live tests of the adapters written from documentation, and new agent integrations, until prompts on Claude Code and Codex are down.
+- Live tests of the other adapters written from documentation, and new agent integrations.
 - More work on the model judge.
 - npm and pip wrappers for installing.
 
