@@ -7,7 +7,7 @@
 # reviewed one for that release.
 #
 # Environment overrides:
-#   APPLYGATE_VERSION      release tag to install, e.g. v0.7.0 (default: latest release)
+#   APPLYGATE_VERSION      release tag to install, e.g. v0.8.0 (default: latest release)
 #   APPLYGATE_INSTALL_DIR  directory to install into (default: $HOME/.local/bin, or
 #                         /usr/local/bin when it is writable and $HOME/.local/bin
 #                         is not on PATH)
