@@ -118,8 +118,8 @@ var stepTable = map[string]stepDef{
 	}},
 	stepWhoApplies: {2, "Decide who applies production changes", []string{
 		"A person, with a role that needs MFA from a device the agent cannot answer (docs/credentials.md, step 2), or a pipeline",
-		"whose apply role the agent cannot assume (docs/ci.md). applygate does not see which you use; for L3 you attest it",
-		"(boundary.attest: ci_apply).",
+		"whose apply role the agent cannot assume (docs/ci.md; examples/github-actions/reviewed-apply.yml). applygate does not see",
+		"which you use; for L3 you attest it (boundary.attest: ci_apply).",
 	}},
 	stepSandbox: {3, "Turn on the host sandbox in managed settings", []string{
 		"Claude Code: sandbox.enabled true and allowUnsandboxedCommands false, in a root-owned managed settings file. These keys have",
