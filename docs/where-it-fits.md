@@ -85,8 +85,8 @@ The hook is the check for the time before the boundary is in place, not the dest
 
 1. **Look.** `applygate scan --boundary` shows what your agents can reach and what they have run.
 2. **Check each command** with the hook while agents still hold credentials that can change production.
-3. **Narrow the credentials** until agents can read and plan only, and changing production needs a person.
-4. **Apply through a reviewed pipeline,** with a policy engine or the plan check on the plan.
+3. **Narrow the credentials** until agents can read and plan only, and changing production needs a person. The boundary report prints the steps for the checks that are not met ([boundary.md](boundary.md#steps-between-levels)), and [examples/boundary](../examples/boundary) holds the policies they point to.
+4. **Apply through a reviewed pipeline,** with a policy engine or the plan check on the plan. [ci.md](ci.md#a-reviewed-apply) describes a GitHub Actions template for it. It does not make anyone read the plan, and applygate cannot see whether the reviewer rule is set.
 
 At step 4 the hook has little left to protect in production. It still checks the environments where agents do apply, such as development and staging.
 
