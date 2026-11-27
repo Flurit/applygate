@@ -1,0 +1,15 @@
+# Binds the identity the agent uses to the built-in "view" ClusterRole.
+# Change the subject to the name your cluster gives that identity: how a
+# cluster names an identity differs between clusters and providers.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agent-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: User
+    name: agent@example.com
+    apiGroup: rbac.authorization.k8s.io

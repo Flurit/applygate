@@ -21,7 +21,7 @@ Each item carries one of these marks:
 | MCP | 15 infrastructure servers translated to the equivalent command; shell-like tools judged as shell; others logged | docs (table from each server's source) and tests |
 | Model judge | Optional second opinion on calls the rules do not recognise; can only make a verdict stricter | live in Claude Code (command backend, Anthropic endpoint); measured offline before the current filter |
 | Approvals | A person allows one asked call from a terminal | tests; off by default (no OS presence check) |
-| `doctor --creds`, `--boundary` | Whether the credentials here can change production without a person; assurance levels L0 to L3 | live for two AWS IAM users and one Google Cloud user account (2026-11-14 and 15); Kubernetes, Azure and the rest: tests with stubs only |
+| `doctor --creds`, `--boundary` | Whether the credentials here can change production without a person; assurance levels L0 to L3 | live for two AWS IAM users and one Google Cloud user account (2026-11-14 and 15); one local kind cluster for Kubernetes (2026-11-26); Azure and the rest: tests with stubs only |
 | CI | `plan-check` and the GitHub Action, with its optional pull-request comment | live on real plan JSON in CI; the comment posted and updated live on throwaway pull requests of this repository (2026-11-16 with a build from the branch, 2026-11-24 with the Action at the v0.6.2 tag), not on a pull request from a fork |
 
 ## Agent hosts
@@ -198,6 +198,6 @@ These are what the status **tests** rests on.
 - `vault kv metadata delete` (and other vault writes) are not classified: they ask in a protected tier only because they are not on the allow-list, and are allowed in standard and disposable tiers.
 - pulumi, cdk, flux and argocd have no rules; `npx cdk deploy` asks only through strict shapes: in a protected directory as a command that is not plain, and in a repository with no config because it names `cdk`.
 - The plan gate's resource data is AWS only: a Google or Azure plan gets the generic rules (destroy count, replaces) but no stateful-type or exposure rules, and none of its types is a routine replace.
-- Seven of nine hosts, the managed install and every MCP translation have not been run against the real program. `doctor --creds` and `--boundary` have been run against two AWS IAM users and one Google Cloud user account only; the Kubernetes and Azure audits have not.
+- Seven of nine hosts, the managed install and every MCP translation have not been run against the real program. `doctor --creds` and `--boundary` have been run against two AWS IAM users and one Google Cloud user account only; the Kubernetes audit has run against one local kind cluster (2026-11-26) and the Azure audit has not.
 - Claude Code and Codex were tested live on v0.6.0; not tested live: the prompt in plan and acceptEdits modes, a Codex user-scope hook launched from a subdirectory, and the Codex planfile search.
 - [hosts.md](hosts.md) says MCP is "not inspected" for Copilot CLI, OpenCode and Cline. The code would treat an `mcp__` tool name from them as MCP; whether they send one is not known.

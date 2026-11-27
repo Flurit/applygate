@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {"AWS": "arn:aws:iam::ACCOUNT_ID:user/PERSON"},
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "Bool": {"aws:MultiFactorAuthPresent": "true"},
+        "NumericLessThan": {"aws:MultiFactorAuthAge": "3600"}
+      }
+    }
+  ]
+}

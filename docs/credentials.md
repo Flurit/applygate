@@ -57,7 +57,7 @@ The audit asks the simulator as the identity it is auditing, so that identity ne
 
 ### What it does not see
 
-- **Policies the simulator does not evaluate.** The policy simulator does not evaluate service control policies, resource policies on the target (a bucket policy, a KMS key policy) or session policies (from AWS's documentation; not tested live). An SCP that denies the action makes the audit stricter than reality; a resource policy that allows it is missed.
+- **Policies the simulator does not see.** AWS's page for `SimulatePrincipalPolicy` (read 2026-11-26) says the simulator evaluates identity-based policies and service control policies, and a resource-based policy only when one is passed in, which applygate does not do (and not for IAM roles at all). So a resource policy on the target (a bucket policy, a KMS key policy) that allows the action is missed. The page does not mention session policies. An earlier version of this page said SCPs were not evaluated; that did not come from AWS's page. None of this has been tested live.
 - **The cases it samples.** It asks about a sample of destructive actions, not every one. A role allowed `s3:DeleteObject` on the state bucket but nothing on the list is reported as `ok`.
 - **Google Cloud and Azure** have their own limits, listed [below](#google-cloud-and-azure).
 - **Profiles it cannot assume.** A profile the agent could use but `doctor` cannot (an expired SSO session) is a `WARN`: once the session is renewed, it is whatever its permission set allows.
@@ -66,19 +66,14 @@ The audit asks the simulator as the identity it is auditing, so that identity ne
 
 ### 1. Give the agent a read-only role in production
 
-Create an `AgentReadOnly` role in each production account, with AWS's `ReadOnlyAccess` (or the narrower `ViewOnlyAccess`) and read access to the Terraform state:
+Create an `AgentReadOnly` role in each production account, with AWS's `ReadOnlyAccess` (or the narrower `ViewOnlyAccess`) and an inline policy that reads the Terraform state and lets applygate audit the role: [examples/boundary/aws-agent-readonly.json](../examples/boundary/aws-agent-readonly.json). Edit `STATE_BUCKET` and `ACCOUNT_ID`. The second statement is the grant described [above](#when-aws-refuses-the-simulator-call), for the role form.
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {"Effect": "Allow", "Action": ["s3:GetObject", "s3:ListBucket"],
-     "Resource": ["arn:aws:s3:::acme-tf-state-prod", "arn:aws:s3:::acme-tf-state-prod/*"]}
-  ]
-}
-```
+Two things to know before attaching it:
 
-Plan with `-lock=false`, or also allow the lock table's `dynamodb:GetItem`, `PutItem` and `DeleteItem` (or, with S3 native locking, `s3:PutObject` and `s3:DeleteObject` on the `.tflock` key only).
+- **`ReadOnlyAccess` is broad.** A summary of AWS's page for it (read 2026-11-26, not verbatim) says it allows `s3:Get*` on every resource. A role with it reads every object in the account, so the state statement adds nothing there, and `ViewOnlyAccess` or a custom read policy is the narrower choice. Read the policy's current document before you attach it.
+- **The role can read the Terraform state, and state holds secrets in plain text.** Database passwords, keys and tokens that Terraform manages are in the state file, so a credential that reads state reads them. Granting it is what lets the agent plan. If that is too much, drop the state statement (the agent can then inspect but not plan) or move planning into a pipeline ([ci.md](ci.md)); under `ReadOnlyAccess` the first changes nothing, as above.
+
+Plan with `-lock=false`, or also allow the lock table's `dynamodb:GetItem`, `PutItem` and `DeleteItem` (the S3 backend's page also lists `DescribeTable`), or, with S3 native locking, `s3:GetObject`, `s3:PutObject` and `s3:DeleteObject` on the `.tflock` key only. Locking writes to the state's backend, so a read-only role cannot lock on S3. The same holds for the GCS and Azure backends (a lock object, a blob lease); the Terraform pages read did not say what they need, so use `-lock=false` there too (not checked).
 
 Point the agent's production profile at it:
 
@@ -90,22 +85,7 @@ source_profile = agent
 
 ### 2. Keep writes behind MFA
 
-The role that applies trusts only sessions that passed MFA in the last hour:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Principal": {"AWS": "arn:aws:iam::111111111111:root"},
-    "Action": "sts:AssumeRole",
-    "Condition": {
-      "Bool": {"aws:MultiFactorAuthPresent": "true"},
-      "NumericLessThan": {"aws:MultiFactorAuthAge": "3600"}
-    }
-  }]
-}
-```
+The role that applies trusts one named person, and only for sessions that passed MFA in the last hour: [examples/boundary/aws-apply-mfa-trust.json](../examples/boundary/aws-apply-mfa-trust.json). It names the person's user as the principal. An account root as the principal (the form this page used to show) is meant to let any principal of the account that holds `sts:AssumeRole` try the role, with MFA still required (from memory, not checked against AWS's pages). AWS's condition-keys page says the MFA keys are set only for temporary credentials, and not for federated identities. The role form of this has not been run against an account.
 
 ```ini
 [profile prod-apply]
@@ -134,15 +114,7 @@ applygate blocks the agent from writing these files, but not from reading them, 
 
 ## Kubernetes
 
-Bind the agent's identity to the `view` ClusterRole in production clusters:
-
-```yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata: {name: agent-view}
-roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
-subjects: [{kind: User, name: agent@example.com}]
-```
+Bind the agent's identity to the `view` ClusterRole in production clusters: [examples/boundary/k8s-agent-view.yaml](../examples/boundary/k8s-agent-view.yaml). Change the subject to the name your cluster gives the agent's identity; that differs between clusters and providers. Kubernetes's RBAC page (a summary of it) says `view` does not allow reading Secrets, roles or role bindings.
 
 Put writes behind a context whose credentials need the person: an OIDC login with MFA, or an `exec` plugin that asks (applygate guards `~/.kube/config`, so the agent cannot add one).
 
@@ -188,8 +160,8 @@ What it does not see:
 
 ### Setting them up
 
-- **Google Cloud:** the agent's account gets `roles/viewer` (and `roles/storage.objectViewer` on the state bucket). Applies go through service-account impersonation that only the person may use. Do not grant the agent `roles/iam.serviceAccountTokenCreator` or `roles/iam.serviceAccountUser` on the apply account: the audit reports those as `iam.serviceAccounts.getAccessToken` and `actAs`. `gcloud auth login` stores the person's credentials in `~/.config/gcloud`, which the agent can read when it runs as the same OS user: keep them apart as for AWS.
-- **Azure:** the agent gets `Reader` on production subscriptions. `Contributor` or `Owner` comes through Privileged Identity Management activation with MFA, which the person does. The Azure CLI's token cache in `~/.azure` is readable by the same OS user. While a person's activation is live, a session in that cache has the role, and the audit reports it.
+- **Google Cloud** ([examples/boundary/gcp-agent-viewer.sh](../examples/boundary/gcp-agent-viewer.sh), a dry run until `APPLY=yes`): the agent's account gets `roles/viewer` (and `roles/storage.objectViewer` on the state bucket). Applies go through service-account impersonation that only the person may use. Do not grant the agent `roles/iam.serviceAccountTokenCreator` or `roles/iam.serviceAccountUser` on the apply account: the audit reports those as `iam.serviceAccounts.getAccessToken` and `actAs`. `gcloud auth login` stores the person's credentials in `~/.config/gcloud`, which the agent can read when it runs as the same OS user: keep them apart as for AWS.
+- **Azure** ([examples/boundary/azure-agent-reader.sh](../examples/boundary/azure-agent-reader.sh), the same): the agent gets `Reader` on production subscriptions. `Contributor` or `Owner` comes through Privileged Identity Management activation with MFA, which the person does. The Azure CLI's token cache in `~/.azure` is readable by the same OS user. While a person's activation is live, a session in that cache has the role, and the audit reports it.
 
 ## How this fits with the managed install
 

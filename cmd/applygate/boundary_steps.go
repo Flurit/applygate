@@ -69,8 +69,8 @@ var stepTable = map[string]stepDef{
 	}},
 	stepAWSReadOnly: {2, "Give the agent a read-only AWS role in place of these identities", []string{
 		"Point the agent's production profile at a role that can read and plan, and read the state, and change nothing",
-		"(docs/credentials.md, \"Setting it up on AWS\", step 1). An identity that can change production without MFA is what a",
-		"wrong verdict would reach.",
+		"(docs/credentials.md, \"Setting it up on AWS\", step 1; examples/boundary/aws-agent-readonly.json). An identity that can",
+		"change production without MFA is what a wrong verdict would reach.",
 	}},
 	stepAWSSimulatorGrant: {2, "Let the audit see these AWS identities", []string{
 		"AWS refused a call the audit makes as the identity it audits. Allow iam:SimulatePrincipalPolicy on the identity's own ARN",
@@ -79,16 +79,18 @@ var stepTable = map[string]stepDef{
 	}},
 	stepKubeView: {2, "Bind the agent's Kubernetes identity to the view role", []string{
 		"In production clusters, bind the identity the agent uses to the built-in view ClusterRole, and put writes behind a",
-		"context whose credentials need a person (docs/credentials.md, \"Kubernetes\").",
+		"context whose credentials need a person (docs/credentials.md, \"Kubernetes\"; examples/boundary/k8s-agent-view.yaml).",
 	}},
 	stepGCPViewer: {2, "Narrow the agent's Google Cloud access", []string{
 		"Give the agent's account roles/viewer, and roles/storage.objectViewer on the state bucket. Apply through service-account",
 		"impersonation that only a person may use, and do not grant the agent roles/iam.serviceAccountTokenCreator or",
-		"roles/iam.serviceAccountUser on the apply account (docs/credentials.md, \"Google Cloud and Azure\").",
+		"roles/iam.serviceAccountUser on the apply account (docs/credentials.md, \"Google Cloud and Azure\";",
+		"examples/boundary/gcp-agent-viewer.sh).",
 	}},
 	stepAzReader: {2, "Narrow the agent's Azure access", []string{
 		"Give the agent Reader on production subscriptions. Contributor or Owner comes only through Privileged Identity Management",
-		"activation by a person, with MFA. Roles that are eligible and not active are not seen by the audit (docs/credentials.md).",
+		"activation by a person, with MFA. Roles that are eligible and not active are not seen by the audit (docs/credentials.md;",
+		"examples/boundary/azure-agent-reader.sh).",
 	}},
 	stepAWSCLI: {2, "Make the aws CLI available to this command", []string{
 		"applygate could not run aws, so it audited no AWS profile. A missing aws is reported as not checked, not as no AWS credentials:",
