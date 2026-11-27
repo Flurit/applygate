@@ -1,6 +1,6 @@
 # Boundary examples
 
-Policies and commands for the setup that [docs/credentials.md](../../docs/credentials.md) describes: credentials the agent holds that can read production and change nothing, and a way to apply that needs a person. `applygate doctor --boundary` and `applygate scan --boundary` point here from the steps they print.
+Policies and commands for the setup that [docs/credentials.md](../../docs/credentials.md) describes: credentials the agent holds that can read production and change nothing, and a way to apply that needs a person. `applygate doctor --boundary` and `applygate scan --boundary` point here from the steps they print. The pipeline that uses the two OIDC roles is [examples/github-actions/reviewed-apply.yml](../github-actions/reviewed-apply.yml).
 
 They are starting points for a person to read and adapt, not something applygate applies. Nothing here is run by applygate, and an agent should not run it: it changes who may do what in your cloud.
 
@@ -9,6 +9,7 @@ They are starting points for a person to read and adapt, not something applygate
 | [aws-agent-readonly.json](aws-agent-readonly.json) | Inline policy for the agent's read-only role, beside AWS's `ReadOnlyAccess`: read the Terraform state, and let applygate audit the role |
 | [aws-apply-mfa-trust.json](aws-apply-mfa-trust.json) | Trust policy of the apply role for a person: MFA in the last hour |
 | [aws-apply-oidc-trust.json](aws-apply-oidc-trust.json) | Trust policy of the apply role for a GitHub Actions job: one repository, one environment |
+| [aws-plan-oidc-trust.json](aws-plan-oidc-trust.json) | Trust policy of the read-only role for the pipeline's plan job: one repository, pull requests and the main branch |
 | [k8s-agent-view.yaml](k8s-agent-view.yaml) | Binds the agent's identity to the `view` ClusterRole |
 | [gcp-agent-viewer.sh](gcp-agent-viewer.sh) | `gcloud` commands: viewer for the agent, impersonation of the apply account for the person only |
 | [azure-agent-reader.sh](azure-agent-reader.sh) | `az` command: `Reader` for the agent |

@@ -1,0 +1,138 @@
+name: reviewed-apply
+
+# A reviewed apply for GitHub Actions, Terraform or OpenTofu, and AWS through
+# OIDC (no stored keys). This is a template to read and adapt: docs/ci.md says
+# how it works and what it does not do. Edit the placeholders (WORKING_DIRECTORY,
+# the paths, the Terraform version) and set the repository variables
+# AWS_PLAN_ROLE_ARN, AWS_APPLY_ROLE_ARN and AWS_REGION.
+#
+# What the pipeline does
+#   pull request: plan with a read-only role, judge the plan, comment the verdict
+#   push to main: plan again, then wait at the "production" environment for a
+#   person, then judge the same plan again and apply exactly that plan
+#
+# What it does not do
+#   - A reviewer approves a job. Whether they read the plan is up to them: the
+#     verdict is the short answer they are given, not a check that they looked.
+#   - applygate cannot see this file, the environment's reviewer rule, branch
+#     protection or the role trust policies. Those are yours to set and to attest
+#     (boundary.attest: ci_apply, oidc_pinned, branch_protection).
+#   - Whoever can push a branch can run code in the plan job, with the read-only
+#     role: a pull request uses its own copy of this file. Keep that role read-only.
+#   - A saved plan can hold secret values in plain text. The artifact is kept one
+#     day and is readable by anyone who can read the repository's runs.
+
+on:
+  pull_request:
+    paths: ["envs/prod/**"]
+  push:
+    branches: [main]
+    paths: ["envs/prod/**"]
+
+# No job gets a permission it does not name.
+permissions: {}
+
+env:
+  WORKING_DIRECTORY: envs/prod
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write        # to assume the read-only role
+      pull-requests: write   # for the pull-request comment only
+    # One plan per pull request or branch at a time, the newest.
+    concurrency:
+      group: plan-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
+    outputs:
+      plan-sha256: ${{ steps.hash.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.14.9" # pin the version your repository uses
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@45666896f5d8e0f10ae255413f3a4cdd03bdc8f5 # v6.3.1
+        with:
+          role-to-arn: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      # -lock=false: the read-only role cannot take the state lock.
+      - name: plan
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: |
+          terraform init -input=false
+          terraform plan -input=false -lock=false -out=tfplan
+      - name: judge the plan (a report here, the decision is in the apply job)
+        uses: Flurit/applygate@c6ee8a02b4c3630834a978371cec339c01214bab # v0.8.0
+        with:
+          plan: tfplan
+          working-directory: ${{ env.WORKING_DIRECTORY }}
+          tier: protected
+          fail-on: never
+          comment: true
+      - name: hash the plan
+        id: hash
+        if: github.event_name == 'push'
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: echo "sha256=$(sha256sum tfplan | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name == 'push'
+        with:
+          name: tfplan
+          path: ${{ env.WORKING_DIRECTORY }}/tfplan
+          retention-days: 1
+
+  apply:
+    needs: plan
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Required reviewers are set on this environment in the repository settings,
+    # not in this file. Limit its deployment branches to main there too.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write        # to assume the apply role, pinned to this environment
+    concurrency:
+      group: apply-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: "1.14.9" # the same version as above
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@45666896f5d8e0f10ae255413f3a4cdd03bdc8f5 # v6.3.1
+        with:
+          role-to-arn: ${{ vars.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: tfplan
+          path: ${{ env.WORKING_DIRECTORY }}
+      - name: the plan is the one that was reviewed
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        env:
+          EXPECTED: ${{ needs.plan.outputs.plan-sha256 }}
+        run: |
+          test -n "$EXPECTED"
+          echo "$EXPECTED  tfplan" | sha256sum --check
+      - name: init
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: terraform init -input=false
+      - name: judge the plan (an ask or a block stops the apply)
+        uses: Flurit/applygate@c6ee8a02b4c3630834a978371cec339c01214bab # v0.8.0
+        with:
+          plan: tfplan
+          working-directory: ${{ env.WORKING_DIRECTORY }}
+          tier: protected
+          fail-on: ask
+      # A saved plan: Terraform refuses it if the state has changed since.
+      - name: apply
+        working-directory: ${{ env.WORKING_DIRECTORY }}
+        run: terraform apply -input=false tfplan

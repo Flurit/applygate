@@ -292,3 +292,161 @@ func TestEveryExampleIsInTheStatusTableAndTheReadme(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanRoleTrustExamplePinsTheRepositoryAndNamesNoWildcard(t *testing.T) {
+	p := iamExample(t, "aws-plan-oidc-trust.json")
+	if len(p.Statement) != 1 {
+		t.Fatalf("want one statement, have %d", len(p.Statement))
+	}
+	eq := p.Statement[0].Condition["StringEquals"]
+	subs := strs(eq["token.actions.githubusercontent.com:sub"])
+	if len(subs) == 0 {
+		t.Fatal("no sub is pinned")
+	}
+	for _, s := range subs {
+		if strings.Contains(s, "*") || !strings.HasPrefix(s, "repo:") || strings.Contains(s, ":environment:") {
+			t.Errorf("the plan role is for pull requests and the main branch, not for an environment, and takes no wildcard: %q", s)
+		}
+	}
+	if aud := strs(eq["token.actions.githubusercontent.com:aud"]); len(aud) != 1 || aud[0] != "sts.amazonaws.com" {
+		t.Errorf("aud: %v", aud)
+	}
+}
+
+type workflowStep struct {
+	Name string            `yaml:"name"`
+	Uses string            `yaml:"uses"`
+	Run  string            `yaml:"run"`
+	If   string            `yaml:"if"`
+	With map[string]string `yaml:"with"`
+}
+
+type workflowJob struct {
+	Needs       string            `yaml:"needs"`
+	If          string            `yaml:"if"`
+	Environment string            `yaml:"environment"`
+	Permissions map[string]string `yaml:"permissions"`
+	Concurrency map[string]any    `yaml:"concurrency"`
+	Steps       []workflowStep    `yaml:"steps"`
+}
+
+type workflowFile struct {
+	Permissions map[string]string      `yaml:"permissions"`
+	On          map[string]any         `yaml:"on"`
+	Jobs        map[string]workflowJob `yaml:"jobs"`
+}
+
+func reviewedApply(t *testing.T) (workflowFile, string) {
+	t.Helper()
+	b, err := os.ReadFile("../../examples/github-actions/reviewed-apply.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var w workflowFile
+	if err := yaml.Unmarshal(b, &w); err != nil {
+		t.Fatal(err)
+	}
+	return w, string(b)
+}
+
+func TestReviewedApplyTemplateGivesEachJobOnlyWhatItNeeds(t *testing.T) {
+	w, text := reviewedApply(t)
+	if len(w.Permissions) != 0 {
+		t.Errorf("the workflow's default permissions must be none: %v", w.Permissions)
+	}
+	if _, ok := w.On["pull_request_target"]; ok {
+		t.Error("pull_request_target runs the base branch's workflow with secrets for a pull request's code")
+	}
+	if strings.Contains(text, "secrets.") || strings.Contains(text, "AWS_ACCESS_KEY") {
+		t.Error("the template uses OIDC, not stored keys")
+	}
+	for name, j := range w.Jobs {
+		for k, v := range j.Permissions {
+			if v == "write" && k != "id-token" && !(name == "plan" && k == "pull-requests") {
+				t.Errorf("job %s asks for %s: write", name, k)
+			}
+		}
+	}
+	if w.Jobs["plan"].Permissions["id-token"] != "write" || w.Jobs["apply"].Permissions["id-token"] != "write" {
+		t.Error("both jobs assume a role by OIDC and need id-token: write")
+	}
+	for name, j := range w.Jobs {
+		for _, s := range j.Steps {
+			if s.Uses == "" {
+				continue
+			}
+			at := strings.LastIndex(s.Uses, "@")
+			if at < 0 || len(s.Uses[at+1:]) != 40 || strings.Trim(s.Uses[at+1:], "0123456789abcdef") != "" {
+				t.Errorf("job %s: %q is not pinned by a full commit SHA", name, s.Uses)
+			}
+			if strings.HasPrefix(s.Uses, "actions/checkout@") && s.With["persist-credentials"] != "false" {
+				t.Errorf("job %s: checkout keeps its token", name)
+			}
+		}
+	}
+}
+
+func TestReviewedApplyAppliesOnlyTheJudgedPlanAfterAReviewer(t *testing.T) {
+	w, _ := reviewedApply(t)
+	plan, apply := w.Jobs["plan"], w.Jobs["apply"]
+	if apply.Environment != "production" || apply.Needs != "plan" || !strings.Contains(apply.If, "push") {
+		t.Errorf("apply must need plan, run on push and name the production environment: %+v", apply)
+	}
+	if apply.Concurrency["cancel-in-progress"] != false {
+		t.Error("an apply must not be cancelled half way by a newer run")
+	}
+	if plan.Environment != "" {
+		t.Error("the plan job must not use the production environment: its role is read-only")
+	}
+	judged, applied, hashed := -1, -1, -1
+	for i, s := range apply.Steps {
+		switch {
+		case strings.HasPrefix(s.Uses, "Flurit/applygate@"):
+			if s.With["fail-on"] != "ask" || s.With["tier"] != "protected" {
+				t.Errorf("the apply job must stop on ask and judge as protected: %v", s.With)
+			}
+			judged = i
+		case strings.Contains(s.Run, "terraform apply"):
+			applied = i
+			if strings.Contains(s.Run, "-auto-approve") || !strings.Contains(s.Run, "terraform apply -input=false tfplan") {
+				t.Errorf("apply the saved plan and nothing else: %q", s.Run)
+			}
+		case strings.Contains(s.Run, "sha256sum --check"):
+			hashed = i
+		}
+	}
+	if judged < 0 || applied < 0 || hashed < 0 || !(hashed < judged && judged < applied) {
+		t.Errorf("order must be: check the plan's hash, judge it, apply it (hash %d, judge %d, apply %d)", hashed, judged, applied)
+	}
+	for _, s := range plan.Steps {
+		if strings.Contains(s.Run, "terraform plan") && !strings.Contains(s.Run, "-lock=false") {
+			t.Error("the read-only role cannot lock: plan with -lock=false")
+		}
+		if strings.Contains(s.Run, "terraform apply") {
+			t.Error("the plan job must not apply")
+		}
+		if strings.HasPrefix(s.Uses, "Flurit/applygate@") && s.With["fail-on"] != "never" {
+			t.Error("the plan job reports; the decision is the apply job's")
+		}
+		if strings.HasPrefix(s.Uses, "actions/upload-artifact@") && s.With["retention-days"] != "1" {
+			t.Error("a saved plan can hold secrets: keep it one day")
+		}
+	}
+	for _, j := range []workflowJob{plan, apply} {
+		for _, s := range j.Steps {
+			if strings.HasPrefix(s.Uses, "aws-actions/configure-aws-credentials@") && !strings.Contains(s.With["role-to-arn"], "vars.AWS_") {
+				t.Errorf("the role comes from a repository variable: %v", s.With)
+			}
+		}
+	}
+}
+
+func TestReviewedApplyTemplateIsInTheStatusTable(t *testing.T) {
+	limits, err := os.ReadFile("../../docs/limits.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(limits), "examples/github-actions/reviewed-apply.yml") {
+		t.Error("docs/limits.md has no status row for the template")
+	}
+}

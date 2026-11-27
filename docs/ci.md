@@ -33,7 +33,7 @@ and so is JSON that is not a plan, such as state JSON.
 ## GitHub Actions
 
 The repository ships a composite action. Make the plan, then judge it before
-the apply step:
+the apply step (for a protected environment with a reviewer and separate roles, see [A reviewed apply](#a-reviewed-apply)):
 
 ```yaml
 jobs:
@@ -79,6 +79,31 @@ workflow pins. From v0.6.2 on, that is the release the
 action is tagged at. The action at the v0.6.0 and v0.6.1 tags installs the
 release before it (v0.5.0 and v0.6.0); set `version` there to choose. For
 v0.6.1 the two judge a plan the same way.
+
+## A reviewed apply
+
+The single job above plans, judges and applies in one run with one set of credentials. [examples/github-actions/reviewed-apply.yml](../examples/github-actions/reviewed-apply.yml) is the fuller form for a protected environment, on GitHub Actions with Terraform or OpenTofu and AWS through OIDC. It is a template to read and adapt, and [limits.md](limits.md#the-boundary-examples) says how far it has been checked.
+
+- **Pull request:** the `plan` job assumes a read-only role, plans with `-lock=false`, judges the plan with `fail-on: never` and comments the verdict beside the diff.
+- **Push to main:** the same job plans again and uploads the plan for one day, with its hash as a job output. The `apply` job then waits at the `production` environment. After a reviewer approves, it checks the hash, judges the plan again with `fail-on: ask` as a protected tier, and runs `terraform apply tfplan`. Terraform refuses a saved plan if the state has changed since it was made.
+- **Two roles, each trusted by OIDC:** the plan role ([aws-plan-oidc-trust.json](../examples/boundary/aws-plan-oidc-trust.json)) for pull requests and the main branch, with the read-only policy of [credentials.md](credentials.md); and the apply role ([aws-apply-oidc-trust.json](../examples/boundary/aws-apply-oidc-trust.json)), trusted only for one repository's `production` environment. Neither is trusted for anything else.
+
+What you set in GitHub, because the file cannot:
+
+- the `production` environment, with required reviewers, and "prevent self-review" if one person opens and approves;
+- the environment's deployment branches, limited to `main`, so a job on another branch cannot reach the apply role;
+- branch protection on `main`, and a code-owner rule for `.github/workflows`;
+- the repository variables `AWS_PLAN_ROLE_ARN`, `AWS_APPLY_ROLE_ARN` and `AWS_REGION`.
+
+What it does not do:
+
+- **It does not make a person read the plan.** A reviewer approves a job. The verdict from `plan-check` is the short answer they are given.
+- **applygate does not see any of it.** Not this file, the reviewer rule, branch protection or the trust policies. In `doctor --boundary` these stay attested, not checked: `ci_apply` (applies run only here, with a role the agent cannot assume), and optionally `oidc_pinned` and `branch_protection` ([boundary.md](boundary.md)).
+- **Whoever can push a branch can run code in the plan job.** A pull request runs its own copy of the workflow, and `terraform plan` runs providers and data sources, so the plan role's credentials are in reach of any branch writer. That is why the plan role is read-only, and why the read-only role can read the Terraform state, which holds secrets in plain text ([credentials.md](credentials.md)).
+- **An agent that can edit the workflow and merge can change this pipeline.** Branch protection and a code-owner rule are what stop that.
+- **The pipeline is itself a holder of production credentials.** It moves the apply role out of the agent's reach. It does not make it harmless.
+- **A saved plan can hold secret values in plain text.** The artifact lives one day and is readable by anyone who can read the repository's runs.
+- **The `sub` claim can differ.** GitHub documents another form for repositories created after 2026-07-15 or set to immutable subject claims: check the `sub` your repository sends before pinning.
 
 ## Any other CI
 
