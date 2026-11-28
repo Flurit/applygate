@@ -20,14 +20,10 @@ import (
 )
 
 // UserPath returns the user-level config path. A config left at the
-// pre-rename location (~/.config/seatbelt/config.yaml) is used when no file
-// exists at the new one.
-func UserPath() string {
-	return preferExisting(userPathFor("applygate"), userPathFor("seatbelt"))
-}
+// pre-rename location (~/.config/seatbelt/config.yaml) is not read.
+func UserPath() string { return userPathFor("applygate") }
 
-// UserDir is the applygate user configuration directory. Unlike UserPath it
-// never falls back to the pre-rename seatbelt directory.
+// UserDir is the applygate user configuration directory.
 func UserDir() string { return filepath.Dir(userPathFor("applygate")) }
 
 // HomeProblem says why the user's own files cannot be placed: without an
@@ -52,12 +48,8 @@ func userPathFor(name string) string {
 }
 
 // DefaultLogPath returns the decision log path, outside any repository. A
-// log that an older seatbelt install kept writing at
-// ~/.local/state/seatbelt/decisions.jsonl is used when no log exists at the
-// new location, so "report" keeps seeing one history.
-func DefaultLogPath() string {
-	return preferExisting(logPathFor("applygate"), logPathFor("seatbelt"))
-}
+// log left at the pre-rename location (~/.local/state/seatbelt) is not read.
+func DefaultLogPath() string { return logPathFor("applygate") }
 
 // ApprovalsPath is where pending and granted one-time approvals are kept,
 // next to the default decision log. It is a guard path.
@@ -80,29 +72,34 @@ func logPathFor(name string) string {
 	return filepath.Join(home, ".local", "state", name, "decisions.jsonl")
 }
 
-// preferExisting returns the new path unless only the legacy one exists.
-func preferExisting(newPath, legacy string) string {
-	if _, err := os.Stat(newPath); err == nil {
-		return newPath
-	}
-	if _, err := os.Stat(legacy); err == nil {
-		return legacy
-	}
-	return newPath
-}
-
-// FindRepoConfig walks up from dir to find .applygate.yaml, accepting the
-// legacy .seatbelt.yaml in a directory that has no .applygate.yaml.
+// FindRepoConfig walks up from dir to find .applygate.yaml.
 func FindRepoConfig(dir string) string {
 	for d := dir; d != "" && d != "/" && d != "."; d = filepath.Dir(d) {
-		for _, name := range []string{FileName, LegacyFileName} {
-			p := filepath.Join(d, name)
-			if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
-				return p
-			}
+		p := filepath.Join(d, FileName)
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			return p
 		}
 	}
 	return ""
+}
+
+// legacyConfigNotes names each .seatbelt.yaml on the way up from dir that has
+// no .applygate.yaml beside it. It is not read, so a repository that kept
+// only the old name would otherwise look like one with no config.
+func legacyConfigNotes(dir string) []string {
+	var out []string
+	for d := dir; d != "" && d != "."; d = filepath.Dir(d) {
+		old := filepath.Join(d, LegacyFileName)
+		if _, err := os.Lstat(old); err == nil {
+			if _, err := os.Lstat(filepath.Join(d, FileName)); err != nil {
+				out = append(out, old+" is not read (the project was renamed from seatbelt): rename it to "+FileName+" and trust it again")
+			}
+		}
+		if parent := filepath.Dir(d); parent == d {
+			break
+		}
+	}
+	return out
 }
 
 // RepoConfigs returns every repository config from the outermost ancestor
@@ -146,14 +143,11 @@ func sameEntry(a, b string) bool {
 func repoConfigChain(dir string) []string {
 	var out []string
 	for d := dir; d != "" && d != "."; d = filepath.Dir(d) {
-		for _, name := range []string{FileName, LegacyFileName} {
-			// Lstat: a symlink or other non-regular entry is listed too, so
-			// that Load can refuse it rather than skip it.
-			p := filepath.Join(d, name)
-			if _, err := os.Lstat(p); err == nil {
-				out = append([]string{p}, out...)
-				break
-			}
+		// Lstat: a symlink or other non-regular entry is listed too, so
+		// that Load can refuse it rather than skip it.
+		p := filepath.Join(d, FileName)
+		if _, err := os.Lstat(p); err == nil {
+			out = append([]string{p}, out...)
 		}
 		if parent := filepath.Dir(d); parent == d {
 			break
@@ -208,6 +202,7 @@ func Load(userPath, dir string) (*Config, error) {
 			cfg.GuardRoot = filepath.Dir(repoConfigs[0])
 		}
 		cfg.NoRepoConfig = len(repoConfigs) == 0
+		cfg.Deprecations = append(cfg.Deprecations, legacyConfigNotes(dir)...)
 		cfg.GitRoot = gitRoot(dir)
 		for _, p := range repoConfigs {
 			// Trust is for the file read, so only a regular file counts: a
@@ -287,9 +282,6 @@ func mergeBytes(cfg *Config, path string, b []byte, l layer) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	cfg.Sources = append(cfg.Sources, path)
-	if filepath.Base(path) == LegacyFileName {
-		cfg.Deprecations = append(cfg.Deprecations, path+" uses the pre-rename file name; rename it to "+FileName+" (the old name keeps working for one release)")
-	}
 	if l == layerRepo {
 		cfg.Root = filepath.Dir(path)
 	}

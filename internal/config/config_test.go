@@ -271,23 +271,27 @@ func TestUnknownDirMerge(t *testing.T) {
 	}
 }
 
-// The project was renamed from seatbelt; a repository that still has
-// .seatbelt.yaml is read with a deprecation note, and .applygate.yaml wins
-// when both exist.
-func TestLegacyConfigFileName(t *testing.T) {
+// The project was renamed from seatbelt, and v0.6.0 dropped the shim. A
+// repository that still has only .seatbelt.yaml is not read, which would make
+// it look like a repository with no config, so Load says so. .applygate.yaml
+// beside it wins silently, and the old name stays a guard file.
+func TestLegacyConfigFileIsNotRead(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, LegacyFileName), []byte("protected_resources: [\"aws_instance.legacy\"]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load("", filepath.Join(dir))
+	cfg, err := Load("", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg.ProtectedResources) != 1 || len(cfg.Sources) != 1 || filepath.Base(cfg.Sources[0]) != LegacyFileName {
-		t.Fatalf("legacy file not loaded: resources %v sources %v", cfg.ProtectedResources, cfg.Sources)
+	if len(cfg.ProtectedResources) != 0 || len(cfg.Sources) != 0 || !cfg.NoRepoConfig {
+		t.Fatalf("legacy file was read: resources %v sources %v noRepoConfig %v", cfg.ProtectedResources, cfg.Sources, cfg.NoRepoConfig)
 	}
-	if len(cfg.Deprecations) != 1 || !strings.Contains(cfg.Deprecations[0], FileName) {
-		t.Fatalf("want one deprecation naming %s, got %v", FileName, cfg.Deprecations)
+	if len(cfg.Deprecations) != 1 || !strings.Contains(cfg.Deprecations[0], FileName) || !strings.Contains(cfg.Deprecations[0], "not read") {
+		t.Fatalf("want one note saying the file is not read and naming %s, got %v", FileName, cfg.Deprecations)
+	}
+	if FindRepoConfig(dir) != "" {
+		t.Fatal("FindRepoConfig found the legacy file")
 	}
 	if err := os.WriteFile(filepath.Join(dir, FileName), []byte("mode: enforce\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -296,7 +300,7 @@ func TestLegacyConfigFileName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Mode != "enforce" || len(cfg.Deprecations) != 0 || filepath.Base(cfg.Sources[0]) != FileName {
+	if cfg.Mode != "enforce" || len(cfg.Deprecations) != 0 || len(cfg.Sources) != 1 || filepath.Base(cfg.Sources[0]) != FileName {
 		t.Fatalf("new file should win silently: mode %s sources %v deprecations %v", cfg.Mode, cfg.Sources, cfg.Deprecations)
 	}
 	for _, p := range DefaultProtectedPaths {
@@ -305,6 +309,29 @@ func TestLegacyConfigFileName(t *testing.T) {
 		}
 	}
 	t.Fatal("legacy config name is not in DefaultProtectedPaths")
+}
+
+// The pre-rename user config and decision log are not used either.
+func TestPreRenameUserPathsAreNotUsed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_STATE_HOME", "")
+	for _, f := range []string{".config/seatbelt/config.yaml", ".local/state/seatbelt/decisions.jsonl"} {
+		p := filepath.Join(home, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := UserPath(); got != filepath.Join(home, ".config", "applygate", "config.yaml") {
+		t.Fatalf("UserPath fell back to the old directory: %s", got)
+	}
+	if got := DefaultLogPath(); got != filepath.Join(home, ".local", "state", "applygate", "decisions.jsonl") {
+		t.Fatalf("DefaultLogPath fell back to the old directory: %s", got)
+	}
 }
 
 func TestRepoConfigCanOnlyDisableApprovals(t *testing.T) {
