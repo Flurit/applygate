@@ -30,8 +30,9 @@ func (t Tier) Rank() int {
 const FileName = ".applygate.yaml"
 
 // LegacyFileName is the name the file had before the project was renamed from
-// seatbelt (2026-10-29). It is still read, with a deprecation note in
-// Config.Deprecations, and stays a protected guard file.
+// seatbelt (2026-10-29). It is not read: Load notes one that has no
+// .applygate.yaml beside it in Config.Deprecations, and it stays a protected
+// guard file.
 const LegacyFileName = ".seatbelt.yaml"
 
 // Values of the unknown_dir setting.
@@ -107,8 +108,9 @@ type Config struct {
 	Root string `yaml:"-"`
 	// Sources lists the files that were loaded.
 	Sources []string `yaml:"-"`
-	// Deprecations notes legacy names still in use (a .seatbelt.yaml config
-	// file); doctor and check print them.
+	// Deprecations holds notes for the person: a .seatbelt.yaml that is not
+	// read, a setting a repository config may not make, a config that cannot
+	// be read. doctor and check print them.
 	Deprecations []string `yaml:"-"`
 	// Untrusted lists the repository configs that were not read because
 	// their content was not approved with applygate trust.
